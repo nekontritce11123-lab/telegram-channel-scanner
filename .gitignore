@@ -1,0 +1,23 @@
+# Environment
+.env
+*.session
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+
+# Output
+output/
+
+# Temp files
+tmpclaude-*
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
