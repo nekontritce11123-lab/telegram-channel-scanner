@@ -1,6 +1,7 @@
 """
 Модуль скоринга качества Telegram канала.
 v5.0: Floating Weights, Ad Load, Forward Rate boost.
+v5.1: Viral Exception - CV > 100% + Forward Rate > 3% = не штрафовать.
 """
 from typing import Any
 from .metrics import (
@@ -24,11 +25,15 @@ from .metrics import (
 # ФУНКЦИИ КОНВЕРТАЦИИ МЕТРИК В БАЛЛЫ
 # ============================================================================
 
-def cv_to_points(cv: float) -> int:
+def cv_to_points(cv: float, forward_rate: float = 0) -> int:
     """
     CV Views -> баллы (max 15).
     v5.0: Увеличено с 14 до 15.
+    v5.1: Viral Exception - если CV > 100%, но forward_rate > 3%, не обнулять.
+
     CV > 100% = экстремальные скачки = накрутка волнами.
+    НО: вирусный пост (100к просмотров при среднем 5к) тоже даёт высокий CV.
+    Если контент репостят (forward_rate > 3%) - это "бриллиант", не скам.
     """
     if cv < 10:
         return 0   # Слишком ровно - бот
@@ -38,7 +43,13 @@ def cv_to_points(cv: float) -> int:
         return 15  # Хорошо - естественная вариация
     if cv < 100:
         return 8   # Подозрительно высокая вариация
-    return 0       # CV > 100% = явный скам паттерн (волновая накрутка)
+
+    # CV >= 100% - потенциальная волновая накрутка
+    # v5.1: Viral Exception - если репостят, это вирусный контент, а не накрутка
+    if forward_rate > 3.0:
+        return 8   # Вирусный контент - спасаем "бриллиант"
+
+    return 0       # CV > 100% без виральности = явный скам паттерн
 
 
 def reach_to_points(reach: float, members: int = 0) -> int:
@@ -433,11 +444,20 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
 
     # ===== КАТЕГОРИЯ B: ОСНОВНЫЕ МЕТРИКИ =====
 
-    # B1: CV Views (15 pts) - v5.0: увеличено с 14
+    # v5.1: Вычисляем forward_rate заранее для Viral Exception в CV Views
+    forward_rate = calculate_forwards_ratio(messages)
+
+    # B1: CV Views (15 pts) - v5.0: увеличено с 14, v5.1: Viral Exception
     cv = calculate_cv_views(views)
-    cv_score = cv_to_points(cv)
+    cv_score = cv_to_points(cv, forward_rate)  # v5.1: передаём forward_rate
     score += cv_score
-    breakdown['cv_views'] = {'value': round(cv, 2), 'points': cv_score, 'max': 15}
+    viral_exception = cv >= 100 and forward_rate > 3.0
+    breakdown['cv_views'] = {
+        'value': round(cv, 2),
+        'points': cv_score,
+        'max': 15,
+        'viral_exception': viral_exception  # v5.1: показываем если сработало
+    }
 
     # B2: Reach (10 pts) - v5.0: снижено с 12
     reach = calculate_reach(avg_views, members)
@@ -533,7 +553,7 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
     }
 
     # E2: Forward Rate (15 или 20 при floating) - v5.0: увеличено с 5
-    forward_rate = calculate_forwards_ratio(messages)
+    # forward_rate уже вычислен выше для Viral Exception (v5.1)
     forward_max = weights['forward_rate_max']
     forward_score = forward_rate_to_points(forward_rate, members, forward_max)
     score += forward_score
