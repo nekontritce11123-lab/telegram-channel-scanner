@@ -1,6 +1,6 @@
 """
 Модуль скоринга качества Telegram канала.
-v3.0: Система совокупных факторов, Reaction Stability, без Round Numbers.
+v5.0: Floating Weights, Ad Load, Forward Rate boost.
 """
 from typing import Any
 from .metrics import (
@@ -14,6 +14,7 @@ from .metrics import (
     calculate_er_variation,
     calculate_source_diversity,
     calculate_forwards_ratio,
+    calculate_ad_load,
     get_channel_age_days,
     get_raw_stats,
 )
@@ -25,8 +26,8 @@ from .metrics import (
 
 def cv_to_points(cv: float) -> int:
     """
-    CV Views -> баллы (max 14).
-    v4.0: Инвертирована логика для CV > 60%.
+    CV Views -> баллы (max 15).
+    v5.0: Увеличено с 14 до 15.
     CV > 100% = экстремальные скачки = накрутка волнами.
     """
     if cv < 10:
@@ -34,7 +35,7 @@ def cv_to_points(cv: float) -> int:
     if cv < 30:
         return 10  # Норма
     if cv < 60:
-        return 14  # Хорошо - естественная вариация
+        return 15  # Хорошо - естественная вариация
     if cv < 100:
         return 8   # Подозрительно высокая вариация
     return 0       # CV > 100% = явный скам паттерн (волновая накрутка)
@@ -42,8 +43,8 @@ def cv_to_points(cv: float) -> int:
 
 def reach_to_points(reach: float, members: int = 0) -> int:
     """
-    Reach % -> баллы (max 12). Учитывает размер канала.
-    v4.1: Смягчены пороги для малых каналов - reach 80-100% это хорошо!
+    Reach % -> баллы (max 10). Учитывает размер канала.
+    v5.0: Снижено с 12 до 10 для перераспределения в Forward Rate.
     """
     # Размерные пороги для "накрутки"
     if members < 200:
@@ -62,25 +63,30 @@ def reach_to_points(reach: float, members: int = 0) -> int:
     if reach > scam_threshold:
         return 0  # Накрутка просмотров для данного размера
 
-    # v4.1: Высокий reach для малых каналов - это ХОРОШО (лояльная аудитория)
+    # Высокий reach для малых каналов - это ХОРОШО (лояльная аудитория)
     if reach > high_is_good:
         return 4  # Высоковато, но в пределах нормы
 
     if reach < 5:
         return 0  # Мёртвая аудитория
     if reach < 10:
-        return 4
+        return 3
     if reach < 20:
-        return 8
+        return 6
     if reach < 50:
-        return 10
-    return 12  # 50%+ до high_is_good - отлично!
+        return 8
+    return 10  # 50%+ до high_is_good - отлично!
 
 
-def reaction_rate_to_points(rate: float, members: int = 0) -> int:
+def reaction_rate_to_points(rate: float, members: int = 0, max_pts: int = 15) -> int:
     """
-    Reaction rate % -> баллы (max 15). Учитывает размер канала.
-    v4.2: +5 баллов для max=100.
+    Reaction rate % -> баллы (max 15, или 25 при floating weights).
+    v5.0: Динамический max для floating weights.
+
+    Args:
+        rate: Reaction rate в процентах
+        members: Количество подписчиков
+        max_pts: Максимум баллов (15 по умолчанию, 25 при floating weights)
     """
     # Размерные пороги - малые каналы имеют лояльное ядро
     if members < 200:
@@ -95,21 +101,32 @@ def reaction_rate_to_points(rate: float, members: int = 0) -> int:
 
     if rate > scam_threshold:
         return 0  # Накрутка реакций для данного размера
+
+    # Пропорциональное распределение баллов относительно max_pts
     if rate > high_threshold:
-        return 5  # Подозрительно много (но в пределах)
+        return int(max_pts * 0.33)  # Подозрительно много (но в пределах)
     if rate < 0.3:
-        return 3  # Мёртвая аудитория
+        return int(max_pts * 0.2)   # Мёртвая аудитория
     if rate < 1:
-        return 8
+        return int(max_pts * 0.53)  # ~8/15
     if rate < 3:
-        return 12
-    return 15
+        return int(max_pts * 0.8)   # ~12/15
+    return max_pts  # Отлично
 
 
-def decay_to_points(ratio: float) -> int:
-    """Views decay ratio -> баллы (max 8)"""
+def decay_to_points(ratio: float, reaction_rate: float = 0) -> int:
+    """
+    Views decay ratio -> баллы (max 8).
+    v5.0: Поправка на Growth Trend - растущие каналы не штрафуются.
+
+    Если ratio < 0.7 (новые посты лучше старых), но engagement высокий (>2%),
+    это Growth Trend - канал растёт органически, а не накрутка.
+    """
     if ratio < 0.7:
-        return 0
+        # v5.0: Проверяем Growth Trend
+        if reaction_rate > 2.0:
+            return 4  # Growth Trend - канал растёт, не штрафуем сильно
+        return 0  # Накрутка просмотров
     if ratio < 1.0:
         return 2
     if ratio < 1.5:
@@ -120,12 +137,15 @@ def decay_to_points(ratio: float) -> int:
 
 
 def regularity_to_points(cv: float) -> int:
-    """Post regularity CV -> баллы (max 3)"""
+    """
+    Post regularity CV -> баллы (max 2).
+    v5.0: Снижено с 3 до 2. Профи используют отложенный постинг - это не боты.
+    """
     if cv < 0.2:
         return 0  # Бот - слишком ровные интервалы
     if cv < 0.5:
-        return 2
-    return 3
+        return 1
+    return 2
 
 
 def stability_to_points(data: dict) -> int:
@@ -188,33 +208,41 @@ def source_to_points(max_share: float, repost_ratio: float = 1.0) -> int:
 # Причина: метрика не дискриминирует, баллы перенесены в cv_to_points
 
 
-def forward_rate_to_points(rate: float, members: int = 0) -> int:
+def forward_rate_to_points(rate: float, members: int = 0, max_pts: int = 15) -> int:
     """
-    Forward Rate % -> баллы (max 5).
-    v4.3: Виральность контента - люди расшаривают = бесплатный охват для рекламы.
+    Forward Rate % -> баллы (max 15, или 20 при floating weights).
+    v5.0: Виральность контента - репост = бесплатный охват для рекламодателя.
     Учитывает размер канала (большие каналы имеют ниже forward rate естественно).
+
+    Args:
+        rate: Forward rate в процентах
+        members: Количество подписчиков (для размерных порогов)
+        max_pts: Максимум баллов (15 по умолчанию, 20 при floating weights)
     """
     # Большие каналы имеют ниже forward rate из-за насыщения аудитории
     if members > 50000:
-        thresholds = {'excellent': 1.5, 'good': 0.7, 'medium': 0.3}
+        thresholds = {'viral': 1.5, 'excellent': 0.7, 'good': 0.3, 'medium': 0.1}
     elif members > 5000:
-        thresholds = {'excellent': 2.0, 'good': 1.0, 'medium': 0.5}
+        thresholds = {'viral': 2.0, 'excellent': 1.0, 'good': 0.5, 'medium': 0.2}
     else:
-        thresholds = {'excellent': 3.0, 'good': 1.5, 'medium': 0.5}
+        thresholds = {'viral': 3.0, 'excellent': 1.5, 'good': 0.5, 'medium': 0.1}
 
     # Защита от накрутки пересылок
     if rate > 15:
         return 0  # Подозрительно много - возможна накрутка через сеть каналов
 
+    # Пропорциональное распределение баллов относительно max_pts
+    if rate >= thresholds['viral']:
+        return max_pts  # Виральный контент
     if rate >= thresholds['excellent']:
-        return 5  # Виральный контент
+        return int(max_pts * 0.8)  # Отлично расшаривают
     if rate >= thresholds['good']:
-        return 4  # Хорошо расшаривают
+        return int(max_pts * 0.6)  # Хорошо
     if rate >= thresholds['medium']:
-        return 3  # Средне
-    if rate >= 0.1:
-        return 1  # Минимум
-    return 0      # Контент не расшаривают
+        return int(max_pts * 0.3)  # Средне
+    if rate >= 0.05:
+        return int(max_pts * 0.1)  # Минимум
+    return 0  # Контент не расшаривают
 
 
 def age_to_bonus(age_days: int) -> int:
@@ -233,6 +261,54 @@ def age_to_bonus(age_days: int) -> int:
     if age_days < 730:
         return 6   # 1-2 года - established
     return 8       # > 2 лет - veteran
+
+
+def calculate_floating_weights(comments_enabled: bool) -> dict:
+    """
+    v5.0: Плавающие веса - если комменты закрыты, их баллы перераспределяются.
+
+    Логика: "Рот закрыт, но люди голосуют лайками и репостами"
+    - 15 баллов комментариев → 10 в Reactions, 5 в Forward Rate
+
+    Returns:
+        dict с max баллами для каждой метрики
+    """
+    if comments_enabled:
+        return {
+            'comments_max': 15,
+            'reaction_rate_max': 15,
+            'forward_rate_max': 15
+        }
+    else:
+        # Комменты закрыты - перераспределяем их 15 баллов
+        return {
+            'comments_max': 0,
+            'reaction_rate_max': 25,  # +10 от комментов
+            'forward_rate_max': 20    # +5 от комментов
+        }
+
+
+def ad_load_to_penalty(ad_load_data: dict) -> int:
+    """
+    v5.0: Штраф за заспамленность рекламой.
+
+    Логика: Канал-помойка из рекламы = слепая аудитория = плохая конверсия.
+
+    Пороги:
+    - Ad Load < 10%: 0 штрафа (чистый канал)
+    - Ad Load 10-30%: -5 баллов (умеренно)
+    - Ad Load 30-50%: -10 баллов (много рекламы)
+    - Ad Load > 50%: -15 баллов (спам-канал)
+    """
+    ad_percent = ad_load_data.get('ad_load_percent', 0)
+
+    if ad_percent < 10:
+        return 0   # Чистый канал
+    if ad_percent < 30:
+        return -5  # Умеренная реклама
+    if ad_percent < 50:
+        return -10  # Много рекламы
+    return -15      # Спам-канал
 
 
 # ============================================================================
@@ -310,7 +386,7 @@ def comments_to_points(comments_data: dict, members: int = 0, reach: float = 0) 
 def calculate_final_score(chat: Any, messages: list, comments_data: dict = None) -> dict:
     """
     Полный расчёт качества канала.
-    v3.0: Система совокупных факторов, Reaction Stability.
+    v5.0: Floating Weights, Ad Load, Forward Rate boost, Growth Trend.
     Возвращает score 0-100 и детальный breakdown.
     """
     # Дефолтные данные о комментариях если не переданы
@@ -331,7 +407,7 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
             'score': 0,
             'verdict': 'SCAM',
             'reason': scam_reason,
-            'conviction': conviction_details,  # Детали conviction score
+            'conviction': conviction_details,
             'breakdown': {},
             'flags': {
                 'is_scam': getattr(chat, 'is_scam', False),
@@ -349,71 +425,93 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
     views = [m.views for m in messages if hasattr(m, 'views') and m.views]
     members = getattr(chat, 'members_count', 0) or 1
     avg_views = sum(views) / len(views) if views else 0
+    channel_username = getattr(chat, 'username', None)
+
+    # ===== v5.0: FLOATING WEIGHTS =====
+    comments_enabled = comments_data.get('enabled', False)
+    weights = calculate_floating_weights(comments_enabled)
 
     # ===== КАТЕГОРИЯ B: ОСНОВНЫЕ МЕТРИКИ =====
 
-    # B1: CV Views (14 pts) - +2 от удалённых Round Numbers
+    # B1: CV Views (15 pts) - v5.0: увеличено с 14
     cv = calculate_cv_views(views)
     cv_score = cv_to_points(cv)
     score += cv_score
-    breakdown['cv_views'] = {'value': round(cv, 2), 'points': cv_score, 'max': 14}
+    breakdown['cv_views'] = {'value': round(cv, 2), 'points': cv_score, 'max': 15}
 
-    # B2: Reach (12 pts) - с учётом размера канала
+    # B2: Reach (10 pts) - v5.0: снижено с 12
     reach = calculate_reach(avg_views, members)
     reach_score = reach_to_points(reach, members)
     score += reach_score
-    breakdown['reach'] = {'value': round(reach, 2), 'points': reach_score, 'max': 12}
+    breakdown['reach'] = {'value': round(reach, 2), 'points': reach_score, 'max': 10}
 
-    # B3: Comments (15 pts) - v4.0: снижен с 25, зависит от reach
-    comments_pts, comments_status = comments_to_points(comments_data, members, reach)
+    # B3: Comments (15 pts или 0 при floating) - v5.0: зависит от floating weights
+    comments_max = weights['comments_max']
+    if comments_max > 0:
+        comments_pts, comments_status = comments_to_points(comments_data, members, reach)
+        # Ограничиваем максимумом из floating weights
+        comments_pts = min(comments_pts, comments_max)
+    else:
+        comments_pts = 0
+        comments_status = "disabled (floating weights)"
     score += comments_pts
     breakdown['comments'] = {
         'value': comments_status,
         'points': comments_pts,
-        'max': 25,
+        'max': comments_max,
         'total': comments_data.get('total_comments', 0),
-        'avg': round(comments_data.get('avg_comments', 0), 1)
+        'avg': round(comments_data.get('avg_comments', 0), 1),
+        'floating_weights': not comments_enabled
     }
 
-    # B4: Reaction Rate (10 pts) - с учётом размера канала
+    # B4: Reaction Rate (15 или 25 при floating) - v5.0: динамический max
     reaction_rate = calculate_reaction_rate(messages)
-    reaction_score = reaction_rate_to_points(reaction_rate, members)
+    reaction_max = weights['reaction_rate_max']
+    reaction_score = reaction_rate_to_points(reaction_rate, members, reaction_max)
     score += reaction_score
-    breakdown['reaction_rate'] = {'value': round(reaction_rate, 3), 'points': reaction_score, 'max': 15}
-
-    # B5: Originality - УДАЛЕНА в v4.2
-    # Причина: не дискриминирует (все каналы получают 100%)
-    # 5 баллов убраны из общего пула
+    breakdown['reaction_rate'] = {
+        'value': round(reaction_rate, 3),
+        'points': reaction_score,
+        'max': reaction_max,
+        'floating_boost': reaction_max > 15
+    }
 
     # ===== КАТЕГОРИЯ C: ВРЕМЕННЫЕ МЕТРИКИ =====
 
-    # C1: Views Decay (8 pts)
+    # C1: Views Decay (8 pts) - v5.0: Growth Trend check
     decay_ratio = calculate_views_decay(messages)
-    decay_score = decay_to_points(decay_ratio)
+    decay_score = decay_to_points(decay_ratio, reaction_rate)  # v5.0: передаём reaction_rate
     score += decay_score
-    breakdown['views_decay'] = {'value': round(decay_ratio, 2), 'points': decay_score, 'max': 8}
+    breakdown['views_decay'] = {
+        'value': round(decay_ratio, 2),
+        'points': decay_score,
+        'max': 8,
+        'growth_trend': decay_ratio < 0.7 and reaction_rate > 2.0
+    }
 
-    # C2: Post Regularity (3 pts)
+    # C2: Post Regularity (2 pts) - v5.0: снижено с 3
     regularity_cv = calculate_post_regularity(messages)
     regularity_score = regularity_to_points(regularity_cv)
     score += regularity_score
-    breakdown['regularity'] = {'value': round(regularity_cv, 2), 'points': regularity_score, 'max': 3}
+    breakdown['regularity'] = {'value': round(regularity_cv, 2), 'points': regularity_score, 'max': 2}
 
     # ===== КАТЕГОРИЯ D: АНАЛИЗ РЕАКЦИЙ =====
 
-    # D1: Reaction Stability (8 pts) - v3.0: стабильность пропорций вместо разнообразия
+    # D1: Reaction Stability (5 pts) - v5.0: снижено с 8
     stability = calculate_reaction_stability(messages)
     stability_score = stability_to_points(stability)
+    # Пропорционально уменьшаем (было max 8, стало 5)
+    stability_score = min(stability_score, 5)
     score += stability_score
     breakdown['reaction_stability'] = {
         'value': stability.get('stability_cv', 50.0),
         'points': stability_score,
-        'max': 8,
+        'max': 5,
         'unique_types': stability.get('unique_types', 0),
         'distribution': stability.get('distribution', {})
     }
 
-    # D2: ER Variation (10 pts) - v4.1: с учётом размера канала
+    # D2: ER Variation (10 pts) - без изменений
     er_cv = calculate_er_variation(messages)
     er_score = er_cv_to_points(er_cv, members)
     score += er_score
@@ -421,9 +519,8 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
 
     # ===== КАТЕГОРИЯ E: ДОПОЛНИТЕЛЬНЫЕ =====
 
-    # E1: Source Diversity (5 pts) - с учётом доли репостов
+    # E1: Source Diversity (5 pts) - без изменений
     source_max = calculate_source_diversity(messages)
-    # v4.2: Вычисляем repost_ratio напрямую (originality удалена)
     forwards = sum(1 for m in messages if getattr(m, 'forward_from_chat', None))
     repost_ratio = forwards / len(messages) if messages else 0
     source_score = source_to_points(source_max, repost_ratio)
@@ -435,18 +532,31 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
         'repost_ratio': round(repost_ratio, 2)
     }
 
-    # Round Numbers УДАЛЕНА в v3.0 - баллы перенесены в CV Views
-
-    # E2: Forward Rate (5 pts) - v4.3: Виральность контента
+    # E2: Forward Rate (15 или 20 при floating) - v5.0: увеличено с 5
     forward_rate = calculate_forwards_ratio(messages)
-    forward_score = forward_rate_to_points(forward_rate, members)
+    forward_max = weights['forward_rate_max']
+    forward_score = forward_rate_to_points(forward_rate, members, forward_max)
     score += forward_score
     breakdown['forward_rate'] = {
         'value': round(forward_rate, 3),
         'points': forward_score,
-        'max': 5,
-        'status': 'viral' if forward_rate >= 3.0 else ('good' if forward_rate >= 1.0 else 'low')
+        'max': forward_max,
+        'status': 'viral' if forward_rate >= 3.0 else ('good' if forward_rate >= 1.0 else 'low'),
+        'floating_boost': forward_max > 15
     }
+
+    # ===== v5.0: AD LOAD PENALTY =====
+    ad_load_data = calculate_ad_load(messages, channel_username)
+    ad_penalty = ad_load_to_penalty(ad_load_data)
+    if ad_penalty < 0:
+        score += ad_penalty  # Штраф (отрицательное число)
+        breakdown['ad_load_penalty'] = {
+            'value': ad_load_data['ad_load_percent'],
+            'points': ad_penalty,
+            'max': -15,
+            'status': ad_load_data['status'],
+            'ad_count': ad_load_data['ad_count']
+        }
 
     # ===== КАТЕГОРИЯ F: БОНУСЫ =====
 
@@ -456,12 +566,11 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
         score += 10
         breakdown['verified_bonus'] = {'value': True, 'points': 10, 'max': 10}
 
-    # F2: Channel Age Bonus (+8) - v4.3: Старый канал = стабильная аудитория
+    # F2: Channel Age Bonus (+8)
     age_days = get_channel_age_days(chat)
     age_bonus = age_to_bonus(age_days)
     if age_bonus > 0:
         score += age_bonus
-        # Определяем категорию возраста
         if age_days >= 730:
             age_status = 'veteran'
         elif age_days >= 365:
@@ -479,15 +588,12 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
             'status': age_status
         }
 
-    # ===== v4.0: CONVICTION PENALTY =====
-    # Даже если канал не SCAM, высокий conviction штрафует score
-    conviction_score = conviction_details.get('conviction_score', 0)
+    # ===== CONVICTION PENALTY =====
     effective_conviction = conviction_details.get('effective_conviction', 0)
 
     if effective_conviction >= 40:
-        # Штраф пропорционален conviction: каждые 10 пунктов выше 40 = -5 баллов
         penalty = int((effective_conviction - 40) * 0.5)
-        penalty = min(penalty, 30)  # Максимум -30 баллов
+        penalty = min(penalty, 30)
         score -= penalty
         breakdown['conviction_penalty'] = {
             'value': effective_conviction,
@@ -497,15 +603,12 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
         }
 
     # ===== ФИНАЛЬНЫЙ ВЕРДИКТ =====
-    # v4.3: Max теперь 118 (100 base + 10 verified + 8 age)
-    # Для вердикта используем base score (без бонусов) для справедливого сравнения
+    # v5.0: Max теперь 118 (100 base + 10 verified + 8 age)
     base_score = score - (10 if is_verified else 0) - age_bonus
     base_score = min(100, max(0, base_score))
 
-    # Полный score с бонусами (не ограничен 100)
     score = max(0, score)
 
-    # Вердикт по base score
     if base_score >= 75:
         verdict = 'EXCELLENT'
     elif base_score >= 55:
@@ -518,18 +621,20 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
         verdict = 'SCAM'
 
     return {
-        'channel': getattr(chat, 'username', None) or str(getattr(chat, 'id', 'unknown')),
+        'channel': channel_username or str(getattr(chat, 'id', 'unknown')),
         'members': members,
         'score': score,
-        'base_score': base_score,  # v4.3: Score без бонусов (для справедливого сравнения)
+        'base_score': base_score,
         'verdict': verdict,
-        'conviction': conviction_details,  # v4.3: Показываем conviction для всех каналов
+        'conviction': conviction_details,
         'breakdown': breakdown,
         'flags': {
             'is_scam': getattr(chat, 'is_scam', False),
             'is_fake': getattr(chat, 'is_fake', False),
             'is_verified': is_verified,
-            'comments_enabled': getattr(chat, 'linked_chat', None) is not None
+            'comments_enabled': comments_enabled,
+            'floating_weights_active': not comments_enabled
         },
+        'ad_load': ad_load_data,  # v5.0: Полные данные об Ad Load
         'raw_stats': get_raw_stats(messages)
     }
