@@ -35,8 +35,8 @@ RATE_LIMIT = {
     'batch_pause': 300,         # 5 минут отдыха
 }
 
-# Порог для GOOD каналов
-GOOD_THRESHOLD = 60
+# Порог для сбора ссылок (только качественные каналы размножаются)
+GOOD_THRESHOLD = 70
 
 
 class SmartCrawler:
