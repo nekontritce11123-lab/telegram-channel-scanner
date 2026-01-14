@@ -122,13 +122,12 @@ class SmartCrawler:
                     if not match.endswith('bot'):
                         links.add(match)
 
-            # Репосты
+            # Репосты (v16.0: используем username из chats_map)
             if hasattr(msg, 'forward_from_chat') and msg.forward_from_chat:
                 fwd = msg.forward_from_chat
-                if hasattr(fwd, 'username') and fwd.username:
-                    fwd_username = fwd.username.lower()
-                    if fwd_username != channel_username:
-                        links.add(fwd_username)
+                fwd_username = getattr(fwd, 'username', None)
+                if fwd_username and fwd_username != channel_username:
+                    links.add(fwd_username)
 
         return links
 

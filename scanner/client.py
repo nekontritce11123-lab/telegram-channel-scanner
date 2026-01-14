@@ -1,9 +1,11 @@
 """
 Pyrogram клиент для работы с Telegram API.
-v15.0: Ghost Protocol (3 запроса на канал)
+v16.0: Ghost Protocol + Smart Crawler
 - Математический анализ + User Forensics
 - MTProto Vector Layers для минимизации запросов
 - GetFullChannel для детекции мёртвой аудитории (online_count)
+- chats_map для извлечения username из репостов
+- FloodWait handling для безопасного краулинга
 """
 import os
 from dataclasses import dataclass, field
@@ -79,6 +81,15 @@ async def get_channel_data(client: Client, channel: str) -> tuple:
         )
     )
 
+    # v16.0: Создаём маппинг channel_id → username для репостов
+    chats_map = {}
+    if hasattr(raw_result, 'chats') and raw_result.chats:
+        for chat_obj in raw_result.chats:
+            chat_id = getattr(chat_obj, 'id', None)
+            chat_username = getattr(chat_obj, 'username', None)
+            if chat_id and chat_username:
+                chats_map[chat_id] = chat_username.lower()
+
     # Конвертируем raw messages в удобный формат
     messages = []
     comments_counts = []
@@ -89,7 +100,7 @@ async def get_channel_data(client: Client, channel: str) -> tuple:
             continue
 
         # Создаём обёртку для совместимости с существующим кодом
-        msg_wrapper = RawMessageWrapper(raw_msg)
+        msg_wrapper = RawMessageWrapper(raw_msg, chats_map)
         messages.append(msg_wrapper)
 
         # Извлекаем количество комментариев
@@ -114,7 +125,7 @@ class RawMessageWrapper:
     """
     Обёртка для raw Message чтобы обеспечить совместимость с существующим кодом metrics.py.
     """
-    def __init__(self, raw_msg):
+    def __init__(self, raw_msg, chats_map: dict = None):
         self._raw = raw_msg
 
         # Основные поля
@@ -150,12 +161,12 @@ class RawMessageWrapper:
         if hasattr(raw_msg, 'reactions') and raw_msg.reactions:
             self.reactions = RawReactionsWrapper(raw_msg.reactions)
 
-        # Forward from chat
+        # Forward from chat (v16.0: с username для краулера)
         self.forward_from_chat = None
         if hasattr(raw_msg, 'fwd_from') and raw_msg.fwd_from:
             fwd = raw_msg.fwd_from
             if hasattr(fwd, 'from_id') and fwd.from_id:
-                self.forward_from_chat = RawForwardWrapper(fwd.from_id)
+                self.forward_from_chat = RawForwardWrapper(fwd.from_id, chats_map)
 
 
 class RawRepliesWrapper:
@@ -191,9 +202,10 @@ class RawReactionCountWrapper:
 
 class RawForwardWrapper:
     """Обёртка для forward_from_chat"""
-    def __init__(self, from_id):
+    def __init__(self, from_id, chats_map: dict = None):
         self.id = None
         self.type = 'channel'
+        self.username = None  # v16.0: username для краулера
 
         if hasattr(from_id, 'channel_id'):
             self.id = from_id.channel_id
@@ -202,6 +214,10 @@ class RawForwardWrapper:
         elif hasattr(from_id, 'user_id'):
             self.id = from_id.user_id
             self.type = 'user'
+
+        # v16.0: Получаем username из chats_map
+        if self.id and chats_map and self.id in chats_map:
+            self.username = chats_map[self.id]
 
 
 class RawUserWrapper:
@@ -297,6 +313,15 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
         )
     )
 
+    # v16.0: Создаём маппинг channel_id → username для репостов
+    chats_map = {}
+    if hasattr(raw_result, 'chats') and raw_result.chats:
+        for chat_obj in raw_result.chats:
+            chat_id = getattr(chat_obj, 'id', None)
+            chat_username = getattr(chat_obj, 'username', None)
+            if chat_id and chat_username:
+                chats_map[chat_id] = chat_username.lower()
+
     # Обрабатываем сообщения
     messages = []
     comments_counts = []
@@ -305,7 +330,7 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
         if not hasattr(raw_msg, 'message'):
             continue
 
-        msg_wrapper = RawMessageWrapper(raw_msg)
+        msg_wrapper = RawMessageWrapper(raw_msg, chats_map)
         messages.append(msg_wrapper)
 
         if hasattr(raw_msg, 'replies') and raw_msg.replies:
