@@ -89,12 +89,21 @@ class SmartCrawler:
         channel_username = channel_username.lower()
 
         for msg in messages:
-            # Получаем текст
+            # Получаем текст (RawMessageWrapper использует 'message', не 'text')
             text = ""
-            if hasattr(msg, 'text') and msg.text:
+            if hasattr(msg, 'message') and msg.message:
+                text = msg.message.lower()
+            elif hasattr(msg, 'text') and msg.text:
                 text = msg.text.lower()
             elif hasattr(msg, 'caption') and msg.caption:
                 text = msg.caption.lower()
+
+            # Репосты проверяем даже без текста
+            if msg.forward_from_chat:
+                fwd = msg.forward_from_chat
+                fwd_username = getattr(fwd, 'username', None)
+                if fwd_username and fwd_username != channel_username:
+                    links.add(fwd_username)
 
             if not text:
                 continue
@@ -121,13 +130,6 @@ class SmartCrawler:
                 if match != channel_username:
                     if not match.endswith('bot'):
                         links.add(match)
-
-            # Репосты (v16.0: используем username из chats_map)
-            if hasattr(msg, 'forward_from_chat') and msg.forward_from_chat:
-                fwd = msg.forward_from_chat
-                fwd_username = getattr(fwd, 'username', None)
-                if fwd_username and fwd_username != channel_username:
-                    links.add(fwd_username)
 
         return links
 
