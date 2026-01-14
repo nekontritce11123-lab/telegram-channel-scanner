@@ -1,10 +1,38 @@
 """
 Модуль скоринга качества Telegram канала.
-v5.0: Floating Weights, Ad Load, Forward Rate boost.
-v5.1: Viral Exception - CV > 100% + Forward Rate > 3% = не штрафовать.
-v7.0: User Forensics интеграция (ID Clustering, Username Entropy, Hidden Flags).
-v7.1: Adaptive Paranoia Mode - если forensics недоступен, включается HARDCORE режим.
-v11.0: Executioner System - штрафы вместо нулей за явные нарушения.
+v15.2: Reactions Floating Weights + улучшенные Trust Penalties.
+
+Архитектура:
+- RAW SCORE (0-100): Качество "витрины" (cv_views, reach, comments, reactions...)
+- TRUST FACTOR (0.0-1.0): Множитель доверия (forensics + statistical + ghost + decay)
+- FINAL SCORE = RAW SCORE × TRUST FACTOR
+
+v15.2 Changes:
+- Floating Weights для реакций (если отключены → баллы в forward)
+- BOT WALL усилен: ×0.8 → ×0.6
+- HOLLOW VIEWS адаптивные пороги по размеру канала
+- SATELLITE: НЕ штрафовать если комменты живые (avg >= 1)
+
+Decay Analysis (v15.1):
+- ЗДОРОВАЯ ОРГАНИКА (0.3-0.95): Старые посты накопили просмотры → MAX баллы
+- ВИРАЛЬНЫЙ РОСТ (1.05-2.0): Канал растёт → MAX баллы
+- BOT WALL (×0.6): ratio 0.98-1.02 = подозрительно ровно
+- BUDGET CLIFF (×0.7): ratio < 0.2 = деньги кончились
+
+Ghost Protocol (v15.0):
+- GHOST CHANNEL (×0.5): 20k+ subs, <0.1% online
+- ZOMBIE AUDIENCE (×0.7): 5k+ subs, <0.3% online
+- MEMBER DISCREPANCY (×0.8): Расхождение count >10%
+
+Statistical Trust Penalties (v13.5):
+- HOLLOW VIEWS (×0.6): Reach > adaptive threshold + Forward <0.5%
+- ZOMBIE ENGAGEMENT (×0.7): Reach >50% + Reaction <0.1%
+- SATELLITE (×0.8): Source share >50% + avg_comments < 1
+
+Пример:
+- Органика: Raw 75, Decay 0.72 → Trust 1.0 → 75 EXCELLENT
+- Bot Wall: Raw 65, Decay 1.00 → Trust 0.6 → 39 MEDIUM
+- Ghost: Raw 65 × Trust 0.5 (Ghost Channel) = 32 HIGH_RISK
 """
 from typing import Any
 from .metrics import (
@@ -21,151 +49,260 @@ from .metrics import (
     calculate_ad_load,
     get_channel_age_days,
     get_raw_stats,
-    check_f16_reaction_flatness,  # v7.1: Adaptive Paranoia Mode
 )
 from .forensics import UserForensics
 
 
 # ============================================================================
-# ФУНКЦИИ КОНВЕРТАЦИИ МЕТРИК В БАЛЛЫ
+# v13.0: RAW SCORE WEIGHTS (сумма = 100)
 # ============================================================================
 
-def cv_to_points(cv: float, forward_rate: float = 0, max_pts: int = 15) -> int:
-    """
-    CV Views -> баллы (max 15, или 25 в Hardcore mode).
-    v5.0: Увеличено с 14 до 15.
-    v5.1: Viral Exception - если CV > 100%, но forward_rate > 3%, не обнулять.
-    v7.1: Динамический max_pts для Adaptive Paranoia Mode.
-    v11.0: Executioner - штраф -20 за CV > 100% без виральности.
+RAW_WEIGHTS = {
+    # КАЧЕСТВО КОНТЕНТА (40 баллов)
+    'quality': {
+        'cv_views': 15,      # Естественность просмотров
+        'reach': 10,         # Охват аудитории
+        'views_decay': 8,    # Стабильность просмотров
+        'forward_rate': 7,   # Виральность контента
+    },
+    # ENGAGEMENT (40 баллов)
+    'engagement': {
+        'comments': 15,      # Комментарии (floating если закрыты)
+        'reaction_rate': 15, # Реакции
+        'er_variation': 5,   # Разнообразие вовлечения
+        'stability': 5,      # Стабильность реакций
+    },
+    # РЕПУТАЦИЯ (20 баллов)
+    'reputation': {
+        'verified': 5,       # Верификация Telegram
+        'age': 5,            # Возраст канала
+        'premium': 5,        # Качество аудитории (премиумы)
+        'source': 5,         # Оригинальность контента
+    },
+}
 
-    CV > 100% = экстремальные скачки = накрутка волнами.
-    НО: вирусный пост (100к просмотров при среднем 5к) тоже даёт высокий CV.
-    Если контент репостят (forward_rate > 3%) - это "бриллиант", не скам.
+# Итоги по категориям
+CATEGORY_TOTALS = {
+    'quality': 40,
+    'engagement': 40,
+    'reputation': 20,
+}
 
-    Args:
-        cv: Coefficient of Variation просмотров (%)
-        forward_rate: Forward Rate (%) для Viral Exception
-        max_pts: Максимум баллов (15 в Normal, 25 в Hardcore mode)
+# ============================================================================
+# v13.0: TRUST FACTOR MULTIPLIERS
+# ============================================================================
+
+TRUST_FACTORS = {
+    # Forensics-based penalties
+    'id_clustering_fatality': 0.0,    # Ферма ботов = обнуление
+    'id_clustering_suspicious': 0.5,  # Подозрительная кластеризация
+    'geo_dc_mismatch': 0.2,           # Чужие датацентры
+    'premium_zero': 0.8,              # 0% премиумов
+
+    # Content-based penalties
+    'ad_load_spam': 0.4,              # >50% рекламы
+    'ad_load_heavy': 0.7,             # >30% рекламы
+    'hidden_comments': 0.7,           # Скрытые комментарии
+
+    # Conviction-based penalties
+    'conviction_critical': 0.3,       # Conviction >= 70
+    'conviction_high': 0.6,           # Conviction >= 50
+}
+
+# Backward compatibility alias
+WEIGHTS = RAW_WEIGHTS
+
+
+# ============================================================================
+# ФУНКЦИИ КОНВЕРТАЦИИ МЕТРИК В БАЛЛЫ (v13.0)
+# ============================================================================
+
+def cv_to_points(cv: float, forward_rate: float = 0, max_pts: int = None) -> int:
     """
-    # Пропорциональные пороги относительно max_pts
+    v13.0: CV Views -> баллы (default max 15).
+    Естественность распределения просмотров.
+
+    CV 30-60% = идеально (естественная вариация)
+    CV < 10% = подозрительно ровно (боты)
+    CV > 100% = экстремальные скачки (накрутка волнами или вирус)
+
+    Viral Exception: CV > 100% + forward_rate > 3% = виральный контент, не штрафуем.
+    """
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['quality']['cv_views']  # 15
+
     if cv < 10:
         return 0   # Слишком ровно - бот
     if cv < 30:
-        return int(max_pts * 0.67)  # ~10/15 или ~17/25
+        return int(max_pts * 0.67)  # ~10
     if cv < 60:
-        return max_pts  # Хорошо - естественная вариация
+        return max_pts  # 15 - отлично
     if cv < 100:
-        return int(max_pts * 0.53)  # ~8/15 - подозрительно высокая вариация
+        return int(max_pts * 0.5)   # ~7 - подозрительно высоко
 
-    # CV >= 100% - потенциальная волновая накрутка
-    # v5.1: Viral Exception - если репостят, это вирусный контент, а не накрутка
+    # CV >= 100% - волновая накрутка или вирус
     if forward_rate > 3.0:
-        return int(max_pts * 0.53)   # Вирусный контент - спасаем "бриллиант"
-
-    # v11.0: EXECUTIONER - штраф вместо нуля
-    return -20     # CV > 100% без виральности = явный скам паттерн
+        return int(max_pts * 0.5)   # Viral Exception - спасаем
+    return 0  # Накрутка волнами
 
 
-def reach_to_points(reach: float, members: int = 0) -> int:
+def reach_to_points(reach: float, members: int = 0, max_pts: int = None) -> int:
     """
-    Reach % -> баллы (max 10). Учитывает размер канала.
-    v5.0: Снижено с 12 до 10 для перераспределения в Forward Rate.
-    v11.0: Executioner - штраф -20 за reach > 200% (физически невозможно).
+    v13.0: Reach % -> баллы (default max 10). Учитывает размер канала.
+    Без отрицательных штрафов - просто 0 за плохие значения.
     """
-    # v11.0: EXECUTIONER - reach > 200% физически невозможен для любого канала
-    if reach > 200:
-        return -20  # Явная накрутка - штраф
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['quality']['reach']  # 10
 
     # Размерные пороги для "накрутки"
     if members < 200:
         scam_threshold = 200  # Микроканалы - до 200% норма
-        high_is_good = 150    # До 150% = отлично
+        high_is_good = 150
     elif members < 1000:
-        scam_threshold = 150  # Малые - до 150%
-        high_is_good = 100    # До 100% = отлично
+        scam_threshold = 150
+        high_is_good = 100
     elif members < 5000:
-        scam_threshold = 130  # Средние - до 130%
-        high_is_good = 80     # До 80% = отлично
+        scam_threshold = 130
+        high_is_good = 80
     else:
-        scam_threshold = 120  # Большие - до 120%
-        high_is_good = 60     # До 60% = отлично
+        scam_threshold = 120
+        high_is_good = 60
 
     if reach > scam_threshold:
-        return 0  # Накрутка просмотров для данного размера (мягкий 0)
+        return 0  # Накрутка
 
-    # Высокий reach для малых каналов - это ХОРОШО (лояльная аудитория)
     if reach > high_is_good:
-        return 4  # Высоковато, но в пределах нормы
+        return int(max_pts * 0.5)  # 5
 
     if reach < 5:
         return 0  # Мёртвая аудитория
     if reach < 10:
-        return 3
+        return int(max_pts * 0.4)  # 4
     if reach < 20:
-        return 6
+        return int(max_pts * 0.6)  # 6
     if reach < 50:
-        return 8
-    return 10  # 50%+ до high_is_good - отлично!
+        return int(max_pts * 0.8)  # 8
+    return max_pts  # 10
 
 
-def reaction_rate_to_points(rate: float, members: int = 0, max_pts: int = 15) -> int:
+def reaction_rate_to_points(rate: float, members: int = 0, max_pts: int = None) -> int:
     """
-    Reaction rate % -> баллы (max 15, или 25 при floating weights).
-    v5.0: Динамический max для floating weights.
-    v11.0: Executioner - штраф -15 за накрутку реакций.
+    v13.0: Reaction rate % -> баллы (default max 15, до 22 при floating weights).
+    Без отрицательных штрафов.
 
     Args:
         rate: Reaction rate в процентах
         members: Количество подписчиков
-        max_pts: Максимум баллов (15 по умолчанию, 25 при floating weights)
+        max_pts: Максимум баллов (15 по умолчанию, 22 при floating weights)
     """
-    # Размерные пороги - малые каналы имеют лояльное ядро
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['engagement']['reaction_rate']  # 15
+    # Размерные пороги
     if members < 200:
-        scam_threshold = 20  # Микроканалы - до 20% норма
+        scam_threshold = 20
         high_threshold = 15
     elif members < 1000:
-        scam_threshold = 12  # Малые - до 12%
+        scam_threshold = 12
         high_threshold = 8
     else:
-        scam_threshold = 10  # Большие - до 10%
+        scam_threshold = 10
         high_threshold = 5
 
-    # v11.0: EXECUTIONER - штраф за явную накрутку реакций
     if rate > scam_threshold:
-        return -15  # Накрутка реакций для данного размера
+        return 0  # Накрутка
 
-    # Пропорциональное распределение баллов относительно max_pts
     if rate > high_threshold:
-        return int(max_pts * 0.33)  # Подозрительно много (но в пределах)
+        return int(max_pts * 0.3)  # Подозрительно много
     if rate < 0.3:
-        return int(max_pts * 0.2)   # Мёртвая аудитория
+        return int(max_pts * 0.2)  # Мёртвая аудитория
     if rate < 1:
-        return int(max_pts * 0.53)  # ~8/15
+        return int(max_pts * 0.5)
     if rate < 3:
-        return int(max_pts * 0.8)   # ~12/15
-    return max_pts  # Отлично
+        return int(max_pts * 0.8)
+    return max_pts
 
 
-def decay_to_points(ratio: float, reaction_rate: float = 0) -> int:
+def decay_to_points(ratio: float, reaction_rate: float = 0, max_pts: int = None) -> tuple[int, dict]:
     """
-    Views decay ratio -> баллы (max 8).
-    v5.0: Поправка на Growth Trend - растущие каналы не штрафуются.
+    v15.1: Views Decay Analysis - исправленная логика.
 
-    Если ratio < 0.7 (новые посты лучше старых), но engagement высокий (>2%),
-    это Growth Trend - канал растёт органически, а не накрутка.
+    ratio = avg_views_new / avg_views_old
+
+    ПРАВИЛЬНОЕ понимание:
+    - ratio < 1.0 = Старые посты имеют БОЛЬШЕ просмотров → НОРМА (накопительный эффект)
+    - ratio ≈ 1.0 = Идеально ровно → ПОДОЗРИТЕЛЬНО (автонакрутка)
+    - ratio > 1.0 = Новые посты больше → Виральность ИЛИ свежая накрутка
+
+    Зоны:
+    - GREEN (0.3 - 0.95): Здоровая органика, старые накопили просмотры
+    - GREEN (1.05 - 2.0): Виральный рост, канал на хайпе
+    - RED (0.98 - 1.02): "Стена ботов" - слишком ровно
+    - RED (< 0.2): "Обрыв" - деньги на накрутку кончились
+
+    Returns:
+        (points, info_dict) с деталями анализа
     """
-    if ratio < 0.7:
-        # v5.0: Проверяем Growth Trend
-        if reaction_rate > 2.0:
-            return 4  # Growth Trend - канал растёт, не штрафуем сильно
-        return 0  # Накрутка просмотров
-    if ratio < 1.0:
-        return 2
-    if ratio < 1.5:
-        return 5
-    if ratio < 3.0:
-        return 8
-    return 4  # Слишком большая разница
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['quality']['views_decay']  # 8
+
+    info = {'ratio': ratio, 'zone': 'unknown', 'description': ''}
+
+    # Сценарий 1: ЗДОРОВАЯ ОРГАНИКА (0.3 - 0.95)
+    # Старые посты накопили просмотры естественным путём
+    # ratio 0.72 значит: новые = 72% от старых, старые на 28% больше - это НОРМА
+    if 0.3 <= ratio <= 0.95:
+        info['zone'] = 'healthy_organic'
+        info['description'] = f'Старые посты на {(1/ratio - 1)*100:.0f}% больше (накопительный эффект)'
+        return max_pts, info  # 8/8 MAX
+
+    # Сценарий 2: ВИРАЛЬНЫЙ РОСТ (1.05 - 2.0)
+    # Канал растёт, новые посты набирают больше (хайп, реклама, виральность)
+    if 1.05 <= ratio <= 2.0:
+        info['zone'] = 'viral_growth'
+        info['description'] = f'Новые посты на {(ratio - 1)*100:.0f}% больше (рост канала)'
+        return max_pts, info  # 8/8 MAX
+
+    # Сценарий 3: СТЕНА БОТОВ (0.98 - 1.02)
+    # Слишком ровные просмотры = автонакрутка фиксированного числа
+    # В реальности так НЕ бывает - всегда есть разброс
+    if 0.98 <= ratio <= 1.02:
+        info['zone'] = 'bot_wall'
+        info['description'] = f'Подозрительно ровно ({ratio:.2f}) - возможна автонакрутка'
+        return 2, info  # Штраф
+
+    # Сценарий 4: ОБРЫВ (< 0.2)
+    # Новые посты = 20% от старых - бюджет на накрутку кончился
+    # Админ перестал платить, а органики нет
+    if ratio < 0.2:
+        info['zone'] = 'budget_cliff'
+        info['description'] = f'Обрыв: новые = {ratio*100:.0f}% от старых (деньги кончились?)'
+        return 0, info  # SCAM signal
+
+    # Сценарий 5: УМЕРЕННЫЙ РОСТ (0.95 - 1.05)
+    # Небольшое колебание около 1.0 - нормально
+    if 0.95 < ratio < 1.05:
+        info['zone'] = 'stable'
+        info['description'] = 'Стабильные просмотры'
+        return 6, info  # Хорошо, но не идеально
+
+    # Сценарий 6: НЕБОЛЬШОЙ РАЗРЫВ (0.2 - 0.3)
+    # Большой разрыв, но не критичный - подозрительно
+    if 0.2 <= ratio < 0.3:
+        info['zone'] = 'suspicious_gap'
+        info['description'] = f'Большой разрыв: новые = {ratio*100:.0f}% от старых'
+        return 3, info  # Умеренный штраф
+
+    # Сценарий 7: СЛИШКОМ БОЛЬШОЙ РОСТ (> 2.0)
+    # Новые посты в 2+ раза больше старых - возможно свежая накрутка
+    if ratio > 2.0:
+        info['zone'] = 'suspicious_growth'
+        info['description'] = f'Подозрительный рост: новые в {ratio:.1f}x больше'
+        return 4, info  # Умеренный штраф
+
+    # Fallback
+    info['zone'] = 'unknown'
+    info['description'] = f'Необычное значение: {ratio:.2f}'
+    return 4, info
 
 
 def regularity_to_points(cv: float) -> int:
@@ -180,82 +317,89 @@ def regularity_to_points(cv: float) -> int:
     return 2
 
 
-def stability_to_points(data: dict) -> int:
+def stability_to_points(data: dict, max_pts: int = None) -> int:
     """
-    Reaction Stability -> баллы (max 8).
-    v4.1: Высокий CV = разнообразный контент = ХОРОШО, не штрафовать!
+    v13.0: Reaction Stability -> баллы (default max 5).
+    Высокий CV = разнообразный контент = ХОРОШО.
     """
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['engagement']['stability']  # 5
     cv = data.get('stability_cv', 50.0)
 
     if cv < 15:
-        return 2   # Слишком идеально - возможна манипуляция ботами
+        return 1   # Слишком идеально - возможна манипуляция
     if cv < 50:
-        return 8   # Отлично - стабильные предпочтения аудитории
+        return max_pts  # 5 - отлично
     if cv < 100:
-        return 7   # Хорошо - умеренная вариация (разный контент)
+        return 4   # Хорошо
     if cv < 200:
-        return 6   # Нормально - разнообразный контент, живая аудитория
-    return 5       # Очень высокая вариация - всё равно живая аудитория!
+        return 3   # Нормально
+    return 3       # Высокая вариация - живая аудитория
 
 
-def er_cv_to_points(cv: float, members: int = 0) -> int:
+def er_cv_to_points(cv: float, members: int = 0, max_pts: int = None) -> int:
     """
-    ER variation CV -> баллы (max 10).
-    v4.1: Микроканалы имеют низкую ER вариацию по математике - смягчить пороги.
+    v13.0: ER variation CV -> баллы (default max 5).
     """
-    # Микроканалы: маленькие числа → меньше статистическая вариация
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['engagement']['er_variation']  # 5
+
+    # Микроканалы: маленькие числа → меньше вариация
     if members < 200:
         if cv < 15:
-            return 0   # Слишком ровно - боты
+            return 0
         if cv < 30:
-            return 5   # Нормально для микро
+            return int(max_pts * 0.5)  # 2
         if cv < 50:
-            return 8   # Хорошо
-        return 10      # Отлично
+            return int(max_pts * 0.8)  # 4
+        return max_pts  # 5
 
-    # Стандартные пороги для больших каналов
+    # Стандартные пороги
     if cv < 20:
         return 0
     if cv < 40:
-        return 3
+        return int(max_pts * 0.4)  # 2
     if cv < 70:
-        return 7
-    return 10
+        return int(max_pts * 0.7)  # 3
+    return max_pts  # 5
 
 
-def source_to_points(max_share: float, repost_ratio: float = 1.0) -> int:
+def source_to_points(max_share: float, repost_ratio: float = 1.0, max_pts: int = None) -> int:
     """
-    Source diversity -> баллы (max 5). Учитывает долю репостов.
-    v11.0: Executioner - штраф -20 за сателлит-канал.
+    v13.0: Source diversity -> баллы (default max 5).
+    Без отрицательных штрафов.
     """
-    # Если репостов мало (<10%) - не штрафовать за концентрацию источников
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['reputation']['source']  # 5
+
+    # Если репостов мало (<10%) - оригинальный контент
     if repost_ratio < 0.10:
-        return 5  # Канал с оригинальным контентом
+        return max_pts
 
-    # v11.0: EXECUTIONER - штраф за сателлит
     if max_share > 0.7:
-        return -20  # Сателлит (>70% из одного источника) - это мусор
+        return 0  # Сателлит
     if max_share > 0.5:
-        return 2
-    return 5
+        return int(max_pts * 0.4)  # 2
+    return max_pts
 
 
 # round_to_points УДАЛЕНА в v3.0
 # Причина: метрика не дискриминирует, баллы перенесены в cv_to_points
 
 
-def forward_rate_to_points(rate: float, members: int = 0, max_pts: int = 15) -> int:
+def forward_rate_to_points(rate: float, members: int = 0, max_pts: int = None) -> int:
     """
-    Forward Rate % -> баллы (max 15, или 20 при floating weights).
-    v5.0: Виральность контента - репост = бесплатный охват для рекламодателя.
-    Учитывает размер канала (большие каналы имеют ниже forward rate естественно).
+    v13.0: Forward Rate % -> баллы (default max 7, до 15 при floating weights).
 
     Args:
         rate: Forward rate в процентах
-        members: Количество подписчиков (для размерных порогов)
-        max_pts: Максимум баллов (15 по умолчанию, 20 при floating weights)
+        members: Количество подписчиков
+        max_pts: Максимум баллов (7 по умолчанию, 15 при floating weights)
     """
-    # Большие каналы имеют ниже forward rate из-за насыщения аудитории
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['quality']['forward_rate']  # 7
+
+    # Размерные пороги
     if members > 50000:
         thresholds = {'viral': 1.5, 'excellent': 0.7, 'good': 0.3, 'medium': 0.1}
     elif members > 5000:
@@ -263,253 +407,546 @@ def forward_rate_to_points(rate: float, members: int = 0, max_pts: int = 15) -> 
     else:
         thresholds = {'viral': 3.0, 'excellent': 1.5, 'good': 0.5, 'medium': 0.1}
 
-    # Защита от накрутки пересылок
     if rate > 15:
-        return 0  # Подозрительно много - возможна накрутка через сеть каналов
+        return 0  # Накрутка
 
-    # Пропорциональное распределение баллов относительно max_pts
     if rate >= thresholds['viral']:
-        return max_pts  # Виральный контент
+        return max_pts
     if rate >= thresholds['excellent']:
-        return int(max_pts * 0.8)  # Отлично расшаривают
+        return int(max_pts * 0.8)
     if rate >= thresholds['good']:
-        return int(max_pts * 0.6)  # Хорошо
+        return int(max_pts * 0.6)
     if rate >= thresholds['medium']:
-        return int(max_pts * 0.3)  # Средне
+        return int(max_pts * 0.3)
     if rate >= 0.05:
-        return int(max_pts * 0.1)  # Минимум
-    return 0  # Контент не расшаривают
+        return int(max_pts * 0.15)
+    return 0
 
 
-def age_to_bonus(age_days: int) -> int:
+def age_to_points(age_days: int, max_pts: int = None) -> int:
     """
-    Возраст канала -> бонус (max 8).
-    v4.3: Старый канал = стабильная аудитория = лучше для рекламы.
+    v13.0: Возраст канала -> баллы (default max 5).
+    Старый канал = стабильная аудитория.
     """
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['reputation']['age']  # 5
+
     if age_days < 0:
-        return 0   # Дата недоступна
+        return 0
     if age_days < 90:
         return 0   # < 3 месяцев - newborn
     if age_days < 180:
-        return 2   # 3-6 месяцев - young
+        return 1   # 3-6 месяцев - young
     if age_days < 365:
-        return 4   # 6-12 месяцев - mature
+        return 2   # 6-12 месяцев - mature
     if age_days < 730:
-        return 6   # 1-2 года - established
-    return 8       # > 2 лет - veteran
+        return 4   # 1-2 года - established
+    return max_pts  # 5 - > 2 лет - veteran
 
 
-def calculate_floating_weights(comments_enabled: bool) -> dict:
+def calculate_floating_weights(comments_enabled: bool, reactions_enabled: bool = True) -> dict:
     """
-    v5.0: Плавающие веса - если комменты закрыты, их баллы перераспределяются.
+    v15.2: Плавающие веса для комментов И реакций.
 
-    Логика: "Рот закрыт, но люди голосуют лайками и репостами"
-    - 15 баллов комментариев → 10 в Reactions, 5 в Forward Rate
+    Базовые веса: 15 comments + 15 reactions + 7 forward = 37
 
-    Returns:
-        dict с max баллами для каждой метрики
+    Сценарии:
+    - Всё включено:           15 comments + 15 reactions + 7 forward = 37
+    - Без комментов:          0 comments + 22 reactions + 15 forward = 37
+    - Без реакций:            22 comments + 0 reactions + 15 forward = 37
+    - Без обоих:              0 comments + 0 reactions + 37 forward = 37
     """
-    if comments_enabled:
+    base_comments = RAW_WEIGHTS['engagement']['comments']      # 15
+    base_reactions = RAW_WEIGHTS['engagement']['reaction_rate']  # 15
+    base_forward = RAW_WEIGHTS['quality']['forward_rate']        # 7
+
+    if comments_enabled and reactions_enabled:
+        # Всё включено - стандартные веса
         return {
-            'comments_max': 15,
-            'reaction_rate_max': 15,
-            'forward_rate_max': 15
+            'comments_max': base_comments,
+            'reaction_rate_max': base_reactions,
+            'forward_rate_max': base_forward
         }
-    else:
-        # Комменты закрыты - перераспределяем их 15 баллов
+    elif comments_enabled and not reactions_enabled:
+        # Реакции отключены - их баллы идут в комменты и forward
+        return {
+            'comments_max': 22,        # 15 + 7 от реакций
+            'reaction_rate_max': 0,
+            'forward_rate_max': 15     # 7 + 8 от реакций
+        }
+    elif not comments_enabled and reactions_enabled:
+        # Комменты отключены - их баллы идут в реакции и forward
         return {
             'comments_max': 0,
-            'reaction_rate_max': 25,  # +10 от комментов
-            'forward_rate_max': 20    # +5 от комментов
+            'reaction_rate_max': 22,   # 15 + 7 от комментов
+            'forward_rate_max': 15     # 7 + 8 от комментов
+        }
+    else:
+        # Оба отключены - всё в forward
+        return {
+            'comments_max': 0,
+            'reaction_rate_max': 0,
+            'forward_rate_max': 37     # Все 37 баллов
         }
 
 
 def calculate_adaptive_weights(forensics_available: bool, users_count: int) -> dict:
     """
-    v7.1: Adaptive Paranoia Mode - адаптивные веса в зависимости от доступности данных.
+    v12.0: Определяем режим скоринга (normal/hardcore).
+    В v12.0 нет штрафов - просто разные способы заработать баллы.
 
-    Если forensics доступен (есть юзеры) - NORMAL MODE:
-    - Стандартные веса v5.1
-    - User Forensics активен
-
-    Если forensics недоступен (нет юзеров) - HARDCORE MODE:
-    - CV Views усилен до 25 pts (главный индикатор)
-    - Forward Rate усилен до 20 pts (виральность критична)
-    - Ad Load штраф усилен до -25
-    - Штраф -15 за закрытость
-    - F16 Reaction Flatness включён
-
-    Философия: "Спрятал аудиторию — докажи что не скам безупречной математикой"
+    Если forensics доступен - можно заработать баллы за качество аудитории.
+    Если нет - эти баллы недоступны (максимум 95 вместо 100).
     """
     MIN_USERS_FOR_FORENSICS = 10
 
     if forensics_available and users_count >= MIN_USERS_FOR_FORENSICS:
-        # NORMAL MODE: стандартные веса + User Forensics
         return {
             'mode': 'normal',
-            'cv_views_max': 15,
-            'comments_max': 15,
-            'reaction_rate_max': 15,
-            'forward_rate_max': 15,
-            'ad_load_max': -15,
-            'hidden_penalty': 0,
+            'forensics_available': True,
             'flatness_enabled': False
         }
     else:
-        # HARDCORE MODE: forensics недоступен
         return {
             'mode': 'hardcore',
-            'cv_views_max': 25,       # +10 (главный индикатор)
-            'comments_max': 0,        # нет данных о юзерах
-            'reaction_rate_max': 20,  # +5 (floating)
-            'forward_rate_max': 20,   # +5 (виральность критична)
-            'ad_load_max': -25,       # -10 (строже)
-            'hidden_penalty': -15,    # ШТРАФ за закрытость
-            'flatness_enabled': True  # включить F16
+            'forensics_available': False,
+            'flatness_enabled': True  # F16 как замена forensics
         }
 
 
-def ad_load_to_penalty(ad_load_data: dict, max_penalty: int = -15) -> int:
+def calculate_trust_factor(
+    forensics_result,
+    ad_load_data: dict,
+    comments_enabled: bool,
+    conviction_score: int,
+    is_verified: bool = False,
+    # v13.5: Statistical Trust Parameters
+    reach: float = 0,
+    forward_rate: float = 0,
+    reaction_rate: float = 0,
+    source_share: float = 0,
+    # v15.0: Ghost Protocol Parameters
+    members: int = 0,
+    online_count: int = 0,
+    participants_count: int = 0,
+    # v15.1: Decay Trust Parameters
+    decay_ratio: float = 0.7,
+    # v15.2: Satellite Parameters
+    avg_comments: float = 0
+) -> tuple[float, dict]:
     """
-    v5.0: Штраф за заспамленность рекламой.
-    v7.1: Динамический max_penalty для Adaptive Paranoia Mode.
+    v15.2: Вычисляет мультипликатор доверия.
+    Включает Forensics + Statistical Trust + Ghost Protocol + Decay Analysis.
 
-    Логика: Канал-помойка из рекламы = слепая аудитория = плохая конверсия.
-
-    Пороги (Normal mode, max_penalty=-15):
-    - Ad Load < 10%: 0 штрафа (чистый канал)
-    - Ad Load 10-30%: -5 баллов (умеренно)
-    - Ad Load 30-50%: -10 баллов (много рекламы)
-    - Ad Load > 50%: -15 баллов (спам-канал)
-
-    В Hardcore mode (max_penalty=-25) штрафы пропорционально увеличены.
+    Trust Factor - это число от 0.0 до 1.0, которое УМНОЖАЕТСЯ на Raw Score.
+    Различные сигналы недоверия снижают множитель.
 
     Args:
+        forensics_result: Результат UserForensics.analyze()
         ad_load_data: Данные о рекламной нагрузке
-        max_penalty: Максимальный штраф (-15 в Normal, -25 в Hardcore mode)
-    """
-    ad_percent = ad_load_data.get('ad_load_percent', 0)
+        comments_enabled: Включены ли комментарии
+        conviction_score: Effective conviction score
+        is_verified: Верифицирован ли канал Telegram
+        reach: Reach % (avg_views / members * 100)
+        forward_rate: Forward rate % (avg_forwards / avg_views * 100)
+        reaction_rate: Reaction rate % (avg_reactions / avg_views * 100)
+        source_share: Max share % от одного источника репостов
+        members: Количество подписчиков канала
+        online_count: Количество юзеров онлайн (из GetFullChannel)
+        participants_count: Точный count подписчиков (из GetFullChannel)
+        decay_ratio: avg_views_new / avg_views_old (v15.1)
 
-    # Пропорциональные штрафы относительно max_penalty
-    if ad_percent < 10:
-        return 0   # Чистый канал
-    if ad_percent < 30:
-        return int(max_penalty * 0.33)  # ~-5/-15 или ~-8/-25
-    if ad_percent < 50:
-        return int(max_penalty * 0.67)  # ~-10/-15 или ~-17/-25
-    return max_penalty  # Спам-канал
+    Returns:
+        (trust_factor, details) где:
+        - trust_factor: float 0.0-1.0
+        - details: dict с причинами снижения доверия
+    """
+    multipliers = []
+    details = {}
+
+    # 1. ID Clustering (из forensics) - КРИТИЧНО
+    if forensics_result and forensics_result.status == 'complete':
+        clustering = forensics_result.id_clustering
+        neighbor_ratio = clustering.get('neighbor_ratio', 0)
+
+        if clustering.get('fatality'):
+            # FATALITY обрабатывается раньше, но на всякий случай
+            multipliers.append(TRUST_FACTORS['id_clustering_fatality'])
+            details['id_clustering'] = {
+                'multiplier': 0.0,
+                'reason': 'FATALITY - ферма ботов',
+                'neighbor_ratio': neighbor_ratio
+            }
+        elif clustering.get('suspicious') or neighbor_ratio > 0.15:
+            multipliers.append(TRUST_FACTORS['id_clustering_suspicious'])
+            details['id_clustering'] = {
+                'multiplier': 0.5,
+                'reason': f'Подозрительная кластеризация ({neighbor_ratio:.0%})',
+                'neighbor_ratio': neighbor_ratio
+            }
+
+    # 2. Geo/DC Check (из forensics)
+    if forensics_result and forensics_result.status == 'complete':
+        geo = forensics_result.geo_dc_check
+        if geo.get('triggered'):
+            multipliers.append(TRUST_FACTORS['geo_dc_mismatch'])
+            details['geo_dc'] = {
+                'multiplier': 0.2,
+                'reason': f"{geo.get('foreign_ratio', 0):.0%} на чужих DC",
+                'foreign_ratio': geo.get('foreign_ratio', 0)
+            }
+
+    # 3. Premium Density (из forensics) - 0% премиумов подозрительно
+    if forensics_result and forensics_result.status == 'complete':
+        premium = forensics_result.premium_density
+        premium_ratio = premium.get('premium_ratio', 0)
+        total_users = premium.get('total_users', 0)
+
+        if premium_ratio == 0 and total_users >= 10:
+            multipliers.append(TRUST_FACTORS['premium_zero'])
+            details['premium'] = {
+                'multiplier': 0.8,
+                'reason': '0% премиумов при достаточной выборке'
+            }
+
+    # 4. Ad Load - рекламный спам
+    ad_percent = ad_load_data.get('ad_load_percent', 0)
+    if ad_percent > 50:
+        multipliers.append(TRUST_FACTORS['ad_load_spam'])
+        details['ad_load'] = {
+            'multiplier': 0.4,
+            'reason': f'{ad_percent}% рекламы (спам)'
+        }
+    elif ad_percent > 30:
+        multipliers.append(TRUST_FACTORS['ad_load_heavy'])
+        details['ad_load'] = {
+            'multiplier': 0.7,
+            'reason': f'{ad_percent}% рекламы (много)'
+        }
+
+    # 5. Hidden Comments - скрытые комментарии
+    # v13.1: Верифицированные каналы НЕ штрафуются (верификация = доверие)
+    if not comments_enabled and not is_verified:
+        # Смягчённый штраф ×0.85 вместо ×0.7
+        multipliers.append(0.85)
+        details['hidden_comments'] = {
+            'multiplier': 0.85,
+            'reason': 'Комментарии скрыты'
+        }
+
+    # 6. Conviction Score - накопленные подозрения
+    if conviction_score >= 70:
+        multipliers.append(TRUST_FACTORS['conviction_critical'])
+        details['conviction'] = {
+            'multiplier': 0.3,
+            'reason': f'Conviction {conviction_score} (критично)'
+        }
+    elif conviction_score >= 50:
+        multipliers.append(TRUST_FACTORS['conviction_high'])
+        details['conviction'] = {
+            'multiplier': 0.6,
+            'reason': f'Conviction {conviction_score} (высокий)'
+        }
+
+    # =========================================================================
+    # v13.5: STATISTICAL TRUST PENALTIES
+    # Детекция накрутки по математическим аномалиям
+    # =========================================================================
+
+    # 7. HOLLOW VIEWS - Накрученные просмотры без активности
+    # v15.2: Адаптивные пороги по размеру канала
+    # Маленькие каналы могут иметь высокий reach если растут (аудитория с YouTube и т.д.)
+    if members < 500:
+        hollow_threshold = 400   # Микроканалы — мягче
+    elif members < 2000:
+        hollow_threshold = 300   # Маленькие — средне
+    elif members < 10000:
+        hollow_threshold = 225   # Средние — строже
+    else:
+        hollow_threshold = 200   # Большие — очень строго
+
+    if reach > hollow_threshold and forward_rate < 0.5:
+        multipliers.append(0.6)
+        details['hollow_views'] = {
+            'multiplier': 0.6,
+            'reason': f'Reach {reach:.0f}% > {hollow_threshold}% при Forward {forward_rate:.2f}%'
+        }
+
+    # 8. ZOMBIE ENGAGEMENT - Высокий охват, никто не реагирует
+    # Reach >50% + Reaction <0.1% = боты смотрят, но не ставят реакции
+    if reach > 50 and reaction_rate < 0.1:
+        multipliers.append(0.7)
+        details['zombie_engagement'] = {
+            'multiplier': 0.7,
+            'reason': f'Reach {reach:.0f}% но Reactions {reaction_rate:.2f}%'
+        }
+
+    # 9. SATELLITE - Канал-сателлит (>50% постов из одного источника)
+    # v15.2: НЕ штрафовать если комменты живые (avg >= 1)
+    # Если аудитория активно комментирует репосты — она живая, реклама будет работать
+    if source_share > 50:
+        if avg_comments < 1:
+            # Мёртвые комменты + много репостов = сателлит
+            multipliers.append(0.8)
+            details['satellite'] = {
+                'multiplier': 0.8,
+                'reason': f'Source share {source_share:.0f}%, мёртвые комменты (avg {avg_comments:.1f})'
+            }
+        # Если комменты живые — НЕ штрафуем за репосты
+
+    # =========================================================================
+    # v15.0: GHOST PROTOCOL
+    # Детекция мёртвой/накрученной аудитории по online_count
+    # =========================================================================
+
+    # Вычисляем online ratio (% юзеров онлайн от общего числа подписчиков)
+    online_ratio = (online_count / members * 100) if members > 0 else 0
+
+    # 10. GHOST CHANNEL - Мёртвая аудитория (крупный канал с 0 онлайн)
+    # 20k+ подписчиков, но онлайн <0.1% = накрученные боты
+    if members > 20000 and online_count > 0 and online_ratio < 0.1:
+        multipliers.append(0.5)
+        details['ghost_channel'] = {
+            'multiplier': 0.5,
+            'reason': f'{members:,} subs, {online_count} online ({online_ratio:.2f}%)'
+        }
+
+    # 11. ZOMBIE AUDIENCE - Подозрительно мало онлайн (средний канал)
+    # 5k+ подписчиков, но онлайн <0.3% = подозрительно
+    elif members > 5000 and online_count > 0 and online_ratio < 0.3:
+        multipliers.append(0.7)
+        details['zombie_audience'] = {
+            'multiplier': 0.7,
+            'reason': f'Low online: {online_count} ({online_ratio:.2f}%)'
+        }
+
+    # 12. MEMBER DISCREPANCY - Telegram знает о накрутке
+    # Если participants_count (из GetFullChannel) сильно отличается от members
+    if participants_count > 0 and members > 0:
+        discrepancy = abs(participants_count - members)
+        discrepancy_ratio = (discrepancy / members) * 100
+        if discrepancy_ratio > 10:
+            multipliers.append(0.8)
+            details['member_discrepancy'] = {
+                'multiplier': 0.8,
+                'reason': f'Count mismatch: {members:,} vs {participants_count:,} ({discrepancy_ratio:.0f}%)'
+            }
+
+    # =========================================================================
+    # v15.1: DECAY TRUST PENALTIES
+    # Детекция накрутки по паттернам просмотров старых/новых постов
+    # =========================================================================
+
+    # 13. BOT WALL - Слишком ровные просмотры (автонакрутка)
+    # ratio 0.98-1.02 означает, что старые и новые посты имеют ИДЕНТИЧНЫЕ просмотры
+    # В реальности так не бывает - всегда есть накопительный эффект
+    # v15.2: Усилен штраф с ×0.8 до ×0.6 (явный признак накрутки)
+    if 0.98 <= decay_ratio <= 1.02:
+        multipliers.append(0.6)
+        details['bot_wall'] = {
+            'multiplier': 0.6,
+            'reason': f'Подозрительно ровные просмотры ({decay_ratio:.2f})'
+        }
+
+    # 14. BUDGET CLIFF - Деньги на накрутку кончились
+    # ratio < 0.2 означает, что новые посты = 20% от старых
+    # Админ перестал платить за накрутку, органики нет
+    if decay_ratio < 0.2 and decay_ratio > 0:
+        multipliers.append(0.7)
+        details['budget_cliff'] = {
+            'multiplier': 0.7,
+            'reason': f'Обрыв: новые = {decay_ratio*100:.0f}% от старых'
+        }
+
+    # Выбираем ХУДШИЙ (минимальный) множитель
+    trust_factor = min(multipliers) if multipliers else 1.0
+
+    return trust_factor, details
 
 
 # ============================================================================
 # ФИНАЛЬНЫЙ СКОРИНГ
 # ============================================================================
 
-def comments_to_points(comments_data: dict, members: int = 0, reach: float = 0) -> tuple[int, str]:
+def verified_to_points(is_verified: bool, max_pts: int = None) -> int:
+    """v13.0: Верификация -> баллы (default max 5)."""
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['reputation']['verified']  # 5
+    return max_pts if is_verified else 0
+
+
+def premium_to_points(premium_ratio: float, premium_count: int, max_pts: int = None) -> int:
     """
-    Конвертирует данные о комментариях в баллы (max 20).
-    v4.2: +5 баллов от удалённой Originality.
-    При подозрительном reach (>150%) комментарии НЕ могут компенсировать.
-    Возвращает (points, status_string).
+    v13.0: Premium Density -> баллы (default max 5).
+    Качество аудитории по премиум-статусам.
+    """
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['reputation']['premium']  # 5
+
+    if premium_count == 0:
+        return 0  # Нет премиумов = подозрительно
+    if premium_ratio > 0.05:
+        return max_pts  # >5% премиумов = отлично
+    if premium_ratio > 0.02:
+        return int(max_pts * 0.6)  # 3
+    if premium_ratio > 0.01:
+        return int(max_pts * 0.4)  # 2
+    return 1  # Есть хоть какие-то премиумы
+
+
+def check_f16_reaction_flatness(messages: list) -> dict:
+    """
+    F16: Reaction Flatness - детектор накрутки для каналов без комментов.
+    Если CV реакций между постами < 10% — это боты.
+    """
+    totals = []
+    for msg in messages[:5]:
+        if hasattr(msg, 'reactions') and msg.reactions:
+            reactions_list = getattr(msg.reactions, 'reactions', [])
+            if reactions_list:
+                total = sum(getattr(r, 'count', 0) for r in reactions_list)
+                totals.append(total)
+
+    if len(totals) < 3 or sum(totals) == 0:
+        return {
+            'triggered': False,
+            'penalty': 0,
+            'cv': 0,
+            'totals': totals,
+            'description': 'Недостаточно данных'
+        }
+
+    mean = sum(totals) / len(totals)
+    if mean == 0:
+        return {
+            'triggered': False,
+            'penalty': 0,
+            'cv': 0,
+            'totals': totals,
+            'description': 'Нет реакций'
+        }
+
+    variance = sum((x - mean) ** 2 for x in totals) / len(totals)
+    cv = (variance ** 0.5 / mean) * 100
+
+    # CV < 10% = подозрительно ровно
+    if cv < 10:
+        return {
+            'triggered': True,
+            'penalty': -5,  # v12.0: мягкий штраф вместо -20
+            'cv': round(cv, 1),
+            'totals': totals,
+            'description': f'CV реакций {cv:.1f}% < 10% (подозрительно ровно)'
+        }
+
+    return {
+        'triggered': False,
+        'penalty': 0,
+        'cv': round(cv, 1),
+        'totals': totals,
+        'description': f'CV реакций {cv:.1f}% (норма)'
+    }
+
+
+def comments_to_points(comments_data: dict, members: int = 0, max_pts: int = 10) -> tuple[int, str]:
+    """
+    v12.0: Комментарии -> баллы (max 10, или до 20 floating при закрытых комментах).
     """
     if not comments_data.get('enabled', False):
-        return 0, "disabled"  # RED FLAG
+        return 0, "disabled"
 
     avg = comments_data.get('avg_comments', 0)
 
-    # Если reach подозрительный, ограничить max баллы
-    if reach > 200:
-        max_pts = 8   # Очень подозрительно - комментарии не спасут
-    elif reach > 150:
-        max_pts = 15  # Подозрительно - ограничить влияние комментов
-    else:
-        max_pts = 25  # Нормальный reach (v4.2: +10 от originality, max=100)
-
-    # Размерные пороги - малые каналы имеют меньше комментаторов
-    # v4.2: max = 25 (добавлено 10 от originality)
+    # Размерные пороги
     if members < 200:
-        # Микроканалы - смягчены пороги (0.1 комментов = норма!)
         if avg < 0.01:
-            pts = 0   # Вообще нет комментов
+            pts = 0
         elif avg < 0.05:
-            pts = 8   # Очень мало, но есть
+            pts = int(max_pts * 0.3)  # 3
         elif avg < 0.2:
-            pts = 15  # Нормально для микро
+            pts = int(max_pts * 0.6)  # 6
         elif avg < 0.5:
-            pts = 20  # Хорошо
+            pts = int(max_pts * 0.8)  # 8
         else:
-            pts = 25  # Отлично
+            pts = max_pts  # 10
     elif members < 1000:
-        # Малые каналы: ожидаемо ~0.3-1 комментов
         if avg < 0.1:
             pts = 0
         elif avg < 0.3:
-            pts = 5
+            pts = int(max_pts * 0.2)  # 2
         elif avg < 1:
-            pts = 12
+            pts = int(max_pts * 0.5)  # 5
         elif avg < 3:
-            pts = 20
+            pts = int(max_pts * 0.8)  # 8
         else:
-            pts = 25
+            pts = max_pts  # 10
     else:
-        # Большие каналы: стандартные пороги
         if avg < 0.3:
             pts = 0
         elif avg < 0.5:
-            pts = 5
+            pts = int(max_pts * 0.2)  # 2
         elif avg < 2:
-            pts = 12
+            pts = int(max_pts * 0.5)  # 5
         elif avg < 5:
-            pts = 20
+            pts = int(max_pts * 0.8)  # 8
         else:
-            pts = 25
+            pts = max_pts  # 10
 
-    # Применить ограничение от reach
-    final_pts = min(pts, max_pts)
     status = f"enabled (avg {avg:.1f})"
-    if reach > 150:
-        status += f" [reach penalty]"
-
-    return final_pts, status
+    return pts, status
 
 
 def calculate_final_score(
     chat: Any,
     messages: list,
     comments_data: dict = None,
-    users: list = None
+    users: list = None,
+    channel_health: dict = None  # v15.0: Ghost Protocol данные
 ) -> dict:
     """
-    Полный расчёт качества канала.
-    v5.0: Floating Weights, Ad Load, Forward Rate boost, Growth Trend.
-    v7.0: User Forensics - ID Clustering, Username Entropy, Hidden Flags.
-    v7.1: Adaptive Paranoia Mode - HARDCORE режим если forensics недоступен.
-    Возвращает score 0-100 и детальный breakdown.
+    v15.0: Trust Multiplier System + Ghost Protocol.
+
+    Формула: Final Score = Raw Score × Trust Factor
+
+    RAW SCORE (0-100) - "витрина":
+    - КАЧЕСТВО: 40 баллов (cv_views 15, reach 10, decay 8, forward_rate 7)
+    - ENGAGEMENT: 40 баллов (comments 15, reactions 15, er_variation 5, stability 5)
+    - РЕПУТАЦИЯ: 20 баллов (verified 5, age 5, premium 5, source 5)
+
+    TRUST FACTOR (0.0-1.0) - мультипликатор доверия:
+    - ID Clustering FATALITY → ×0.0
+    - ID Clustering Suspicious → ×0.5
+    - Geo/DC Mismatch → ×0.2
+    - Ad Load >50% → ×0.4
+    - Ghost Channel (v15.0) → ×0.5
+    - Zombie Audience (v15.0) → ×0.7
+    - Hidden Comments → ×0.7
+    - Premium 0% → ×0.8
+    - Conviction ≥70 → ×0.3
 
     Args:
         chat: Объект чата/канала
         messages: Список сообщений
         comments_data: Данные о комментариях
-        users: Список юзеров для Forensics анализа (v7.0)
+        users: Список юзеров для Forensics анализа
     """
-    # Дефолтные данные о комментариях если не переданы
+    # Дефолтные данные
     if comments_data is None:
         comments_data = {
             'enabled': getattr(chat, 'linked_chat', None) is not None,
             'avg_comments': 0.0,
             'total_comments': 0
         }
-
-    # v7.0: Дефолтный пустой список юзеров
     if users is None:
         users = []
 
-    # v7.1: Определяем режим скоринга (Normal vs Hardcore)
+    # Определяем режим скоринга
     MIN_USERS_FOR_FORENSICS = 10
     forensics_available = len(users) >= MIN_USERS_FOR_FORENSICS
     adaptive_weights = calculate_adaptive_weights(forensics_available, len(users))
     scoring_mode = adaptive_weights['mode']
 
-    # ===== КАТЕГОРИЯ A: СИСТЕМА СОВОКУПНЫХ ФАКТОРОВ =====
+    # ===== SCAM CHECK =====
     is_scam, scam_reason, conviction_details = check_instant_scam(chat, messages, comments_data)
 
     if is_scam:
@@ -521,6 +958,7 @@ def calculate_final_score(
             'reason': scam_reason,
             'conviction': conviction_details,
             'breakdown': {},
+            'categories': {},
             'flags': {
                 'is_scam': getattr(chat, 'is_scam', False),
                 'is_fake': getattr(chat, 'is_fake', False),
@@ -530,320 +968,362 @@ def calculate_final_score(
             'raw_stats': get_raw_stats(messages)
         }
 
-    score = 0
-    breakdown = {}
-
-    # Данные для расчётов
+    # Базовые данные
     views = [m.views for m in messages if hasattr(m, 'views') and m.views]
     members = getattr(chat, 'members_count', 0) or 1
     avg_views = sum(views) / len(views) if views else 0
     channel_username = getattr(chat, 'username', None)
-
-    # ===== v5.0: FLOATING WEIGHTS =====
     comments_enabled = comments_data.get('enabled', False)
-    weights = calculate_floating_weights(comments_enabled)
-
-    # ===== КАТЕГОРИЯ B: ОСНОВНЫЕ МЕТРИКИ =====
-
-    # v5.1: Вычисляем forward_rate заранее для Viral Exception в CV Views
-    forward_rate = calculate_forwards_ratio(messages)
-
-    # B1: CV Views (15 pts Normal, 25 pts Hardcore) - v7.1: adaptive weights
-    cv = calculate_cv_views(views)
-    cv_max = adaptive_weights['cv_views_max']
-    cv_score = cv_to_points(cv, forward_rate, cv_max)  # v7.1: передаём max_pts
-    score += cv_score
-    viral_exception = cv >= 100 and forward_rate > 3.0
-    breakdown['cv_views'] = {
-        'value': round(cv, 2),
-        'points': cv_score,
-        'max': cv_max,
-        'viral_exception': viral_exception,  # v5.1: показываем если сработало
-        'hardcore_boost': cv_max > 15  # v7.1: показываем если усилено
-    }
-
-    # B2: Reach (10 pts) - v5.0: снижено с 12
-    reach = calculate_reach(avg_views, members)
-    reach_score = reach_to_points(reach, members)
-    score += reach_score
-    breakdown['reach'] = {'value': round(reach, 2), 'points': reach_score, 'max': 10}
-
-    # B3: Comments (15 pts или 0 при floating) - v5.0: зависит от floating weights
-    comments_max = weights['comments_max']
-    if comments_max > 0:
-        comments_pts, comments_status = comments_to_points(comments_data, members, reach)
-        # Ограничиваем максимумом из floating weights
-        comments_pts = min(comments_pts, comments_max)
-    else:
-        comments_pts = 0
-        comments_status = "disabled (floating weights)"
-    score += comments_pts
-    breakdown['comments'] = {
-        'value': comments_status,
-        'points': comments_pts,
-        'max': comments_max,
-        'total': comments_data.get('total_comments', 0),
-        'avg': round(comments_data.get('avg_comments', 0), 1),
-        'floating_weights': not comments_enabled
-    }
-
-    # B4: Reaction Rate (15 или 25 при floating) - v5.0: динамический max
-    reaction_rate = calculate_reaction_rate(messages)
-    reaction_max = weights['reaction_rate_max']
-    reaction_score = reaction_rate_to_points(reaction_rate, members, reaction_max)
-    score += reaction_score
-    breakdown['reaction_rate'] = {
-        'value': round(reaction_rate, 3),
-        'points': reaction_score,
-        'max': reaction_max,
-        'floating_boost': reaction_max > 15
-    }
-
-    # ===== КАТЕГОРИЯ C: ВРЕМЕННЫЕ МЕТРИКИ =====
-
-    # C1: Views Decay (8 pts) - v5.0: Growth Trend check
-    decay_ratio = calculate_views_decay(messages)
-    decay_score = decay_to_points(decay_ratio, reaction_rate)  # v5.0: передаём reaction_rate
-    score += decay_score
-    breakdown['views_decay'] = {
-        'value': round(decay_ratio, 2),
-        'points': decay_score,
-        'max': 8,
-        'growth_trend': decay_ratio < 0.7 and reaction_rate > 2.0
-    }
-
-    # C2: Post Regularity (2 pts) - v5.0: снижено с 3
-    regularity_cv = calculate_post_regularity(messages)
-    regularity_score = regularity_to_points(regularity_cv)
-    score += regularity_score
-    breakdown['regularity'] = {'value': round(regularity_cv, 2), 'points': regularity_score, 'max': 2}
-
-    # ===== КАТЕГОРИЯ D: АНАЛИЗ РЕАКЦИЙ =====
-
-    # D1: Reaction Stability (5 pts) - v5.0: снижено с 8
-    stability = calculate_reaction_stability(messages)
-    stability_score = stability_to_points(stability)
-    # Пропорционально уменьшаем (было max 8, стало 5)
-    stability_score = min(stability_score, 5)
-    score += stability_score
-    breakdown['reaction_stability'] = {
-        'value': stability.get('stability_cv', 50.0),
-        'points': stability_score,
-        'max': 5,
-        'unique_types': stability.get('unique_types', 0),
-        'distribution': stability.get('distribution', {})
-    }
-
-    # D2: ER Variation (10 pts) - без изменений
-    er_cv = calculate_er_variation(messages)
-    er_score = er_cv_to_points(er_cv, members)
-    score += er_score
-    breakdown['er_variation'] = {'value': round(er_cv, 1), 'points': er_score, 'max': 10}
-
-    # ===== КАТЕГОРИЯ E: ДОПОЛНИТЕЛЬНЫЕ =====
-
-    # E1: Source Diversity (5 pts) - без изменений
-    source_max = calculate_source_diversity(messages)
-    forwards = sum(1 for m in messages if getattr(m, 'forward_from_chat', None))
-    repost_ratio = forwards / len(messages) if messages else 0
-    source_score = source_to_points(source_max, repost_ratio)
-    score += source_score
-    breakdown['source_diversity'] = {
-        'value': round(1 - source_max, 2),
-        'points': source_score,
-        'max': 5,
-        'repost_ratio': round(repost_ratio, 2)
-    }
-
-    # E2: Forward Rate (15 или 20 при floating) - v5.0: увеличено с 5
-    # forward_rate уже вычислен выше для Viral Exception (v5.1)
-    forward_max = weights['forward_rate_max']
-    forward_score = forward_rate_to_points(forward_rate, members, forward_max)
-    score += forward_score
-    breakdown['forward_rate'] = {
-        'value': round(forward_rate, 3),
-        'points': forward_score,
-        'max': forward_max,
-        'status': 'viral' if forward_rate >= 3.0 else ('good' if forward_rate >= 1.0 else 'low'),
-        'floating_boost': forward_max > 15
-    }
-
-    # ===== v5.0: AD LOAD PENALTY (v7.1: adaptive max) =====
-    ad_load_data = calculate_ad_load(messages, channel_username)
-    ad_max_penalty = adaptive_weights['ad_load_max']
-    ad_penalty = ad_load_to_penalty(ad_load_data, ad_max_penalty)
-    if ad_penalty < 0:
-        score += ad_penalty  # Штраф (отрицательное число)
-        breakdown['ad_load_penalty'] = {
-            'value': ad_load_data['ad_load_percent'],
-            'points': ad_penalty,
-            'max': ad_max_penalty,
-            'status': ad_load_data['status'],
-            'ad_count': ad_load_data['ad_count'],
-            'hardcore_boost': ad_max_penalty < -15  # v7.1: показываем если усилено
-        }
-
-    # ===== v7.1: HIDDEN PENALTY (Hardcore mode only) =====
-    hidden_penalty = adaptive_weights['hidden_penalty']
-    if hidden_penalty < 0:
-        score += hidden_penalty  # Штраф за закрытую аудиторию
-        breakdown['hidden_penalty'] = {
-            'value': 'Forensics unavailable',
-            'points': hidden_penalty,
-            'description': 'Штраф за закрытую аудиторию (нет данных о юзерах)'
-        }
-
-    # ===== v7.1: F16 REACTION FLATNESS (Hardcore mode only) =====
-    if adaptive_weights['flatness_enabled']:
-        flatness_result = check_f16_reaction_flatness(messages)
-        if flatness_result['triggered']:
-            score += flatness_result['penalty']  # Штраф (отрицательное число)
-        breakdown['reaction_flatness'] = {
-            'triggered': flatness_result['triggered'],
-            'penalty': flatness_result['penalty'],
-            'cv': flatness_result['cv'],
-            'totals': flatness_result['totals'],
-            'description': flatness_result['description']
-        }
-
-    # ===== КАТЕГОРИЯ F: БОНУСЫ =====
-
-    # F1: Verified Bonus (+10)
     is_verified = getattr(chat, 'is_verified', False)
-    if is_verified:
-        score += 10
-        breakdown['verified_bonus'] = {'value': True, 'points': 10, 'max': 10}
 
-    # F2: Channel Age Bonus (+8)
-    age_days = get_channel_age_days(chat)
-    age_bonus = age_to_bonus(age_days)
-    if age_bonus > 0:
-        score += age_bonus
-        if age_days >= 730:
-            age_status = 'veteran'
-        elif age_days >= 365:
-            age_status = 'established'
-        elif age_days >= 180:
-            age_status = 'mature'
-        elif age_days >= 90:
-            age_status = 'young'
-        else:
-            age_status = 'newborn'
-        breakdown['age_bonus'] = {
-            'value': age_days,
-            'points': age_bonus,
-            'max': 8,
-            'status': age_status
-        }
+    # v15.2: Определяем включены ли реакции
+    # Если total_reactions = 0 на ВСЕХ постах - реакции отключены
+    total_reactions = sum(
+        getattr(m, 'reactions_count', 0) or 0
+        for m in messages
+    )
+    reactions_enabled = total_reactions > 0
 
-    # ===== CONVICTION PENALTY =====
-    effective_conviction = conviction_details.get('effective_conviction', 0)
+    # Floating weights для комментариев И реакций (v15.2)
+    weights = calculate_floating_weights(comments_enabled, reactions_enabled)
 
-    if effective_conviction >= 40:
-        penalty = int((effective_conviction - 40) * 0.5)
-        penalty = min(penalty, 30)
-        score -= penalty
-        breakdown['conviction_penalty'] = {
-            'value': effective_conviction,
-            'points': -penalty,
-            'max': -30,
-            'factors_triggered': conviction_details.get('factors_triggered', 0)
-        }
-
-    # ===== v11.0: USER FORENSICS - EXECUTIONER SYSTEM =====
+    # ===== USER FORENSICS =====
     forensics_result = None
     if users:
         forensics = UserForensics(users)
         forensics_result = forensics.analyze()
 
-        # Применяем штраф/бонус за forensics
-        # v11.0: total_penalty может быть и положительным (premium bonus)
-        if forensics_result.total_penalty != 0:
-            score += forensics_result.total_penalty
-
-        # v11.0: Обновлённая структура forensics breakdown
-        breakdown['forensics'] = {
-            'total_penalty': forensics_result.total_penalty,
-            'users_analyzed': forensics_result.users_analyzed,
-            'status': forensics_result.status,
-            # Method 1: ID Clustering (FATALITY -100)
-            'id_clustering': {
-                'triggered': forensics_result.id_clustering.get('triggered', False),
-                'fatality': forensics_result.id_clustering.get('fatality', False),
-                'penalty': forensics_result.id_clustering.get('penalty', 0),
-                'neighbor_ratio': forensics_result.id_clustering.get('neighbor_ratio', 0),
-                'description': forensics_result.id_clustering.get('description', '')
-            },
-            # Method 2: Geo/DC Check (-50)
-            'geo_dc_check': {
-                'triggered': forensics_result.geo_dc_check.get('triggered', False),
-                'penalty': forensics_result.geo_dc_check.get('penalty', 0),
-                'foreign_ratio': forensics_result.geo_dc_check.get('foreign_ratio', 0),
-                'users_with_dc': forensics_result.geo_dc_check.get('users_with_dc', 0),
-                'dc_distribution': forensics_result.geo_dc_check.get('dc_distribution', {}),
-                'description': forensics_result.geo_dc_check.get('description', '')
-            },
-            # Method 3: Premium Density (-20 / +10)
-            'premium_density': {
-                'triggered': forensics_result.premium_density.get('triggered', False),
-                'is_bonus': forensics_result.premium_density.get('is_bonus', False),
-                'penalty': forensics_result.premium_density.get('penalty', 0),
-                'premium_ratio': forensics_result.premium_density.get('premium_ratio', 0),
-                'premium_count': forensics_result.premium_density.get('premium_count', 0),
-                'description': forensics_result.premium_density.get('description', '')
-            },
-            # Method 4: Hidden Flags (-10)
-            'hidden_flags': {
-                'triggered': forensics_result.hidden_flags.get('triggered', False),
-                'penalty': forensics_result.hidden_flags.get('penalty', 0),
-                'counts': forensics_result.hidden_flags.get('counts', {}),
-                'description': forensics_result.hidden_flags.get('description', '')
+        # FATALITY - обнуляет весь канал
+        if forensics_result.id_clustering.get('fatality', False):
+            return {
+                'channel': channel_username or str(getattr(chat, 'id', 'unknown')),
+                'members': members,
+                'score': 0,
+                'verdict': 'SCAM',
+                'reason': 'ID Clustering FATALITY - обнаружена ферма ботов',
+                'conviction': conviction_details,
+                'breakdown': {},
+                'categories': {},
+                'forensics': {
+                    'id_clustering': forensics_result.id_clustering,
+                    'status': 'FATALITY'
+                },
+                'flags': {'is_verified': is_verified, 'comments_enabled': comments_enabled},
+                'raw_stats': get_raw_stats(messages)
             }
-        }
+
+    breakdown = {}
+    categories = {}
+
+    # =========================================================================
+    # КАТЕГОРИЯ 1: КАЧЕСТВО КОНТЕНТА (35 баллов)
+    # =========================================================================
+    quality_score = 0
+
+    # Вычисляем forward_rate заранее для Viral Exception
+    forward_rate = calculate_forwards_ratio(messages)
+
+    # 1.1 CV Views (max 12)
+    cv = calculate_cv_views(views)
+    cv_pts = cv_to_points(cv, forward_rate)
+    quality_score += cv_pts
+    breakdown['cv_views'] = {
+        'value': round(cv, 2),
+        'points': cv_pts,
+        'max': WEIGHTS['quality']['cv_views'],
+        'viral_exception': cv >= 100 and forward_rate > 3.0
+    }
+
+    # 1.2 Reach (max 8)
+    reach = calculate_reach(avg_views, members)
+    reach_pts = reach_to_points(reach, members)
+    quality_score += reach_pts
+    breakdown['reach'] = {
+        'value': round(reach, 2),
+        'points': reach_pts,
+        'max': WEIGHTS['quality']['reach']
+    }
+
+    # 1.3 Views Decay (max 8) - v15.1: Исправленная логика
+    reaction_rate = calculate_reaction_rate(messages)
+    decay_ratio = calculate_views_decay(messages)
+    decay_pts, decay_info = decay_to_points(decay_ratio, reaction_rate)
+    quality_score += decay_pts
+    breakdown['views_decay'] = {
+        'value': round(decay_ratio, 2),
+        'points': decay_pts,
+        'max': WEIGHTS['quality']['views_decay'],
+        'zone': decay_info['zone'],
+        'description': decay_info['description']
+    }
+
+    # 1.4 Forward Rate (max 7, или 14 floating)
+    forward_max = weights['forward_rate_max']
+    forward_pts = forward_rate_to_points(forward_rate, members, forward_max)
+    quality_score += forward_pts
+    breakdown['forward_rate'] = {
+        'value': round(forward_rate, 3),
+        'points': forward_pts,
+        'max': forward_max,
+        'floating_boost': forward_max > WEIGHTS['quality']['forward_rate']
+    }
+
+    categories['quality'] = {
+        'score': quality_score,
+        'max': CATEGORY_TOTALS['quality'] + (7 if not comments_enabled else 0)
+    }
+
+    # =========================================================================
+    # КАТЕГОРИЯ 2: ENGAGEMENT (30 баллов)
+    # =========================================================================
+    engagement_score = 0
+
+    # 2.1 Comments (max 10, или 0 floating)
+    comments_max = weights['comments_max']
+    if comments_max > 0:
+        comments_pts, comments_status = comments_to_points(comments_data, members, comments_max)
     else:
-        # Нет юзеров для анализа - добавляем информационную секцию
-        breakdown['forensics'] = {
-            'total_penalty': 0,
-            'users_analyzed': 0,
-            'status': 'skipped',
-            'description': 'Нет данных для User Forensics'
-        }
+        comments_pts = 0
+        comments_status = "disabled (floating)"
+    engagement_score += comments_pts
+    breakdown['comments'] = {
+        'value': comments_status,
+        'points': comments_pts,
+        'max': comments_max,
+        'avg': round(comments_data.get('avg_comments', 0), 1),
+        'floating_weights': not comments_enabled
+    }
 
-    # ===== ФИНАЛЬНЫЙ ВЕРДИКТ =====
-    # v5.0: Max теперь 118 (100 base + 10 verified + 8 age)
-    base_score = score - (10 if is_verified else 0) - age_bonus
-    base_score = min(100, max(0, base_score))
+    # 2.2 Reaction Rate (max 10, или 20 floating)
+    reaction_max = weights['reaction_rate_max']
+    reaction_pts = reaction_rate_to_points(reaction_rate, members, reaction_max)
+    engagement_score += reaction_pts
+    breakdown['reaction_rate'] = {
+        'value': round(reaction_rate, 3),
+        'points': reaction_pts,
+        'max': reaction_max,
+        'floating_boost': reaction_max > WEIGHTS['engagement']['reaction_rate']
+    }
 
-    score = max(0, score)
+    # 2.3 ER Variation (max 5)
+    er_cv = calculate_er_variation(messages)
+    er_pts = er_cv_to_points(er_cv, members)
+    engagement_score += er_pts
+    breakdown['er_variation'] = {
+        'value': round(er_cv, 1),
+        'points': er_pts,
+        'max': WEIGHTS['engagement']['er_variation']
+    }
 
-    if base_score >= 75:
+    # 2.4 Reaction Stability (max 5)
+    stability = calculate_reaction_stability(messages)
+    stability_pts = stability_to_points(stability)
+    engagement_score += stability_pts
+    breakdown['reaction_stability'] = {
+        'value': round(stability.get('stability_cv', 50.0), 1),
+        'points': stability_pts,
+        'max': WEIGHTS['engagement']['stability']
+    }
+
+    categories['engagement'] = {
+        'score': engagement_score,
+        'max': CATEGORY_TOTALS['engagement'] + (10 if not comments_enabled else 0)
+    }
+
+    # =========================================================================
+    # КАТЕГОРИЯ 3: РЕПУТАЦИЯ (20 баллов)
+    # =========================================================================
+    reputation_score = 0
+
+    # 3.1 Verified (max 5)
+    verified_pts = verified_to_points(is_verified)
+    reputation_score += verified_pts
+    breakdown['verified'] = {
+        'value': is_verified,
+        'points': verified_pts,
+        'max': WEIGHTS['reputation']['verified']
+    }
+
+    # 3.2 Channel Age (max 5)
+    age_days = get_channel_age_days(chat)
+    age_pts = age_to_points(age_days)
+    reputation_score += age_pts
+
+    if age_days >= 730:
+        age_status = 'veteran'
+    elif age_days >= 365:
+        age_status = 'established'
+    elif age_days >= 180:
+        age_status = 'mature'
+    elif age_days >= 90:
+        age_status = 'young'
+    else:
+        age_status = 'newborn'
+    breakdown['age'] = {
+        'value': age_days,
+        'points': age_pts,
+        'max': WEIGHTS['reputation']['age'],
+        'status': age_status
+    }
+
+    # 3.3 Premium Density (max 5) - из Forensics
+    premium_pts = 0
+    if forensics_result and forensics_result.status == 'complete':
+        premium_ratio = forensics_result.premium_density.get('premium_ratio', 0)
+        premium_count = forensics_result.premium_density.get('premium_count', 0)
+        premium_pts = premium_to_points(premium_ratio, premium_count)
+    reputation_score += premium_pts
+    breakdown['premium'] = {
+        'value': round(forensics_result.premium_density.get('premium_ratio', 0) * 100, 1) if forensics_result else 0,
+        'points': premium_pts,
+        'max': WEIGHTS['reputation']['premium'],
+        'status': 'available' if forensics_result else 'no_data'
+    }
+
+    # 3.4 Source Diversity (max 5)
+    source_max_share = calculate_source_diversity(messages)
+    forwards = sum(1 for m in messages if getattr(m, 'forward_from_chat', None))
+    repost_ratio = forwards / len(messages) if messages else 0
+    source_pts = source_to_points(source_max_share, repost_ratio)
+    reputation_score += source_pts
+    breakdown['source_diversity'] = {
+        'value': round(1 - source_max_share, 2),
+        'points': source_pts,
+        'max': WEIGHTS['reputation']['source'],
+        'repost_ratio': round(repost_ratio, 2)
+    }
+
+    categories['reputation'] = {
+        'score': reputation_score,
+        'max': CATEGORY_TOTALS['reputation']
+    }
+
+    # =========================================================================
+    # v13.0: RAW SCORE (0-100) - "витрина"
+    # =========================================================================
+    raw_score = quality_score + engagement_score + reputation_score
+    raw_score = min(100, max(0, raw_score))  # Cap at 0-100
+
+    # Дополнительные данные для Trust Factor
+    ad_load_data = calculate_ad_load(messages, channel_username)
+    regularity_cv = calculate_post_regularity(messages)
+
+    # Сохраняем в breakdown для отладки
+    breakdown['ad_load'] = {
+        'value': ad_load_data['ad_load_percent'],
+        'status': ad_load_data['status'],
+        'affects': 'trust_factor'  # v13.0: влияет на Trust, не на Raw
+    }
+    breakdown['regularity'] = {
+        'value': round(regularity_cv, 2),
+        'status': 'info_only'  # v13.0: только информационно
+    }
+
+    # =========================================================================
+    # v13.5: TRUST FACTOR (0.0-1.0) - мультипликатор доверия
+    # Включает Forensics + Statistical Trust Penalties
+    # =========================================================================
+    effective_conviction = conviction_details.get('effective_conviction', 0)
+
+    # v13.5: Подготовка метрик для Statistical Trust
+    # source_share уже вычислен выше как source_max_share (0.0-1.0)
+    # Конвертируем в проценты для consistency
+    source_share_percent = source_max_share * 100
+
+    # v15.0: Извлекаем Ghost Protocol данные
+    if channel_health is None:
+        channel_health = {}
+    online_count = channel_health.get('online_count', 0)
+    participants_count = channel_health.get('participants_count', 0)
+
+    trust_factor, trust_details = calculate_trust_factor(
+        forensics_result=forensics_result,
+        ad_load_data=ad_load_data,
+        comments_enabled=comments_enabled,
+        conviction_score=effective_conviction,
+        is_verified=is_verified,
+        # v13.5: Statistical Trust Parameters
+        reach=reach,
+        forward_rate=forward_rate,
+        reaction_rate=reaction_rate,
+        source_share=source_share_percent,
+        # v15.0: Ghost Protocol Parameters
+        members=members,
+        online_count=online_count,
+        participants_count=participants_count,
+        # v15.1: Decay Trust Parameters
+        decay_ratio=decay_ratio,
+        # v15.2: Satellite Parameters
+        avg_comments=comments_data.get('avg_comments', 0)
+    )
+
+    # F16: Reaction Flatness в Hardcore mode (дополнительный сигнал для Trust)
+    if adaptive_weights['flatness_enabled']:
+        flatness_result = check_f16_reaction_flatness(messages)
+        breakdown['reaction_flatness'] = flatness_result
+        if flatness_result['triggered']:
+            # Flatness = ×0.8 (мягче чем hidden_comments)
+            if trust_factor > 0.8:
+                trust_factor = 0.8
+            trust_details['reaction_flatness'] = {
+                'multiplier': 0.8,
+                'reason': f"CV реакций {flatness_result['cv']:.1f}% (подозрительно ровно)"
+            }
+
+    # =========================================================================
+    # v13.0: FINAL SCORE = RAW × TRUST
+    # =========================================================================
+    final_score = int(raw_score * trust_factor)
+    final_score = max(0, min(100, final_score))
+
+    # Вердикт
+    if final_score >= 75:
         verdict = 'EXCELLENT'
-    elif base_score >= 55:
+    elif final_score >= 55:
         verdict = 'GOOD'
-    elif base_score >= 40:
+    elif final_score >= 40:
         verdict = 'MEDIUM'
-    elif base_score >= 25:
+    elif final_score >= 25:
         verdict = 'HIGH_RISK'
     else:
         verdict = 'SCAM'
 
+    # Forensics breakdown
+    forensics_breakdown = None
+    if forensics_result:
+        forensics_breakdown = {
+            'users_analyzed': forensics_result.users_analyzed,
+            'status': forensics_result.status,
+            'id_clustering': forensics_result.id_clustering,
+            'geo_dc_check': forensics_result.geo_dc_check,
+            'premium_density': forensics_result.premium_density,
+            'hidden_flags': forensics_result.hidden_flags
+        }
+
     return {
         'channel': channel_username or str(getattr(chat, 'id', 'unknown')),
         'members': members,
-        'score': score,
-        'base_score': base_score,
+        # v13.0: Trust Multiplier System
+        'raw_score': raw_score,
+        'trust_factor': round(trust_factor, 2),
+        'trust_details': trust_details,
+        'score': final_score,
         'verdict': verdict,
-        'scoring_mode': scoring_mode,  # v7.1: Normal или Hardcore
-        'conviction': conviction_details,
+        'scoring_mode': scoring_mode,
+        'categories': categories,
         'breakdown': breakdown,
+        'forensics': forensics_breakdown,
+        'conviction': conviction_details,
         'flags': {
             'is_scam': getattr(chat, 'is_scam', False),
             'is_fake': getattr(chat, 'is_fake', False),
             'is_verified': is_verified,
             'comments_enabled': comments_enabled,
-            'floating_weights_active': not comments_enabled,
-            'hardcore_mode': scoring_mode == 'hardcore'  # v7.1
+            'reactions_enabled': reactions_enabled,  # v15.2
+            'floating_weights': not comments_enabled or not reactions_enabled,
+            'hardcore_mode': scoring_mode == 'hardcore'
         },
-        'ad_load': ad_load_data,  # v5.0: Полные данные об Ad Load
+        'ad_load': ad_load_data,
+        'channel_health': channel_health,  # v15.0: Ghost Protocol
         'raw_stats': get_raw_stats(messages)
     }

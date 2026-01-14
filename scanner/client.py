@@ -1,8 +1,9 @@
 """
 Pyrogram клиент для работы с Telegram API.
-v7.0: Low-Profile Scanner (2 запроса на канал)
+v15.0: Ghost Protocol (3 запроса на канал)
 - Математический анализ + User Forensics
 - MTProto Vector Layers для минимизации запросов
+- GetFullChannel для детекции мёртвой аудитории (online_count)
 """
 import os
 from dataclasses import dataclass, field
@@ -242,27 +243,29 @@ class RawUserWrapper:
 @dataclass
 class ScanResult:
     """
-    Результат сканирования канала v7.0.
-    Содержит все данные для математического анализа и User Forensics.
+    Результат сканирования канала v15.0.
+    Содержит все данные для математического анализа, User Forensics и Ghost Protocol.
     """
     chat: Any                           # Информация о канале
     messages: list = field(default_factory=list)   # 50 сообщений
     comments_data: dict = field(default_factory=dict)  # Данные о комментариях
     users: list = field(default_factory=list)      # Юзеры для Forensics
-    api_requests: int = 2               # Количество API запросов
+    channel_health: dict = field(default_factory=dict)  # v15.0: Ghost Protocol данные
+    api_requests: int = 3               # Количество API запросов (было 2)
 
 
 # ============================================================================
-# v7.0: LOW-PROFILE SMART SCAN
+# v15.0: GHOST PROTOCOL SMART SCAN
 # ============================================================================
 
 async def smart_scan(client: Client, channel: str) -> ScanResult:
     """
-    Low-Profile сканирование канала v7.0.
+    Ghost Protocol сканирование канала v15.0.
 
-    Всего 2 API запроса:
+    Всего 3 API запроса:
     - Запрос 1: get_chat + GetHistory (канал + посты)
-    - Запрос 2: GetHistory linked_chat ИЛИ GetReactionsList
+    - Запрос 2: GetHistory linked_chat ИЛИ GetReactionsList (юзеры для Forensics)
+    - Запрос 3: GetFullChannel (online_count для Ghost Detection)
 
     Args:
         client: Pyrogram клиент
@@ -322,7 +325,6 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
     # ЗАПРОС 2: Юзеры для Forensics
     # =========================================================================
     users_for_forensics = []
-    api_requests = 2
 
     # ПУТЬ А: Комментарии включены → Linked Chat Dump (увеличенный лимит)
     if chat.linked_chat:
@@ -376,11 +378,36 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
     # Дедупликация юзеров
     users_for_forensics = _deduplicate_users(users_for_forensics)
 
+    # =========================================================================
+    # ЗАПРОС 3: GetFullChannel - Ghost Protocol (online_count)
+    # =========================================================================
+    channel_health = {}
+    api_requests = 3
+
+    try:
+        full_result = await client.invoke(
+            functions.channels.GetFullChannel(channel=peer)
+        )
+        full_chat = full_result.full_chat
+
+        channel_health = {
+            'online_count': getattr(full_chat, 'online_count', 0) or 0,
+            'participants_count': getattr(full_chat, 'participants_count', 0) or 0,
+            'admins_count': getattr(full_chat, 'admins_count', 0) or 0,
+            'banned_count': getattr(full_chat, 'banned_count', 0) or 0,
+            'kicked_count': getattr(full_chat, 'kicked_count', 0) or 0,
+            'status': 'complete'
+        }
+    except Exception:
+        # Приватный канал или ошибка - пропускаем Ghost Protocol
+        channel_health = {'status': 'unavailable'}
+
     return ScanResult(
         chat=chat,
         messages=messages,
         comments_data=comments_data,
         users=users_for_forensics,
+        channel_health=channel_health,
         api_requests=api_requests
     )
 

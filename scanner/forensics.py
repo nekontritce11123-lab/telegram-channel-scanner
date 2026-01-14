@@ -137,9 +137,23 @@ class UserForensics:
         # Вычисляем ratio
         neighbor_ratio = neighbor_pairs / (len(sorted_ids) - 1) if len(sorted_ids) > 1 else 0
 
-        # FATALITY если >30% соседей
-        triggered = neighbor_ratio > CLUSTER_NEIGHBOR_THRESHOLD
-        penalty = CLUSTER_PENALTY if triggered else 0
+        # v13.0: Градация кластеризации
+        # >30% = FATALITY (ферма)
+        # >15% = SUSPICIOUS (подозрительно)
+        SUSPICIOUS_THRESHOLD = 0.15
+
+        fatality = neighbor_ratio > CLUSTER_NEIGHBOR_THRESHOLD  # >30%
+        suspicious = neighbor_ratio > SUSPICIOUS_THRESHOLD and not fatality  # 15-30%
+        triggered = fatality or suspicious
+        penalty = CLUSTER_PENALTY if fatality else 0
+
+        # Формируем описание
+        if fatality:
+            description = f"☠️ FATALITY: {neighbor_ratio:.0%} соседних ID (ферма)"
+        elif suspicious:
+            description = f"⚠️ SUSPICIOUS: {neighbor_ratio:.0%} соседних ID (подозрительно)"
+        else:
+            description = f"OK ({neighbor_ratio:.0%} соседей)"
 
         return {
             'neighbor_ratio': round(neighbor_ratio, 3),
@@ -147,11 +161,9 @@ class UserForensics:
             'total_users': len(sorted_ids),
             'penalty': penalty,
             'triggered': triggered,
-            'fatality': triggered,  # Для отображения в CLI
-            'description': (
-                f"☠️ FATALITY: {neighbor_ratio:.0%} соседних ID (ферма)"
-                if triggered else f"OK ({neighbor_ratio:.0%} соседей)"
-            )
+            'fatality': fatality,
+            'suspicious': suspicious,  # v13.0: новый уровень
+            'description': description
         }
 
     # =========================================================================
