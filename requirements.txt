@@ -1,3 +1,4 @@
 pyrogram>=2.0.0
 tgcrypto
 python-dotenv
+httpx>=0.25.0

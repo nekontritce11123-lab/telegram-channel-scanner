@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Smart Crawler - автоматический сбор базы Telegram каналов.
-v16.0: Алгоритм "Чистого Дерева"
+v17.0: Алгоритм "Чистого Дерева" + AI классификация тем
 
 Использование:
     # Первый запуск с seed каналами
@@ -13,8 +13,17 @@ v16.0: Алгоритм "Чистого Дерева"
     # Посмотреть статистику
     python crawler.py --stats
 
+    # Статистика по категориям
+    python crawler.py --category-stats
+
     # Экспортировать GOOD каналы
     python crawler.py --export good.csv
+
+    # Экспортировать только CRYPTO каналы
+    python crawler.py --export crypto.csv --category CRYPTO
+
+    # Классифицировать существующие GOOD каналы (догоняние)
+    python crawler.py --classify
 
     # Ограничить количество
     python crawler.py --max 100
@@ -25,15 +34,96 @@ import asyncio
 import argparse
 
 from scanner.crawler import SmartCrawler
+from scanner.database import CrawlerDB
+from scanner.classifier import get_classifier
 
 
 def print_banner():
     print("""
 ╔═══════════════════════════════════════════════════════════╗
-║            SMART CRAWLER v16.0                            ║
-║         Автоматический сбор базы каналов                  ║
+║            SMART CRAWLER v17.0                            ║
+║       Сбор базы каналов + AI классификация               ║
 ╚═══════════════════════════════════════════════════════════╝
     """)
+
+
+async def classify_existing(db: CrawlerDB, limit: int = 100):
+    """
+    Классифицирует существующие GOOD каналы без категории.
+    Сканирует каналы для получения реальных данных (title, description, посты).
+    """
+    from scanner.client import get_client, smart_scan_safe
+    from scanner.classifier import classify_fallback
+
+    classifier = get_classifier()
+
+    # Получаем каналы без категории
+    uncategorized = db.get_uncategorized(limit=limit)
+
+    if not uncategorized:
+        print("Все GOOD каналы уже классифицированы!")
+        return
+
+    print(f"\nНайдено {len(uncategorized)} каналов без категории")
+    print("Сканирую и классифицирую (пауза 3 сек между каналами)...\n")
+
+    # Подключаемся к Telegram
+    client = get_client()
+    await client.start()
+    print("Подключено к Telegram\n")
+
+    classified = 0
+    errors = 0
+
+    try:
+        for i, username in enumerate(uncategorized, 1):
+            try:
+                # Сканируем канал для получения реальных данных
+                scan_result = await smart_scan_safe(client, username)
+
+                if scan_result.chat is None:
+                    print(f"[{i}/{len(uncategorized)}] @{username} → ERROR")
+                    errors += 1
+                    await asyncio.sleep(1)
+                    continue
+
+                # Получаем данные для классификации
+                title = getattr(scan_result.chat, 'title', '') or ''
+                description = getattr(scan_result.chat, 'description', '') or ''
+                messages = scan_result.messages
+
+                # Классифицируем (сначала пробуем AI, потом fallback)
+                channel_id = getattr(scan_result.chat, 'id', None)
+                if channel_id and classifier.api_key:
+                    category = await classifier.classify_sync(
+                        channel_id, title, description, messages
+                    )
+                else:
+                    category = classify_fallback(title, description, messages)
+
+                db.set_category(username, category)
+                classified += 1
+
+                print(f"[{i}/{len(uncategorized)}] @{username} → {category}")
+
+                # Пауза между запросами (защита от FloodWait)
+                await asyncio.sleep(3)
+
+            except Exception as e:
+                print(f"[{i}/{len(uncategorized)}] @{username} → ERROR: {e}")
+                errors += 1
+                await asyncio.sleep(1)
+
+    except KeyboardInterrupt:
+        print("\n\nПрервано по Ctrl+C")
+
+    finally:
+        await client.stop()
+        print("Отключено от Telegram")
+
+    print(f"\nКлассифицировано: {classified}")
+    print(f"Ошибок: {errors}")
+    classifier.save_cache()
 
 
 def main():
@@ -57,10 +147,26 @@ def main():
         help='Показать статистику базы'
     )
     parser.add_argument(
+        '--category-stats',
+        action='store_true',
+        help='Показать статистику по категориям'
+    )
+    parser.add_argument(
+        '--classify',
+        action='store_true',
+        help='Классифицировать существующие GOOD каналы (догоняние)'
+    )
+    parser.add_argument(
         '--export',
         type=str,
         metavar='FILE',
         help='Экспортировать GOOD каналы в CSV файл'
+    )
+    parser.add_argument(
+        '--category',
+        type=str,
+        metavar='CAT',
+        help='Фильтр по категории для экспорта (CRYPTO, NEWS, TECH и т.д.)'
     )
     parser.add_argument(
         '--db',
@@ -73,28 +179,59 @@ def main():
 
     print_banner()
 
-    crawler = SmartCrawler(db_path=args.db)
+    # Для некоторых команд нужна только БД
+    if args.stats or args.category_stats or args.export or args.classify:
+        db = CrawlerDB(db_path=args.db)
 
-    # Показать статистику
-    if args.stats:
-        stats = crawler.get_stats()
-        print("Статистика базы данных:")
-        print(f"  Всего каналов:  {stats['total']}")
-        print(f"  В очереди:      {stats['waiting']}")
-        print(f"  Обрабатывается: {stats['processing']}")
-        print(f"  GOOD (>=60):    {stats['good']}")
-        print(f"  BAD (<60):      {stats['bad']}")
-        print(f"  PRIVATE:        {stats['private']}")
-        print(f"  ERROR:          {stats['error']}")
-        return
+        # Показать статистику
+        if args.stats:
+            stats = db.get_stats()
+            print("Статистика базы данных:")
+            print(f"  Всего каналов:  {stats['total']}")
+            print(f"  В очереди:      {stats['waiting']}")
+            print(f"  Обрабатывается: {stats['processing']}")
+            print(f"  GOOD (>=60):    {stats['good']}")
+            print(f"  BAD (<60):      {stats['bad']}")
+            print(f"  PRIVATE:        {stats['private']}")
+            print(f"  ERROR:          {stats['error']}")
+            db.close()
+            return
 
-    # Экспортировать
-    if args.export:
-        count = crawler.export_good(args.export)
-        print(f"Экспортировано {count} GOOD каналов в {args.export}")
-        return
+        # Статистика по категориям
+        if args.category_stats:
+            cat_stats = db.get_category_stats()
+            print("Статистика по категориям (GOOD каналы):")
+            total = sum(cat_stats.values())
+            for cat, count in cat_stats.items():
+                pct = (count / total * 100) if total > 0 else 0
+                print(f"  {cat:<15} {count:>5} ({pct:.1f}%)")
+            print(f"\n  Всего: {total}")
+            db.close()
+            return
+
+        # Классифицировать существующие
+        if args.classify:
+            try:
+                asyncio.run(classify_existing(db, limit=args.max or 100))
+            except KeyboardInterrupt:
+                print("\nПрервано")
+            db.close()
+            return
+
+        # Экспортировать
+        if args.export:
+            count = db.export_csv(args.export, status='GOOD', category=args.category)
+            if args.category:
+                print(f"Экспортировано {count} {args.category} каналов в {args.export}")
+            else:
+                print(f"Экспортировано {count} GOOD каналов в {args.export}")
+            db.close()
+            return
+
+        db.close()
 
     # Запустить краулер
+    crawler = SmartCrawler(db_path=args.db)
     seeds = args.channels if args.channels else None
 
     try:

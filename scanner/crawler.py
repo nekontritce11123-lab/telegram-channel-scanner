@@ -1,18 +1,24 @@
 """
 Smart Crawler - автоматический сбор базы каналов.
-v16.0: Алгоритм "Чистого Дерева"
+v17.0: Алгоритм "Чистого Дерева" + AI классификация
 
 Логика:
   1. Берём канал из очереди
   2. Проверяем через scanner
   3. Если score >= 60 (GOOD) → собираем рекламные ссылки
   4. Добавляем новые каналы в очередь
-  5. Пауза → повторяем
+  5. AI классификатор работает ПАРАЛЛЕЛЬНО (не блокирует)
+  6. Пауза → повторяем
 
 Защита аккаунта:
   - Пауза 5 сек между каналами
   - Большая пауза каждые 100 каналов
   - Автоматическая обработка FloodWait
+
+AI классификация:
+  - Groq API + Llama 3 (бесплатно)
+  - Фоновый worker (не тормозит краулер)
+  - Fallback на ключевые слова
 """
 
 import asyncio
@@ -26,6 +32,7 @@ from pyrogram import Client
 from .database import CrawlerDB
 from .client import get_client, smart_scan_safe, resolve_invite_link
 from .scorer import calculate_final_score
+from .classifier import get_classifier, ChannelClassifier
 
 
 # Настройки rate limiting
@@ -47,6 +54,8 @@ class SmartCrawler:
     Использование:
         crawler = SmartCrawler()
         await crawler.run(["@channel1", "@channel2"])
+
+    v17.0: AI классификация работает параллельно, не блокирует основной процесс.
     """
 
     def __init__(self, db_path: str = "crawler.db"):
@@ -54,18 +63,38 @@ class SmartCrawler:
         self.client: Optional[Client] = None
         self.processed_count = 0
         self.running = True
+        self.classifier: Optional[ChannelClassifier] = None
+        self.classified_count = 0  # Счётчик классифицированных
+        self._channel_id_to_username = {}  # Маппинг для callback
 
     async def start(self):
-        """Запускает Pyrogram клиент."""
+        """Запускает Pyrogram клиент и AI классификатор."""
         self.client = get_client()
         await self.client.start()
         print("Подключено к Telegram")
 
+        # Запускаем AI классификатор в фоне
+        self.classifier = get_classifier()
+        await self.classifier.start_worker()
+        print("AI классификатор запущен в фоне")
+
     async def stop(self):
-        """Останавливает клиент."""
+        """Останавливает клиент и классификатор."""
+        if self.classifier:
+            await self.classifier.stop_worker()
+            print(f"AI классификатор остановлен (классифицировано: {self.classified_count})")
+
         if self.client:
             await self.client.stop()
             print("Отключено от Telegram")
+
+    def _on_category_ready(self, channel_id: int, category: str):
+        """Callback когда категория готова - сохраняем в БД."""
+        # Находим username по channel_id (храним маппинг)
+        username = self._channel_id_to_username.get(channel_id)
+        if username:
+            self.db.set_category(username, category)
+            self.classified_count += 1
 
     def add_seeds(self, channels: list):
         """Добавляет начальные каналы в очередь."""
@@ -200,7 +229,20 @@ class SmartCrawler:
         if score >= GOOD_THRESHOLD:
             status = 'GOOD'
 
-            # Собираем ссылки только с ОЧЕНЬ хороших каналов (score >= 70)
+            # Добавляем в очередь AI классификации (асинхронно, не блокирует)
+            if self.classifier:
+                channel_id = getattr(scan_result.chat, 'id', None)
+                if channel_id:
+                    self._channel_id_to_username[channel_id] = username
+                    self.classifier.add_to_queue(
+                        channel_id=channel_id,
+                        title=getattr(scan_result.chat, 'title', ''),
+                        description=getattr(scan_result.chat, 'description', ''),
+                        messages=scan_result.messages,
+                        callback=self._on_category_ready
+                    )
+
+            # Собираем ссылки только с ОЧЕНЬ хороших каналов (score >= 66)
             if score >= COLLECT_THRESHOLD:
                 links = self.extract_links(scan_result.messages, username)
 
@@ -217,7 +259,7 @@ class SmartCrawler:
                     ad_links=list(links)
                 )
             else:
-                # 60-69: GOOD но ссылки не собираем (тупиковая ветка)
+                # 60-65: GOOD но ссылки не собираем (тупиковая ветка)
                 self.db.mark_done(username, status, score, verdict, trust_factor, members)
 
         else:
@@ -318,10 +360,18 @@ class SmartCrawler:
             stats = self.db.get_stats()
             print(f"\nИтого:")
             print(f"  Обработано за сессию: {self.processed_count}")
+            print(f"  Классифицировано AI: {self.classified_count}")
             print(f"  Всего в базе: {stats['total']}")
             print(f"  GOOD: {stats['good']}")
             print(f"  BAD: {stats['bad']}")
             print(f"  В очереди: {stats['waiting']}")
+
+            # Статистика по категориям
+            cat_stats = self.db.get_category_stats()
+            if cat_stats:
+                print(f"\nПо категориям:")
+                for cat, count in list(cat_stats.items())[:10]:
+                    print(f"  {cat}: {count}")
 
             # Закрываем базу
             self.db.close()
