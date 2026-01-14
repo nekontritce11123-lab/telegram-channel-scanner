@@ -253,7 +253,7 @@ class CrawlerDB:
 
         return channels
 
-    def export_csv(self, filepath: str, status: str = "GOOD"):
+    def export_csv(self, filepath: str, status: str = "GOOD") -> int:
         """Экспортирует каналы в CSV."""
         import csv
 
@@ -263,10 +263,11 @@ class CrawlerDB:
             (status,)
         )
 
+        rows = cursor.fetchall()
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(['username', 'score', 'verdict', 'members', 'found_via', 'scanned_at'])
-            for row in cursor.fetchall():
+            for row in rows:
                 writer.writerow([
                     f"@{row['username']}",
                     row['score'],
@@ -276,7 +277,7 @@ class CrawlerDB:
                     row['scanned_at']
                 ])
 
-        return cursor.rowcount
+        return len(rows)
 
     def reset_processing(self):
         """
