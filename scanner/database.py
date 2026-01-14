@@ -1,6 +1,6 @@
 """
 База данных для Smart Crawler.
-v17.0: SQLite хранилище для очереди каналов + AI категории.
+v18.0: SQLite хранилище для очереди каналов + AI категории с multi-label.
 
 Статусы:
   WAITING    - В очереди на проверку
@@ -10,8 +10,16 @@ v17.0: SQLite хранилище для очереди каналов + AI ка�
   PRIVATE    - Приватный канал
   ERROR      - Ошибка при проверке
 
-Категории (AI):
-  CRYPTO, NEWS, BLOG, SHOP, GAMBLING, ADULT, TECH, FINANCE, EDUCATION, MARKETING, OTHER
+Категории (AI) - 17 штук:
+  Премиальные: CRYPTO, FINANCE, REAL_ESTATE, BUSINESS
+  Технологии: TECH, AI_ML
+  Образование: EDUCATION, BEAUTY, HEALTH, TRAVEL
+  Коммерция: RETAIL
+  Контент: ENTERTAINMENT, NEWS, LIFESTYLE
+  Риск: GAMBLING, ADULT
+  Fallback: OTHER
+
+Multi-label: category + category_secondary (например TECH+ENTERTAINMENT)
 """
 
 import sqlite3
@@ -33,7 +41,8 @@ class ChannelRecord:
     members: int = 0
     found_via: str = ""
     ad_links: list = None
-    category: str = None  # v17.0: AI категория
+    category: str = None  # v18.0: AI категория (основная)
+    category_secondary: str = None  # v18.0: Вторичная категория (multi-label)
     scanned_at: datetime = None
     created_at: datetime = None
 
@@ -86,8 +95,12 @@ class CrawlerDB:
         # v17.0: Миграция - добавляем колонку category если её нет
         self._migrate_add_category()
 
-        # Индекс для category (после миграции)
+        # v18.0: Миграция - добавляем колонку category_secondary для multi-label
+        self._migrate_add_category_secondary()
+
+        # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_category_secondary ON channels(category_secondary)')
 
         self.conn.commit()
 
@@ -103,6 +116,18 @@ class CrawlerDB:
                 print("Миграция: добавлена колонка category")
         except sqlite3.Error:
             pass  # Колонка уже существует или другая ошибка
+
+    def _migrate_add_category_secondary(self):
+        """Миграция v18.0: добавляет колонку category_secondary для multi-label."""
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("PRAGMA table_info(channels)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'category_secondary' not in columns:
+                cursor.execute("ALTER TABLE channels ADD COLUMN category_secondary TEXT DEFAULT NULL")
+                print("Миграция v18.0: добавлена колонка category_secondary")
+        except sqlite3.Error:
+            pass
 
     def add_channel(self, username: str, parent: str = "") -> bool:
         """
@@ -168,7 +193,8 @@ class CrawlerDB:
         trust_factor: float = 1.0,
         members: int = 0,
         ad_links: list = None,
-        category: str = None
+        category: str = None,
+        category_secondary: str = None
     ):
         """
         Помечает канал как проверенный.
@@ -180,7 +206,8 @@ class CrawlerDB:
             trust_factor: Trust Multiplier
             members: Количество подписчиков
             ad_links: Список найденных рекламных ссылок
-            category: AI категория (CRYPTO, NEWS, TECH и т.д.)
+            category: AI категория основная (CRYPTO, NEWS, TECH и т.д.)
+            category_secondary: AI категория вторичная (для multi-label)
         """
         username = username.lower().lstrip('@')
         ad_links_json = json.dumps(ad_links or [])
@@ -195,18 +222,26 @@ class CrawlerDB:
                 members = ?,
                 ad_links = ?,
                 category = ?,
+                category_secondary = ?,
                 scanned_at = ?
             WHERE username = ?
-        ''', (status, score, verdict, trust_factor, members, ad_links_json, category, datetime.now(), username))
+        ''', (status, score, verdict, trust_factor, members, ad_links_json, category, category_secondary, datetime.now(), username))
         self.conn.commit()
 
-    def set_category(self, username: str, category: str):
-        """Устанавливает категорию для канала (для догоняния)."""
+    def set_category(self, username: str, category: str, category_secondary: str = None):
+        """
+        Устанавливает категорию для канала (для догоняния).
+
+        Args:
+            username: имя канала
+            category: основная категория
+            category_secondary: вторичная категория (опционально, для multi-label)
+        """
         username = username.lower().lstrip('@')
         cursor = self.conn.cursor()
         cursor.execute(
-            "UPDATE channels SET category = ? WHERE username = ?",
-            (category, username)
+            "UPDATE channels SET category = ?, category_secondary = ? WHERE username = ?",
+            (category, category_secondary, username)
         )
         self.conn.commit()
 
@@ -237,6 +272,7 @@ class CrawlerDB:
             found_via=row['found_via'],
             ad_links=json.loads(row['ad_links']) if row['ad_links'] else [],
             category=row['category'] if 'category' in row.keys() else None,
+            category_secondary=row['category_secondary'] if 'category_secondary' in row.keys() else None,
             scanned_at=row['scanned_at'],
             created_at=row['created_at']
         )
@@ -286,6 +322,7 @@ class CrawlerDB:
                 found_via=row['found_via'],
                 ad_links=json.loads(row['ad_links']) if row['ad_links'] else [],
                 category=row['category'] if 'category' in row.keys() else None,
+                category_secondary=row['category_secondary'] if 'category_secondary' in row.keys() else None,
                 scanned_at=row['scanned_at'],
                 created_at=row['created_at']
             ))
@@ -326,26 +363,27 @@ class CrawlerDB:
         Args:
             filepath: путь к файлу
             status: фильтр по статусу (GOOD, BAD, etc.)
-            category: фильтр по категории (опционально)
+            category: фильтр по категории (опционально, ищет в category И category_secondary)
         """
         import csv
 
         cursor = self.conn.cursor()
         if category:
+            # Поиск по основной ИЛИ вторичной категории
             cursor.execute(
-                "SELECT username, score, verdict, members, category, found_via, scanned_at FROM channels WHERE status = ? AND category = ? ORDER BY score DESC",
-                (status, category)
+                "SELECT username, score, verdict, members, category, category_secondary, found_via, scanned_at FROM channels WHERE status = ? AND (category = ? OR category_secondary = ?) ORDER BY score DESC",
+                (status, category, category)
             )
         else:
             cursor.execute(
-                "SELECT username, score, verdict, members, category, found_via, scanned_at FROM channels WHERE status = ? ORDER BY score DESC",
+                "SELECT username, score, verdict, members, category, category_secondary, found_via, scanned_at FROM channels WHERE status = ? ORDER BY score DESC",
                 (status,)
             )
 
         rows = cursor.fetchall()
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['username', 'score', 'verdict', 'members', 'category', 'found_via', 'scanned_at'])
+            writer.writerow(['username', 'score', 'verdict', 'members', 'category', 'category_secondary', 'found_via', 'scanned_at'])
             for row in rows:
                 writer.writerow([
                     f"@{row['username']}",
@@ -353,6 +391,7 @@ class CrawlerDB:
                     row['verdict'],
                     row['members'],
                     row['category'] or '',
+                    row['category_secondary'] or '',
                     row['found_via'],
                     row['scanned_at']
                 ])

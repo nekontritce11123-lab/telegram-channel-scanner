@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 import asyncio
 from pyrogram import Client
+from pyrogram.enums import ChatType
 from pyrogram.raw import functions
 from pyrogram.errors import ChannelPrivate, ChannelInvalid, FloodWait
 from dotenv import load_dotenv
@@ -298,6 +299,17 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
     # ЗАПРОС 1: Канал + сообщения
     # =========================================================================
     chat = await client.get_chat(channel)
+
+    # Проверяем что это канал, а не профиль/группа/бот
+    if chat.type != ChatType.CHANNEL:
+        return ScanResult(
+            chat=None,
+            messages=[],
+            comments_data={},
+            users=[],
+            channel_health={'status': 'error', 'reason': f'NOT_CHANNEL ({chat.type.name})'}
+        )
+
     peer = await client.resolve_peer(channel)
 
     raw_result = await client.invoke(
@@ -522,17 +534,18 @@ async def smart_scan_safe(client: Client, channel: str, max_retries: int = 3) ->
 
         except FloodWait as e:
             wait_time = e.value + 5  # +5 сек запас
-            if wait_time > 3600:  # Больше часа — слишком долго
-                print(f"FloodWait слишком долгий ({e.value} сек), пропускаем канал")
-                return ScanResult(
-                    chat=None,
-                    messages=[],
-                    comments_data={},
-                    users=[],
-                    channel_health={'status': 'error', 'reason': f'FloodWait {e.value}s'}
-                )
+            hours = e.value // 3600
+            mins = (e.value % 3600) // 60
+            secs = e.value % 60
 
-            print(f"FloodWait: жду {wait_time} сек (попытка {attempt + 1}/{max_retries})")
+            # Всегда ждём FloodWait — никогда не пропускаем!
+            if hours > 0:
+                print(f"FloodWait: жду {hours}ч {mins}мин (попытка {attempt + 1}/{max_retries})")
+            elif mins > 0:
+                print(f"FloodWait: жду {mins}мин {secs}сек (попытка {attempt + 1}/{max_retries})")
+            else:
+                print(f"FloodWait: жду {secs} сек (попытка {attempt + 1}/{max_retries})")
+
             await asyncio.sleep(wait_time)
 
         except (ChannelPrivate, ChannelInvalid) as e:

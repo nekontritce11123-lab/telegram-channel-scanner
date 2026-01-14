@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Smart Crawler - автоматический сбор базы Telegram каналов.
-v17.0: Алгоритм "Чистого Дерева" + AI классификация тем
+v18.0: Расширенная AI классификация (17 категорий) + multi-label
 
 Использование:
     # Первый запуск с seed каналами
@@ -19,14 +19,26 @@ v17.0: Алгоритм "Чистого Дерева" + AI классифика�
     # Экспортировать GOOD каналы
     python crawler.py --export good.csv
 
-    # Экспортировать только CRYPTO каналы
+    # Экспортировать только CRYPTO каналы (ищет в основной И вторичной категории)
     python crawler.py --export crypto.csv --category CRYPTO
+
+    # Экспортировать AI_ML каналы
+    python crawler.py --export ai.csv --category AI_ML
 
     # Классифицировать существующие GOOD каналы (догоняние)
     python crawler.py --classify
 
     # Ограничить количество
     python crawler.py --max 100
+
+Категории v18.0:
+    Премиальные: CRYPTO, FINANCE, REAL_ESTATE, BUSINESS
+    Технологии:  TECH, AI_ML
+    Образование: EDUCATION, BEAUTY, HEALTH, TRAVEL
+    Коммерция:   RETAIL
+    Контент:     ENTERTAINMENT, NEWS, LIFESTYLE
+    Риск:        GAMBLING, ADULT
+    Fallback:    OTHER
 """
 
 import sys
@@ -41,16 +53,32 @@ from scanner.classifier import get_classifier
 def print_banner():
     print("""
 ╔═══════════════════════════════════════════════════════════╗
-║            SMART CRAWLER v17.0                            ║
-║       Сбор базы каналов + AI классификация               ║
+║            SMART CRAWLER v18.0                            ║
+║     Сбор базы каналов + 17 категорий + multi-label       ║
 ╚═══════════════════════════════════════════════════════════╝
     """)
+
+
+def parse_category_result(result: str) -> tuple:
+    """
+    Парсит результат классификации в формате "CAT" или "CAT+CAT2".
+
+    Returns:
+        (category, category_secondary) - вторая может быть None
+    """
+    if "+" in result:
+        parts = result.split("+")
+        primary = parts[0].strip()
+        secondary = parts[1].strip() if len(parts) > 1 else None
+        return (primary, secondary)
+    return (result.strip(), None)
 
 
 async def classify_existing(db: CrawlerDB, limit: int = 100):
     """
     Классифицирует существующие GOOD каналы без категории.
     Сканирует каналы для получения реальных данных (title, description, посты).
+    Поддерживает multi-label: CAT+CAT2 → category + category_secondary
     """
     from scanner.client import get_client, smart_scan_safe
     from scanner.classifier import classify_fallback
@@ -73,6 +101,7 @@ async def classify_existing(db: CrawlerDB, limit: int = 100):
     print("Подключено к Telegram\n")
 
     classified = 0
+    multi_label = 0
     errors = 0
 
     try:
@@ -95,16 +124,27 @@ async def classify_existing(db: CrawlerDB, limit: int = 100):
                 # Классифицируем (сначала пробуем AI, потом fallback)
                 channel_id = getattr(scan_result.chat, 'id', None)
                 if channel_id and classifier.api_key:
-                    category = await classifier.classify_sync(
+                    result = await classifier.classify_sync(
                         channel_id, title, description, messages
                     )
                 else:
-                    category = classify_fallback(title, description, messages)
+                    result = classify_fallback(title, description, messages)
 
-                db.set_category(username, category)
+                # Парсим multi-label формат
+                category, category_secondary = parse_category_result(result)
+
+                # Сохраняем обе категории
+                db.set_category(username, category, category_secondary)
                 classified += 1
 
-                print(f"[{i}/{len(uncategorized)}] @{username} → {category}")
+                # Форматируем вывод
+                if category_secondary:
+                    multi_label += 1
+                    display = f"{category}+{category_secondary}"
+                else:
+                    display = category
+
+                print(f"[{i}/{len(uncategorized)}] @{username} → {display}")
 
                 # Пауза между запросами (защита от FloodWait)
                 await asyncio.sleep(3)
@@ -122,6 +162,7 @@ async def classify_existing(db: CrawlerDB, limit: int = 100):
         print("Отключено от Telegram")
 
     print(f"\nКлассифицировано: {classified}")
+    print(f"Multi-label: {multi_label}")
     print(f"Ошибок: {errors}")
     classifier.save_cache()
 

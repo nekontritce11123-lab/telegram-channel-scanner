@@ -1,6 +1,6 @@
 """
 Smart Crawler - автоматический сбор базы каналов.
-v17.0: Алгоритм "Чистого Дерева" + AI классификация
+v18.0: Алгоритм "Чистого Дерева" + 17 категорий + multi-label
 
 Логика:
   1. Берём канал из очереди
@@ -15,8 +15,9 @@ v17.0: Алгоритм "Чистого Дерева" + AI классифика�
   - Большая пауза каждые 100 каналов
   - Автоматическая обработка FloodWait
 
-AI классификация:
-  - Groq API + Llama 3 (бесплатно)
+AI классификация v18.0:
+  - Groq API + Llama 3.3 70B (бесплатно)
+  - 17 категорий + multi-label (CAT+CAT2)
   - Фоновый worker (не тормозит краулер)
   - Fallback на ключевые слова
 """
@@ -55,7 +56,7 @@ class SmartCrawler:
         crawler = SmartCrawler()
         await crawler.run(["@channel1", "@channel2"])
 
-    v17.0: AI классификация работает параллельно, не блокирует основной процесс.
+    v18.0: AI классификация с 17 категориями и multi-label поддержкой.
     """
 
     def __init__(self, db_path: str = "crawler.db"):
@@ -89,11 +90,21 @@ class SmartCrawler:
             print("Отключено от Telegram")
 
     def _on_category_ready(self, channel_id: int, category: str):
-        """Callback когда категория готова - сохраняем в БД."""
+        """
+        Callback когда категория готова - сохраняем в БД.
+        Поддерживает multi-label формат: "CAT+CAT2"
+        """
         # Находим username по channel_id (храним маппинг)
         username = self._channel_id_to_username.get(channel_id)
         if username:
-            self.db.set_category(username, category)
+            # Парсим multi-label формат
+            if "+" in category:
+                parts = category.split("+")
+                primary = parts[0].strip()
+                secondary = parts[1].strip() if len(parts) > 1 else None
+                self.db.set_category(username, primary, secondary)
+            else:
+                self.db.set_category(username, category.strip())
             self.classified_count += 1
 
     def add_seeds(self, channels: list):
@@ -145,14 +156,37 @@ class SmartCrawler:
             # Исключаем служебные и популярные слова которые ложно срабатывают
             skip_words = {
                 # Telegram служебные
-                'addstickers', 'share', 'proxy', 'joinchat',
+                'addstickers', 'share', 'proxy', 'joinchat', 'stickerpack',
                 # Короткие/зарезервированные
-                's', 'c', 'iv', 'msg', 'vote', 'boost', 'premium',
-                # Технические слова (часто в коде)
-                'torch', 'numpy', 'keras', 'flask', 'django', 'react', 'linux',
+                's', 'c', 'iv', 'msg', 'vote', 'boost', 'premium', 'emoji',
+                # Python методы/библиотеки
+                'fetchall', 'fetchone', 'fetchmany', 'execute', 'commit', 'cursor',
+                'pytest', 'unittest', 'numpy', 'pandas', 'scipy', 'matplotlib',
+                'torch', 'keras', 'flask', 'django', 'fastapi', 'requests',
+                'asyncio', 'aiohttp', 'httpx', 'redis', 'celery', 'sqlalchemy',
+                # JavaScript/фреймворки
+                'react', 'redux', 'vuejs', 'angular', 'nextjs', 'nodejs',
+                'webpack', 'eslint', 'prettier', 'typescript', 'javascript',
+                # Служебные слова программирования
                 'async', 'await', 'import', 'export', 'const', 'class', 'state',
-                'binding', 'observable', 'google', 'github', 'python', 'javascript',
-                'typescript', 'kotlin', 'swift', 'rustlang',
+                'return', 'function', 'lambda', 'yield', 'static', 'public',
+                'private', 'protected', 'interface', 'abstract', 'override',
+                'binding', 'observable', 'subscribe', 'dispatch', 'middleware',
+                # Переменные окружения
+                'environment', 'production', 'development', 'staging', 'testing',
+                'config', 'settings', 'options', 'params', 'arguments',
+                # Платформы (не Telegram)
+                'google', 'github', 'gitlab', 'bitbucket', 'stackoverflow',
+                'youtube', 'twitter', 'instagram', 'facebook', 'linkedin',
+                'discord', 'slack', 'medium', 'notion', 'figma', 'linux',
+                # Языки программирования
+                'python', 'kotlin', 'swift', 'rustlang', 'golang', 'clojure',
+                'haskell', 'elixir', 'erlang', 'scala', 'groovy',
+                # Прочие технические
+                'admin', 'support', 'helper', 'utils', 'tools', 'service',
+                'handler', 'controller', 'model', 'schema', 'migration',
+                'dockerfile', 'makefile', 'readme', 'changelog', 'license',
+                'tetrad', 'string', 'array', 'object', 'integer', 'boolean',
             }
             for match in re.findall(r't\.me/([a-zA-Z0-9_]{5,32})', text):
                 match = match.lower()
@@ -168,7 +202,7 @@ class SmartCrawler:
             # @упоминания
             for match in re.findall(r'@([a-zA-Z0-9_]{5,32})', text):
                 match = match.lower()
-                if match != channel_username:
+                if match != channel_username and match not in skip_words:
                     if not match.endswith('bot'):
                         links.add(match)
 
