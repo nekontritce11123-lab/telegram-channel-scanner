@@ -111,17 +111,21 @@ class SmartCrawler:
             # Приватные инвайты (t.me/+XXX) — пропускаем, резолвим отдельно
             # Их обработаем через resolve_invite_link
 
-            # Публичные каналы: t.me/username
-            for match in re.findall(r't\.me/([a-zA-Z0-9_]+)', text):
+            # Публичные каналы: t.me/username (минимум 5 символов как в Telegram)
+            # Исключаем служебные и популярные слова которые ложно срабатывают
+            skip_words = {
+                'addstickers', 'share', 'proxy', 's', 'iv', 'joinchat', 'c', 'msg',
+                'torch', 'numpy', 'keras', 'flask', 'django', 'react', 'linux',
+            }
+            for match in re.findall(r't\.me/([a-zA-Z0-9_]{5,32})', text):
                 match = match.lower()
-                if match != channel_username:
-                    if match not in ['addstickers', 'share', 'proxy', 's', 'iv', 'joinchat']:
-                        links.add(match)
+                if match != channel_username and match not in skip_words:
+                    links.add(match)
 
             # telegram.me/username
-            for match in re.findall(r'telegram\.me/([a-zA-Z0-9_]+)', text):
+            for match in re.findall(r'telegram\.me/([a-zA-Z0-9_]{5,32})', text):
                 match = match.lower()
-                if match != channel_username:
+                if match != channel_username and match not in skip_words:
                     links.add(match)
 
             # @упоминания
