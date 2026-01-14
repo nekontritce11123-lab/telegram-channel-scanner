@@ -114,8 +114,15 @@ class SmartCrawler:
             # Публичные каналы: t.me/username (минимум 5 символов как в Telegram)
             # Исключаем служебные и популярные слова которые ложно срабатывают
             skip_words = {
-                'addstickers', 'share', 'proxy', 's', 'iv', 'joinchat', 'c', 'msg',
+                # Telegram служебные
+                'addstickers', 'share', 'proxy', 'joinchat',
+                # Короткие/зарезервированные
+                's', 'c', 'iv', 'msg', 'vote', 'boost', 'premium',
+                # Технические слова (часто в коде)
                 'torch', 'numpy', 'keras', 'flask', 'django', 'react', 'linux',
+                'async', 'await', 'import', 'export', 'const', 'class', 'state',
+                'binding', 'observable', 'google', 'github', 'python', 'javascript',
+                'typescript', 'kotlin', 'swift', 'rustlang',
             }
             for match in re.findall(r't\.me/([a-zA-Z0-9_]{5,32})', text):
                 match = match.lower()
