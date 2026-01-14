@@ -2,6 +2,9 @@
 Модуль скоринга качества Telegram канала.
 v5.0: Floating Weights, Ad Load, Forward Rate boost.
 v5.1: Viral Exception - CV > 100% + Forward Rate > 3% = не штрафовать.
+v7.0: User Forensics интеграция (ID Clustering, Username Entropy, Hidden Flags).
+v7.1: Adaptive Paranoia Mode - если forensics недоступен, включается HARDCORE режим.
+v11.0: Executioner System - штрафы вместо нулей за явные нарушения.
 """
 from typing import Any
 from .metrics import (
@@ -18,45 +21,61 @@ from .metrics import (
     calculate_ad_load,
     get_channel_age_days,
     get_raw_stats,
+    check_f16_reaction_flatness,  # v7.1: Adaptive Paranoia Mode
 )
+from .forensics import UserForensics
 
 
 # ============================================================================
 # ФУНКЦИИ КОНВЕРТАЦИИ МЕТРИК В БАЛЛЫ
 # ============================================================================
 
-def cv_to_points(cv: float, forward_rate: float = 0) -> int:
+def cv_to_points(cv: float, forward_rate: float = 0, max_pts: int = 15) -> int:
     """
-    CV Views -> баллы (max 15).
+    CV Views -> баллы (max 15, или 25 в Hardcore mode).
     v5.0: Увеличено с 14 до 15.
     v5.1: Viral Exception - если CV > 100%, но forward_rate > 3%, не обнулять.
+    v7.1: Динамический max_pts для Adaptive Paranoia Mode.
+    v11.0: Executioner - штраф -20 за CV > 100% без виральности.
 
     CV > 100% = экстремальные скачки = накрутка волнами.
     НО: вирусный пост (100к просмотров при среднем 5к) тоже даёт высокий CV.
     Если контент репостят (forward_rate > 3%) - это "бриллиант", не скам.
+
+    Args:
+        cv: Coefficient of Variation просмотров (%)
+        forward_rate: Forward Rate (%) для Viral Exception
+        max_pts: Максимум баллов (15 в Normal, 25 в Hardcore mode)
     """
+    # Пропорциональные пороги относительно max_pts
     if cv < 10:
         return 0   # Слишком ровно - бот
     if cv < 30:
-        return 10  # Норма
+        return int(max_pts * 0.67)  # ~10/15 или ~17/25
     if cv < 60:
-        return 15  # Хорошо - естественная вариация
+        return max_pts  # Хорошо - естественная вариация
     if cv < 100:
-        return 8   # Подозрительно высокая вариация
+        return int(max_pts * 0.53)  # ~8/15 - подозрительно высокая вариация
 
     # CV >= 100% - потенциальная волновая накрутка
     # v5.1: Viral Exception - если репостят, это вирусный контент, а не накрутка
     if forward_rate > 3.0:
-        return 8   # Вирусный контент - спасаем "бриллиант"
+        return int(max_pts * 0.53)   # Вирусный контент - спасаем "бриллиант"
 
-    return 0       # CV > 100% без виральности = явный скам паттерн
+    # v11.0: EXECUTIONER - штраф вместо нуля
+    return -20     # CV > 100% без виральности = явный скам паттерн
 
 
 def reach_to_points(reach: float, members: int = 0) -> int:
     """
     Reach % -> баллы (max 10). Учитывает размер канала.
     v5.0: Снижено с 12 до 10 для перераспределения в Forward Rate.
+    v11.0: Executioner - штраф -20 за reach > 200% (физически невозможно).
     """
+    # v11.0: EXECUTIONER - reach > 200% физически невозможен для любого канала
+    if reach > 200:
+        return -20  # Явная накрутка - штраф
+
     # Размерные пороги для "накрутки"
     if members < 200:
         scam_threshold = 200  # Микроканалы - до 200% норма
@@ -72,7 +91,7 @@ def reach_to_points(reach: float, members: int = 0) -> int:
         high_is_good = 60     # До 60% = отлично
 
     if reach > scam_threshold:
-        return 0  # Накрутка просмотров для данного размера
+        return 0  # Накрутка просмотров для данного размера (мягкий 0)
 
     # Высокий reach для малых каналов - это ХОРОШО (лояльная аудитория)
     if reach > high_is_good:
@@ -93,6 +112,7 @@ def reaction_rate_to_points(rate: float, members: int = 0, max_pts: int = 15) ->
     """
     Reaction rate % -> баллы (max 15, или 25 при floating weights).
     v5.0: Динамический max для floating weights.
+    v11.0: Executioner - штраф -15 за накрутку реакций.
 
     Args:
         rate: Reaction rate в процентах
@@ -110,8 +130,9 @@ def reaction_rate_to_points(rate: float, members: int = 0, max_pts: int = 15) ->
         scam_threshold = 10  # Большие - до 10%
         high_threshold = 5
 
+    # v11.0: EXECUTIONER - штраф за явную накрутку реакций
     if rate > scam_threshold:
-        return 0  # Накрутка реакций для данного размера
+        return -15  # Накрутка реакций для данного размера
 
     # Пропорциональное распределение баллов относительно max_pts
     if rate > high_threshold:
@@ -203,13 +224,17 @@ def er_cv_to_points(cv: float, members: int = 0) -> int:
 
 
 def source_to_points(max_share: float, repost_ratio: float = 1.0) -> int:
-    """Source diversity -> баллы (max 5). Учитывает долю репостов."""
+    """
+    Source diversity -> баллы (max 5). Учитывает долю репостов.
+    v11.0: Executioner - штраф -20 за сателлит-канал.
+    """
     # Если репостов мало (<10%) - не штрафовать за концентрацию источников
     if repost_ratio < 0.10:
         return 5  # Канал с оригинальным контентом
 
+    # v11.0: EXECUTIONER - штраф за сателлит
     if max_share > 0.7:
-        return 0  # Сателлит (>70% из одного источника)
+        return -20  # Сателлит (>70% из одного источника) - это мусор
     if max_share > 0.5:
         return 2
     return 5
@@ -299,27 +324,80 @@ def calculate_floating_weights(comments_enabled: bool) -> dict:
         }
 
 
-def ad_load_to_penalty(ad_load_data: dict) -> int:
+def calculate_adaptive_weights(forensics_available: bool, users_count: int) -> dict:
+    """
+    v7.1: Adaptive Paranoia Mode - адаптивные веса в зависимости от доступности данных.
+
+    Если forensics доступен (есть юзеры) - NORMAL MODE:
+    - Стандартные веса v5.1
+    - User Forensics активен
+
+    Если forensics недоступен (нет юзеров) - HARDCORE MODE:
+    - CV Views усилен до 25 pts (главный индикатор)
+    - Forward Rate усилен до 20 pts (виральность критична)
+    - Ad Load штраф усилен до -25
+    - Штраф -15 за закрытость
+    - F16 Reaction Flatness включён
+
+    Философия: "Спрятал аудиторию — докажи что не скам безупречной математикой"
+    """
+    MIN_USERS_FOR_FORENSICS = 10
+
+    if forensics_available and users_count >= MIN_USERS_FOR_FORENSICS:
+        # NORMAL MODE: стандартные веса + User Forensics
+        return {
+            'mode': 'normal',
+            'cv_views_max': 15,
+            'comments_max': 15,
+            'reaction_rate_max': 15,
+            'forward_rate_max': 15,
+            'ad_load_max': -15,
+            'hidden_penalty': 0,
+            'flatness_enabled': False
+        }
+    else:
+        # HARDCORE MODE: forensics недоступен
+        return {
+            'mode': 'hardcore',
+            'cv_views_max': 25,       # +10 (главный индикатор)
+            'comments_max': 0,        # нет данных о юзерах
+            'reaction_rate_max': 20,  # +5 (floating)
+            'forward_rate_max': 20,   # +5 (виральность критична)
+            'ad_load_max': -25,       # -10 (строже)
+            'hidden_penalty': -15,    # ШТРАФ за закрытость
+            'flatness_enabled': True  # включить F16
+        }
+
+
+def ad_load_to_penalty(ad_load_data: dict, max_penalty: int = -15) -> int:
     """
     v5.0: Штраф за заспамленность рекламой.
+    v7.1: Динамический max_penalty для Adaptive Paranoia Mode.
 
     Логика: Канал-помойка из рекламы = слепая аудитория = плохая конверсия.
 
-    Пороги:
+    Пороги (Normal mode, max_penalty=-15):
     - Ad Load < 10%: 0 штрафа (чистый канал)
     - Ad Load 10-30%: -5 баллов (умеренно)
     - Ad Load 30-50%: -10 баллов (много рекламы)
     - Ad Load > 50%: -15 баллов (спам-канал)
+
+    В Hardcore mode (max_penalty=-25) штрафы пропорционально увеличены.
+
+    Args:
+        ad_load_data: Данные о рекламной нагрузке
+        max_penalty: Максимальный штраф (-15 в Normal, -25 в Hardcore mode)
     """
     ad_percent = ad_load_data.get('ad_load_percent', 0)
 
+    # Пропорциональные штрафы относительно max_penalty
     if ad_percent < 10:
         return 0   # Чистый канал
     if ad_percent < 30:
-        return -5  # Умеренная реклама
+        return int(max_penalty * 0.33)  # ~-5/-15 или ~-8/-25
     if ad_percent < 50:
-        return -10  # Много рекламы
-    return -15      # Спам-канал
+        return int(max_penalty * 0.67)  # ~-10/-15 или ~-17/-25
+    return max_penalty  # Спам-канал
 
 
 # ============================================================================
@@ -394,11 +472,24 @@ def comments_to_points(comments_data: dict, members: int = 0, reach: float = 0) 
     return final_pts, status
 
 
-def calculate_final_score(chat: Any, messages: list, comments_data: dict = None) -> dict:
+def calculate_final_score(
+    chat: Any,
+    messages: list,
+    comments_data: dict = None,
+    users: list = None
+) -> dict:
     """
     Полный расчёт качества канала.
     v5.0: Floating Weights, Ad Load, Forward Rate boost, Growth Trend.
+    v7.0: User Forensics - ID Clustering, Username Entropy, Hidden Flags.
+    v7.1: Adaptive Paranoia Mode - HARDCORE режим если forensics недоступен.
     Возвращает score 0-100 и детальный breakdown.
+
+    Args:
+        chat: Объект чата/канала
+        messages: Список сообщений
+        comments_data: Данные о комментариях
+        users: Список юзеров для Forensics анализа (v7.0)
     """
     # Дефолтные данные о комментариях если не переданы
     if comments_data is None:
@@ -407,6 +498,16 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
             'avg_comments': 0.0,
             'total_comments': 0
         }
+
+    # v7.0: Дефолтный пустой список юзеров
+    if users is None:
+        users = []
+
+    # v7.1: Определяем режим скоринга (Normal vs Hardcore)
+    MIN_USERS_FOR_FORENSICS = 10
+    forensics_available = len(users) >= MIN_USERS_FOR_FORENSICS
+    adaptive_weights = calculate_adaptive_weights(forensics_available, len(users))
+    scoring_mode = adaptive_weights['mode']
 
     # ===== КАТЕГОРИЯ A: СИСТЕМА СОВОКУПНЫХ ФАКТОРОВ =====
     is_scam, scam_reason, conviction_details = check_instant_scam(chat, messages, comments_data)
@@ -447,16 +548,18 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
     # v5.1: Вычисляем forward_rate заранее для Viral Exception в CV Views
     forward_rate = calculate_forwards_ratio(messages)
 
-    # B1: CV Views (15 pts) - v5.0: увеличено с 14, v5.1: Viral Exception
+    # B1: CV Views (15 pts Normal, 25 pts Hardcore) - v7.1: adaptive weights
     cv = calculate_cv_views(views)
-    cv_score = cv_to_points(cv, forward_rate)  # v5.1: передаём forward_rate
+    cv_max = adaptive_weights['cv_views_max']
+    cv_score = cv_to_points(cv, forward_rate, cv_max)  # v7.1: передаём max_pts
     score += cv_score
     viral_exception = cv >= 100 and forward_rate > 3.0
     breakdown['cv_views'] = {
         'value': round(cv, 2),
         'points': cv_score,
-        'max': 15,
-        'viral_exception': viral_exception  # v5.1: показываем если сработало
+        'max': cv_max,
+        'viral_exception': viral_exception,  # v5.1: показываем если сработало
+        'hardcore_boost': cv_max > 15  # v7.1: показываем если усилено
     }
 
     # B2: Reach (10 pts) - v5.0: снижено с 12
@@ -565,17 +668,42 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
         'floating_boost': forward_max > 15
     }
 
-    # ===== v5.0: AD LOAD PENALTY =====
+    # ===== v5.0: AD LOAD PENALTY (v7.1: adaptive max) =====
     ad_load_data = calculate_ad_load(messages, channel_username)
-    ad_penalty = ad_load_to_penalty(ad_load_data)
+    ad_max_penalty = adaptive_weights['ad_load_max']
+    ad_penalty = ad_load_to_penalty(ad_load_data, ad_max_penalty)
     if ad_penalty < 0:
         score += ad_penalty  # Штраф (отрицательное число)
         breakdown['ad_load_penalty'] = {
             'value': ad_load_data['ad_load_percent'],
             'points': ad_penalty,
-            'max': -15,
+            'max': ad_max_penalty,
             'status': ad_load_data['status'],
-            'ad_count': ad_load_data['ad_count']
+            'ad_count': ad_load_data['ad_count'],
+            'hardcore_boost': ad_max_penalty < -15  # v7.1: показываем если усилено
+        }
+
+    # ===== v7.1: HIDDEN PENALTY (Hardcore mode only) =====
+    hidden_penalty = adaptive_weights['hidden_penalty']
+    if hidden_penalty < 0:
+        score += hidden_penalty  # Штраф за закрытую аудиторию
+        breakdown['hidden_penalty'] = {
+            'value': 'Forensics unavailable',
+            'points': hidden_penalty,
+            'description': 'Штраф за закрытую аудиторию (нет данных о юзерах)'
+        }
+
+    # ===== v7.1: F16 REACTION FLATNESS (Hardcore mode only) =====
+    if adaptive_weights['flatness_enabled']:
+        flatness_result = check_f16_reaction_flatness(messages)
+        if flatness_result['triggered']:
+            score += flatness_result['penalty']  # Штраф (отрицательное число)
+        breakdown['reaction_flatness'] = {
+            'triggered': flatness_result['triggered'],
+            'penalty': flatness_result['penalty'],
+            'cv': flatness_result['cv'],
+            'totals': flatness_result['totals'],
+            'description': flatness_result['description']
         }
 
     # ===== КАТЕГОРИЯ F: БОНУСЫ =====
@@ -622,6 +750,65 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
             'factors_triggered': conviction_details.get('factors_triggered', 0)
         }
 
+    # ===== v11.0: USER FORENSICS - EXECUTIONER SYSTEM =====
+    forensics_result = None
+    if users:
+        forensics = UserForensics(users)
+        forensics_result = forensics.analyze()
+
+        # Применяем штраф/бонус за forensics
+        # v11.0: total_penalty может быть и положительным (premium bonus)
+        if forensics_result.total_penalty != 0:
+            score += forensics_result.total_penalty
+
+        # v11.0: Обновлённая структура forensics breakdown
+        breakdown['forensics'] = {
+            'total_penalty': forensics_result.total_penalty,
+            'users_analyzed': forensics_result.users_analyzed,
+            'status': forensics_result.status,
+            # Method 1: ID Clustering (FATALITY -100)
+            'id_clustering': {
+                'triggered': forensics_result.id_clustering.get('triggered', False),
+                'fatality': forensics_result.id_clustering.get('fatality', False),
+                'penalty': forensics_result.id_clustering.get('penalty', 0),
+                'neighbor_ratio': forensics_result.id_clustering.get('neighbor_ratio', 0),
+                'description': forensics_result.id_clustering.get('description', '')
+            },
+            # Method 2: Geo/DC Check (-50)
+            'geo_dc_check': {
+                'triggered': forensics_result.geo_dc_check.get('triggered', False),
+                'penalty': forensics_result.geo_dc_check.get('penalty', 0),
+                'foreign_ratio': forensics_result.geo_dc_check.get('foreign_ratio', 0),
+                'users_with_dc': forensics_result.geo_dc_check.get('users_with_dc', 0),
+                'dc_distribution': forensics_result.geo_dc_check.get('dc_distribution', {}),
+                'description': forensics_result.geo_dc_check.get('description', '')
+            },
+            # Method 3: Premium Density (-20 / +10)
+            'premium_density': {
+                'triggered': forensics_result.premium_density.get('triggered', False),
+                'is_bonus': forensics_result.premium_density.get('is_bonus', False),
+                'penalty': forensics_result.premium_density.get('penalty', 0),
+                'premium_ratio': forensics_result.premium_density.get('premium_ratio', 0),
+                'premium_count': forensics_result.premium_density.get('premium_count', 0),
+                'description': forensics_result.premium_density.get('description', '')
+            },
+            # Method 4: Hidden Flags (-10)
+            'hidden_flags': {
+                'triggered': forensics_result.hidden_flags.get('triggered', False),
+                'penalty': forensics_result.hidden_flags.get('penalty', 0),
+                'counts': forensics_result.hidden_flags.get('counts', {}),
+                'description': forensics_result.hidden_flags.get('description', '')
+            }
+        }
+    else:
+        # Нет юзеров для анализа - добавляем информационную секцию
+        breakdown['forensics'] = {
+            'total_penalty': 0,
+            'users_analyzed': 0,
+            'status': 'skipped',
+            'description': 'Нет данных для User Forensics'
+        }
+
     # ===== ФИНАЛЬНЫЙ ВЕРДИКТ =====
     # v5.0: Max теперь 118 (100 base + 10 verified + 8 age)
     base_score = score - (10 if is_verified else 0) - age_bonus
@@ -646,6 +833,7 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
         'score': score,
         'base_score': base_score,
         'verdict': verdict,
+        'scoring_mode': scoring_mode,  # v7.1: Normal или Hardcore
         'conviction': conviction_details,
         'breakdown': breakdown,
         'flags': {
@@ -653,7 +841,8 @@ def calculate_final_score(chat: Any, messages: list, comments_data: dict = None)
             'is_fake': getattr(chat, 'is_fake', False),
             'is_verified': is_verified,
             'comments_enabled': comments_enabled,
-            'floating_weights_active': not comments_enabled
+            'floating_weights_active': not comments_enabled,
+            'hardcore_mode': scoring_mode == 'hardcore'  # v7.1
         },
         'ad_load': ad_load_data,  # v5.0: Полные данные об Ad Load
         'raw_stats': get_raw_stats(messages)

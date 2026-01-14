@@ -1314,6 +1314,95 @@ def calculate_ad_load(messages: list, channel_username: str = None) -> dict:
 
 
 # ============================================================================
+# F16: REACTION FLATNESS (v7.1 Adaptive Paranoia Mode)
+# ============================================================================
+
+def check_f16_reaction_flatness(messages: list) -> dict:
+    """
+    F16: Reaction Flatness - детектор накрутки для каналов без комментов.
+    v7.1: Применяется ТОЛЬКО в Hardcore Mode (когда forensics недоступен).
+
+    Суть: Раз не видим КТО ставил реакции, смотрим КАК они распределены между постами.
+    Паттерн накрутки: Боты ставят ровное количество реакций — 200, 200, 198, 202.
+
+    Алгоритм:
+    - Собираем total реакций на последних 5 постах
+    - Считаем CV (coefficient of variation) этих чисел
+    - CV < 10% = подозрительно ровно = боты
+
+    Returns:
+        {
+            'triggered': bool,
+            'penalty': int (-20 если триггерит, 0 иначе),
+            'cv': float,
+            'totals': list[int],
+            'description': str
+        }
+    """
+    FLATNESS_CV_THRESHOLD = 10  # CV < 10% = подозрительно
+    FLATNESS_PENALTY = -20
+
+    # Собираем total реакций на последних 5 постах
+    totals = []
+    for msg in messages[:5]:
+        if not hasattr(msg, 'reactions') or not msg.reactions:
+            continue
+
+        reactions = msg.reactions
+        if not hasattr(reactions, 'reactions') or not reactions.reactions:
+            continue
+
+        total = 0
+        for r in reactions.reactions:
+            total += getattr(r, 'count', 0) or 0
+
+        if total > 0:
+            totals.append(total)
+
+    # Нужно минимум 3 поста для анализа
+    if len(totals) < 3:
+        return {
+            'triggered': False,
+            'penalty': 0,
+            'cv': 0.0,
+            'totals': totals,
+            'description': 'Недостаточно данных для анализа (< 3 постов с реакциями)'
+        }
+
+    # Считаем CV реакций между постами
+    mean = sum(totals) / len(totals)
+    if mean == 0:
+        return {
+            'triggered': False,
+            'penalty': 0,
+            'cv': 0.0,
+            'totals': totals,
+            'description': 'Нет реакций на постах'
+        }
+
+    variance = sum((x - mean) ** 2 for x in totals) / len(totals)
+    cv = (variance ** 0.5 / mean) * 100
+
+    # CV < 10% = подозрительно ровно = боты
+    if cv < FLATNESS_CV_THRESHOLD:
+        return {
+            'triggered': True,
+            'penalty': FLATNESS_PENALTY,
+            'cv': round(cv, 1),
+            'totals': totals,
+            'description': f'Реакции подозрительно ровные (CV={cv:.1f}% < {FLATNESS_CV_THRESHOLD}%)'
+        }
+
+    return {
+        'triggered': False,
+        'penalty': 0,
+        'cv': round(cv, 1),
+        'totals': totals,
+        'description': f'CV реакций {cv:.1f}% - в норме'
+    }
+
+
+# ============================================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================================
 
