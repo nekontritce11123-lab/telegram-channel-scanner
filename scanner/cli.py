@@ -1,6 +1,6 @@
 """
 CLI модуль для сканирования каналов.
-v15.3: UX доработки - убран "оригинальный контент", Premium N/A при малой выборке.
+v15.4: Улучшенная детекция рекламы - приватные инвайты, joinchat, telegram.me.
 
 Формула: Final Score = Raw Score × Trust Factor
 
@@ -117,7 +117,7 @@ def print_result(result: dict) -> None:
     else:
         trust_color = red
 
-    print(f"\n{cyan}--- TRUST MULTIPLIER SYSTEM (v15.3) ---{reset}")
+    print(f"\n{cyan}--- TRUST MULTIPLIER SYSTEM (v15.4) ---{reset}")
     print(f"  Raw Score:    {raw_score}/100 (витрина)")
     print(f"  Trust Factor: {trust_color}×{trust_factor:.2f}{reset}")
     print(f"  {color}Final Score:  {final_score}/100{reset}")

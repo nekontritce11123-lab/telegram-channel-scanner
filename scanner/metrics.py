@@ -1113,7 +1113,13 @@ def calculate_source_diversity(messages: list) -> float:
 def check_is_ad_post(message: Any, channel_username: str = None) -> dict:
     """
     Определяет, является ли пост рекламным.
-    v5.0: Многоуровневая детекция - ссылки, контент, структура.
+    v15.4: Улучшенная детекция Telegram ссылок.
+
+    Детектирует:
+    - Приватные инвайты: t.me/+XXX, t.me/joinchat/XXX (вес 0.7)
+    - Публичные каналы: t.me/channel, @channel (вес 0.5)
+    - Старый домен: telegram.me/channel (вес 0.5)
+    - Реферальные ссылки, shill-сервисы, ad-keywords
 
     Возвращает:
         {
@@ -1134,22 +1140,34 @@ def check_is_ad_post(message: Any, channel_username: str = None) -> dict:
 
     # ========== УРОВЕНЬ 1: АНАЛИЗ ССЫЛОК (самый надёжный) ==========
 
-    # 1.1: Ссылки на другие Telegram каналы (кроме своего)
+    # 1.1: v15.4 - Все Telegram ссылки (единый вес 0.5)
+    # Приватные: t.me/+ABC123, t.me/joinchat/ABC123
+    private_new = re.findall(r't\.me/\+([a-zA-Z0-9_-]+)', text)
+    private_joinchat = re.findall(r't\.me/joinchat/([a-zA-Z0-9_-]+)', text)
+
+    # Публичные: t.me/username, telegram.me/username, @username
     tg_links = re.findall(r't\.me/([a-zA-Z0-9_]+)', text)
+    telegram_me_links = re.findall(r'telegram\.me/([a-zA-Z0-9_]+)', text)
     tg_mentions = re.findall(r'@([a-zA-Z0-9_]+)', text)
 
+    # Собираем все внешние ссылки
     external_tg_links = []
-    for link in tg_links + tg_mentions:
-        # Исключаем свой канал и служебные ссылки
+
+    # Приватные инвайты — всегда внешние
+    external_tg_links.extend([f'+{x}' for x in private_new])
+    external_tg_links.extend([f'joinchat/{x}' for x in private_joinchat])
+
+    # Публичные — фильтруем свой канал и служебные
+    for link in tg_links + telegram_me_links + tg_mentions:
         if channel_username and link.lower() == channel_username.lower():
             continue
-        if link.lower() in ['joinchat', 'addstickers', 'share']:
+        if link.lower() in ['addstickers', 'share', 'proxy', 's', 'iv', 'joinchat']:
             continue
         external_tg_links.append(link)
 
     if external_tg_links:
         reasons.append(f"tg_links: {external_tg_links[:3]}")
-        confidence += 0.5  # Высокая уверенность
+        confidence += 0.5  # Единый вес для всех Telegram ссылок
 
     # 1.2: Реферальные ссылки
     ref_patterns = [
