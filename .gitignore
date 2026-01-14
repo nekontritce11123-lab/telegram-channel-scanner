@@ -21,3 +21,4 @@ tmpclaude-*
 .idea/
 *.swp
 *.swo
+crawler.db

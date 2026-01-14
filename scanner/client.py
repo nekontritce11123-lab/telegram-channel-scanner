@@ -10,9 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import asyncio
 from pyrogram import Client
 from pyrogram.raw import functions
-from pyrogram.errors import ChannelPrivate, ChannelInvalid
+from pyrogram.errors import ChannelPrivate, ChannelInvalid, FloodWait
 from dotenv import load_dotenv
 
 # Загружаем .env из корня проекта
@@ -469,3 +470,94 @@ def _deduplicate_users(users: list) -> list:
             unique.append(user)
 
     return unique
+
+
+# ============================================================================
+# v16.0: SAFE SCAN С ОБРАБОТКОЙ FLOODWAIT
+# ============================================================================
+
+async def smart_scan_safe(client: Client, channel: str, max_retries: int = 3) -> ScanResult:
+    """
+    Безопасный вариант smart_scan с обработкой FloodWait.
+
+    При получении FloodWait ждёт указанное время и повторяет запрос.
+    При ошибке доступа возвращает ScanResult с пустыми данными.
+
+    Args:
+        client: Pyrogram клиент
+        channel: username канала
+        max_retries: максимум попыток при FloodWait
+
+    Returns:
+        ScanResult или ScanResult с error статусом
+    """
+    for attempt in range(max_retries):
+        try:
+            return await smart_scan(client, channel)
+
+        except FloodWait as e:
+            wait_time = e.value + 5  # +5 сек запас
+            if wait_time > 3600:  # Больше часа — слишком долго
+                print(f"FloodWait слишком долгий ({e.value} сек), пропускаем канал")
+                return ScanResult(
+                    chat=None,
+                    messages=[],
+                    comments_data={},
+                    users=[],
+                    channel_health={'status': 'error', 'reason': f'FloodWait {e.value}s'}
+                )
+
+            print(f"FloodWait: жду {wait_time} сек (попытка {attempt + 1}/{max_retries})")
+            await asyncio.sleep(wait_time)
+
+        except (ChannelPrivate, ChannelInvalid) as e:
+            # Канал приватный или не существует
+            return ScanResult(
+                chat=None,
+                messages=[],
+                comments_data={},
+                users=[],
+                channel_health={'status': 'error', 'reason': str(type(e).__name__)}
+            )
+
+        except Exception as e:
+            # Другие ошибки
+            print(f"Ошибка при сканировании {channel}: {e}")
+            return ScanResult(
+                chat=None,
+                messages=[],
+                comments_data={},
+                users=[],
+                channel_health={'status': 'error', 'reason': str(e)}
+            )
+
+    # Все попытки исчерпаны
+    return ScanResult(
+        chat=None,
+        messages=[],
+        comments_data={},
+        users=[],
+        channel_health={'status': 'error', 'reason': 'Max retries exceeded'}
+    )
+
+
+async def resolve_invite_link(client: Client, invite_hash: str) -> str | None:
+    """
+    Пробует резолвить t.me/+XXX ссылку в username.
+
+    Некоторые t.me/+XXX ссылки — это публичные каналы с трекингом,
+    их можно проверить без вступления.
+
+    Args:
+        invite_hash: часть после t.me/+ (например ABC123xyz)
+
+    Returns:
+        username если канал публичный, None если приватный
+    """
+    try:
+        chat = await client.get_chat(f"https://t.me/+{invite_hash}")
+        if hasattr(chat, 'username') and chat.username:
+            return chat.username.lower()
+        return None  # Приватный канал
+    except Exception:
+        return None  # Ошибка или нужно вступить
