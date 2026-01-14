@@ -35,8 +35,9 @@ RATE_LIMIT = {
     'batch_pause': 300,         # 5 минут отдыха
 }
 
-# Порог для сбора ссылок (только качественные каналы размножаются)
-GOOD_THRESHOLD = 70
+# Пороги качества
+GOOD_THRESHOLD = 60      # Минимум для статуса GOOD в базе
+COLLECT_THRESHOLD = 70   # Минимум для сбора ссылок (размножения)
 
 
 class SmartCrawler:
@@ -195,25 +196,29 @@ class SmartCrawler:
             result['verdict'] = str(e)
             return result
 
-        # Определяем статус
+        # Определяем статус (GOOD если score >= 60)
         if score >= GOOD_THRESHOLD:
             status = 'GOOD'
 
-            # Собираем ссылки только с хороших каналов
-            links = self.extract_links(scan_result.messages, username)
+            # Собираем ссылки только с ОЧЕНЬ хороших каналов (score >= 70)
+            if score >= COLLECT_THRESHOLD:
+                links = self.extract_links(scan_result.messages, username)
 
-            # Добавляем новые каналы в очередь
-            new_count = 0
-            for link in links:
-                if self.db.add_channel(link, parent=username):
-                    new_count += 1
+                # Добавляем новые каналы в очередь
+                new_count = 0
+                for link in links:
+                    if self.db.add_channel(link, parent=username):
+                        new_count += 1
 
-            result['new_channels'] = new_count
+                result['new_channels'] = new_count
 
-            self.db.mark_done(
-                username, status, score, verdict, trust_factor, members,
-                ad_links=list(links)
-            )
+                self.db.mark_done(
+                    username, status, score, verdict, trust_factor, members,
+                    ad_links=list(links)
+                )
+            else:
+                # 60-69: GOOD но ссылки не собираем (тупиковая ветка)
+                self.db.mark_done(username, status, score, verdict, trust_factor, members)
 
         else:
             status = 'BAD'
