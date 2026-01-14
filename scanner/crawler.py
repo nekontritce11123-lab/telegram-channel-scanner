@@ -37,7 +37,7 @@ RATE_LIMIT = {
 
 # Пороги качества
 GOOD_THRESHOLD = 60      # Минимум для статуса GOOD в базе
-COLLECT_THRESHOLD = 70   # Минимум для сбора ссылок (размножения)
+COLLECT_THRESHOLD = 66   # Минимум для сбора ссылок (размножения)
 
 
 class SmartCrawler:
