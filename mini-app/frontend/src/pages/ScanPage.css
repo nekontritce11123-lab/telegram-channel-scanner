@@ -1,0 +1,221 @@
+.scan-page .page-title {
+  text-align: center;
+  margin-bottom: var(--spacing-lg);
+}
+
+.scan-form {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-lg);
+}
+
+.input-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background: var(--secondary-bg-color);
+  border-radius: var(--radius-md);
+  padding: 0 var(--spacing-md);
+}
+
+.input-prefix {
+  color: var(--hint-color);
+  font-size: 16px;
+  margin-right: 4px;
+}
+
+.input-wrapper input {
+  flex: 1;
+  background: transparent;
+  color: var(--text-color);
+  font-size: 16px;
+  padding: var(--spacing-md) 0;
+}
+
+.input-wrapper input::placeholder {
+  color: var(--hint-color);
+}
+
+.scan-form button {
+  background: var(--button-color);
+  color: var(--button-text-color);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.scan-form button:disabled {
+  opacity: 0.5;
+}
+
+.retry-btn {
+  display: block;
+  margin-top: var(--spacing-sm);
+  background: transparent;
+  color: var(--link-color);
+  font-size: 13px;
+}
+
+/* Result card */
+.result-card {
+  background: var(--secondary-bg-color);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-lg);
+}
+
+.result-username {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.result-verdict {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+}
+
+.result-verdict.excellent {
+  background: rgba(76, 175, 80, 0.2);
+  color: var(--verdict-excellent);
+}
+
+.result-verdict.good {
+  background: rgba(33, 150, 243, 0.2);
+  color: var(--verdict-good);
+}
+
+.result-verdict.medium {
+  background: rgba(255, 152, 0, 0.2);
+  color: var(--verdict-medium);
+}
+
+.result-verdict.high-risk {
+  background: rgba(244, 67, 54, 0.2);
+  color: var(--verdict-high-risk);
+}
+
+.result-verdict.scam {
+  background: rgba(183, 28, 28, 0.3);
+  color: var(--verdict-scam);
+}
+
+/* Score section */
+.result-score-section {
+  display: flex;
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
+}
+
+.score-gauge {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+}
+
+.score-gauge svg {
+  width: 100%;
+  height: 100%;
+}
+
+.score-progress {
+  transition: stroke-dasharray 0.5s ease;
+}
+
+.score-progress.excellent { stroke: var(--verdict-excellent); }
+.score-progress.good { stroke: var(--verdict-good); }
+.score-progress.medium { stroke: var(--verdict-medium); }
+.score-progress.high-risk { stroke: var(--verdict-high-risk); }
+.score-progress.scam { stroke: var(--verdict-scam); }
+
+.score-value {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.score-number {
+  display: block;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.score-label {
+  font-size: 12px;
+  color: var(--hint-color);
+  text-transform: uppercase;
+}
+
+.score-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--spacing-sm);
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.detail-label {
+  font-size: 13px;
+  color: var(--hint-color);
+}
+
+.detail-value {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.detail-value.trust.high { color: var(--trust-high); }
+.detail-value.trust.medium { color: var(--trust-medium); }
+.detail-value.trust.low { color: var(--trust-low); }
+
+.detail-value.category {
+  color: var(--link-color);
+}
+
+.detail-value.cpm {
+  color: var(--verdict-excellent);
+}
+
+/* Actions */
+.result-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.action-btn {
+  flex: 1;
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.action-btn.primary {
+  background: var(--button-color);
+  color: var(--button-text-color);
+}
+
+.action-btn.secondary {
+  background: rgba(106, 178, 242, 0.15);
+  color: var(--link-color);
+}

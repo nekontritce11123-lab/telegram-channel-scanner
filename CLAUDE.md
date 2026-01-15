@@ -13,6 +13,15 @@ Telegram Channel Quality Scanner ("Рекламщик") - анализатор �
 python run.py @channel_name
 python -m scanner.cli @channel_name
 
+# Crawler - автоматический сбор базы каналов
+python crawler.py @seed1 @seed2    # Первый запуск с seed каналами
+python crawler.py                   # Продолжить сбор
+python crawler.py --stats           # Общая статистика
+python crawler.py --category-stats  # Статистика по категориям
+python crawler.py --export good.csv # Экспорт GOOD каналов
+python crawler.py --export ai.csv --category AI_ML  # Экспорт с фильтром
+python crawler.py --classify        # Классифицировать существующие GOOD
+
 # Install dependencies
 pip install -r requirements.txt
 ```
@@ -24,9 +33,11 @@ Requires `.env` file with Telegram API credentials:
 API_ID=your_api_id
 API_HASH=your_api_hash
 PHONE=your_phone_number
+GROQ_API_KEY=your_groq_key  # Опционально, для AI классификации
 ```
 
-Get credentials at https://my.telegram.org/apps
+Get Telegram credentials at https://my.telegram.org/apps
+Get Groq API key at https://console.groq.com/keys
 
 ## Architecture
 
@@ -77,6 +88,32 @@ Final Score = Raw Score × Trust Factor
 - `scan_channel()` - Async scan entry point
 - `print_result()` - Colored terminal output with markers ([FLOAT], [VIRAL], [BOT_WALL], etc.)
 - Results saved to `output/{channel}.json`
+
+**scanner/crawler.py** - Smart Crawler (v18.0)
+- `SmartCrawler` - автоматический сбор каналов с rate limiting
+- Пороги: GOOD_THRESHOLD=60, COLLECT_THRESHOLD=66
+- FloodWait: всегда ждать указанное время, никогда не пропускать
+
+**scanner/classifier.py** - AI Classifier (v18.0)
+- Groq API + Llama 3.3 70B для классификации
+- 17 категорий + multi-label поддержка (CAT+CAT2)
+- FALLBACK_KEYWORDS для offline режима без API
+
+**scanner/database.py** - SQLite storage
+- Статусы: WAITING, PROCESSING, GOOD, BAD, ERROR
+- Поля: category + category_secondary (multi-label)
+
+### AI Categories (v18.0)
+
+```
+Премиальные (CPM 2000-7000₽): CRYPTO, FINANCE, REAL_ESTATE, BUSINESS
+Технологии (CPM 1000-2000₽):  TECH, AI_ML
+Образование (CPM 700-1200₽):  EDUCATION, BEAUTY, HEALTH, TRAVEL
+Коммерция (CPM 500-1000₽):    RETAIL
+Контент (CPM 100-500₽):       ENTERTAINMENT, NEWS, LIFESTYLE
+Риск:                         GAMBLING, ADULT
+Fallback:                     OTHER
+```
 
 ### Key Thresholds
 

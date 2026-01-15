@@ -1,0 +1,124 @@
+.stats-page .page-title {
+  margin-bottom: var(--spacing-lg);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.stat-card {
+  background: var(--secondary-bg-color);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  text-align: center;
+}
+
+.stat-value {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--hint-color);
+  text-transform: uppercase;
+}
+
+.stat-card.good .stat-value { color: var(--verdict-good); }
+.stat-card.bad .stat-value { color: var(--verdict-high-risk); }
+.stat-card.waiting .stat-value { color: var(--verdict-medium); }
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: var(--spacing-md);
+  color: var(--hint-color);
+}
+
+/* Categories list */
+.categories-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-lg);
+}
+
+.category-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--secondary-bg-color);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+}
+
+.category-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.category-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.category-count {
+  font-size: 12px;
+  color: var(--hint-color);
+}
+
+.category-cpm {
+  text-align: right;
+}
+
+.cpm-range {
+  display: block;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--verdict-excellent);
+}
+
+.cpm-label {
+  font-size: 11px;
+  color: var(--hint-color);
+}
+
+/* CPM table */
+.cpm-table {
+  background: var(--secondary-bg-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.cpm-header {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--spacing-md);
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--hint-color);
+  text-transform: uppercase;
+}
+
+.cpm-row {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.cpm-row:last-child {
+  border-bottom: none;
+}
+
+.cpm-row.premium span:last-child { color: var(--category-crypto); }
+.cpm-row.tech span:last-child { color: var(--category-tech); }
+.cpm-row.edu span:last-child { color: var(--category-education); }
+.cpm-row.content span:last-child { color: var(--hint-color); }
