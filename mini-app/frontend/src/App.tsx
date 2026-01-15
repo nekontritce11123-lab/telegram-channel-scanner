@@ -32,18 +32,6 @@ const CATEGORY_NAMES: Record<string, string> = Object.fromEntries(
   ALL_CATEGORIES.filter(c => c.id).map(c => [c.id!, c.label])
 )
 
-// Russian verdicts
-function getVerdictText(verdict: string): string {
-  const map: Record<string, string> = {
-    'EXCELLENT': 'Отличный',
-    'GOOD': 'Хороший',
-    'MEDIUM': 'Средний',
-    'HIGH_RISK': 'Рискованный',
-    'SCAM': 'Мошенник',
-  }
-  return map[verdict] || verdict
-}
-
 // Get category name
 function getCategoryName(category: string): string {
   return CATEGORY_NAMES[category] || category
@@ -77,6 +65,13 @@ function getVerdictColor(verdict: string): string {
   }
 }
 
+// v10.0: Trust label — понятный текст вместо ×1.00
+function getTrustLabel(trust: number): { text: string; color: string } {
+  if (trust >= 0.9) return { text: 'высокое', color: 'var(--verdict-excellent)' }
+  if (trust >= 0.7) return { text: 'среднее', color: 'var(--verdict-medium)' }
+  return { text: 'низкое', color: 'var(--verdict-scam)' }
+}
+
 // Avatar colors
 function getAvatarColor(username: string): string {
   const colors = [
@@ -86,13 +81,92 @@ function getAvatarColor(username: string): string {
   return colors[username.charCodeAt(0) % colors.length]
 }
 
-// v8.0: Get metric color based on percentage
-function getMetricColor(score: number, max: number): string {
+// v11.3: Estimate ER based on score and channel size
+// ER = Views / Members * 100
+// Small channels: higher ER (15-30%), Large: lower (3-8%)
+function estimateER(members: number, score: number): number {
+  // Base ER by channel size
+  let baseER: number
+  if (members < 5000) {
+    baseER = 25 // micro channels ~25%
+  } else if (members < 20000) {
+    baseER = 15 // small channels ~15%
+  } else if (members < 50000) {
+    baseER = 10 // medium channels ~10%
+  } else if (members < 100000) {
+    baseER = 6 // large channels ~6%
+  } else {
+    baseER = 4 // mega channels ~4%
+  }
+
+  // Adjust by score (quality affects engagement)
+  // Score 80+ = +30%, Score 60-80 = +0%, Score <60 = -30%
+  const scoreMult = score >= 80 ? 1.3 : score >= 60 ? 1.0 : 0.7
+
+  const er = baseER * scoreMult
+  // Round to 1 decimal place
+  return Math.round(er * 10) / 10
+}
+
+// v11.0: Traffic Light system
+function getTrafficLight(score: number, max: number): { emoji: string; color: 'green' | 'yellow' | 'red' } {
   const pct = (score / max) * 100
-  if (pct >= 75) return 'excellent'
-  if (pct >= 50) return 'good'
-  if (pct >= 25) return 'warning'
-  return 'poor'
+  if (pct >= 70) return { emoji: '🟢', color: 'green' }
+  if (pct >= 40) return { emoji: '🟡', color: 'yellow' }
+  return { emoji: '🔴', color: 'red' }
+}
+
+// v11.0: Alert severity based on multiplier
+function getAlertSeverity(multiplier: number): 'critical' | 'warning' | 'info' {
+  if (multiplier < 0.7) return 'critical'
+  if (multiplier < 0.9) return 'warning'
+  return 'info'
+}
+
+// v11.5: ScoreRing компонент для карточек (SVG circle с прогрессом)
+// large: для детального просмотра (90px), обычный: 64px
+function ScoreRing({ score, verdict, showCheck, large }: { score: number; verdict: string; showCheck?: boolean; large?: boolean }) {
+  // Большой размер для детального просмотра
+  const size = large ? 90 : 64
+  const radius = large ? 36 : 26
+  const center = size / 2
+  const circumference = 2 * Math.PI * radius
+  const progress = (score / 100) * circumference
+  const offset = circumference - progress
+
+  return (
+    <div className={large ? styles.scoreRingLarge : styles.scoreRing}>
+      <svg viewBox={`0 0 ${size} ${size}`} className={styles.scoreRingSvg}>
+        {/* Background circle */}
+        <circle
+          cx={center} cy={center} r={radius}
+          fill="none"
+          stroke="rgba(255,255,255,0.1)"
+          strokeWidth={large ? 4 : 3}
+        />
+        {/* Progress circle */}
+        <circle
+          cx={center} cy={center} r={radius}
+          fill="none"
+          stroke={getVerdictColor(verdict)}
+          strokeWidth={large ? 4 : 3}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          style={{ transform: 'rotate(-90deg)', transformOrigin: 'center' }}
+        />
+      </svg>
+      <span className={styles.scoreRingValue}>{score}</span>
+      {/* Синий кружок с галочкой справа-сверху */}
+      {showCheck && (
+        <div className={styles.verifiedBadge}>
+          <svg viewBox="0 0 24 24" fill="#000">
+            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+          </svg>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // v9.0: Metric descriptions - simple Russian without numbers
@@ -219,8 +293,9 @@ function App() {
   const [page, setPage] = useState(1)
   const [selectedChannel, setSelectedChannel] = useState<ChannelDetail | null>(null)
   const [showFilterSheet, setShowFilterSheet] = useState(false)  // v9.0: single unified filter sheet
-  const [expandedRisks, setExpandedRisks] = useState<Set<number>>(new Set())
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null)  // v8.0: Modal state
+  const [activeTab, setActiveTab] = useState<'search' | 'history' | 'watchlist' | 'profile'>('search')  // v11.0: Bottom Nav
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())  // v11.0: Accordions
 
   const gridRef = useRef<HTMLDivElement>(null)
   const isInitialized = useRef(false)
@@ -255,7 +330,6 @@ function App() {
       const handleBack = () => {
         hapticLight()
         setSelectedChannel(null)
-        setExpandedRisks(new Set())
       }
       webApp.BackButton.onClick(handleBack)
       return () => {
@@ -337,7 +411,6 @@ function App() {
   const closeChannelDetail = useCallback(() => {
     hapticLight()
     setSelectedChannel(null)
-    setExpandedRisks(new Set())
     resetScan()
   }, [hapticLight, resetScan])
 
@@ -366,19 +439,18 @@ function App() {
     }
   }, [scanError, hapticError])
 
-  // Toggle risk accordion
-  const toggleRisk = useCallback((index: number) => {
-    hapticLight()
-    setExpandedRisks(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(index)) {
-        newSet.delete(index)
+  // v11.0: Toggle accordion category
+  const toggleCategory = useCallback((cat: string) => {
+    setExpandedCategories(prev => {
+      const next = new Set(prev)
+      if (next.has(cat)) {
+        next.delete(cat)
       } else {
-        newSet.add(index)
+        next.add(cat)
       }
-      return newSet
+      return next
     })
-  }, [hapticLight])
+  }, [])
 
   // Has active filters
   const hasActiveFilters = selectedCategory || minScore > 0 || minTrust > 0 ||
@@ -450,240 +522,182 @@ function App() {
 
         {/* Content - ALL SECTIONS UNIFIED */}
         <div className={styles.detailContent}>
-          {/* Profile Hero - v9.0: Nickname near avatar */}
-          <div className={styles.detailHero}>
+          {/* v11.0: Hero with Speedometer instead of badge */}
+          <div className={styles.heroWithSpeedometer}>
             <Avatar
               username={selectedChannel.username}
               photoUrl={selectedChannel.photo_url}
               size={56}
             />
-            <div className={styles.heroInfo}>
-              {/* v9.0: Nickname moved here from header */}
+            <div className={styles.heroInfoCompact}>
               <span className={styles.heroUsername}>@{selectedChannel.username}</span>
               <span className={styles.heroSubtitle}>
-                {formatNumber(selectedChannel.members)} подп. • Trust ×{selectedChannel.trust_factor.toFixed(2)}
+                {formatNumber(selectedChannel.members)} • {selectedChannel.trust_factor >= 0.9 ? '🛡️' : '⚠️'}{' '}
+                <span style={{ color: getTrustLabel(selectedChannel.trust_factor).color }}>
+                  {getTrustLabel(selectedChannel.trust_factor).text}
+                </span>
               </span>
+              {selectedChannel.cpm_min && selectedChannel.cpm_max && (
+                <span className={styles.heroPrice}>
+                  💰 {formatPrice(selectedChannel.cpm_min, selectedChannel.cpm_max)}
+                </span>
+              )}
             </div>
+            {/* v11.5: Единый ScoreRing (большой размер) */}
+            <ScoreRing
+              score={selectedChannel.score}
+              verdict={selectedChannel.verdict}
+              showCheck={selectedChannel.trust_factor >= 0.9}
+              large
+            />
           </div>
 
-          {/* Score Bar - v9.0: Separate prominent section */}
-          <div className={styles.scoreSection}>
-            <div className={styles.scoreBar}>
-              <div
-                className={styles.scoreBarFill}
-                style={{
-                  width: `${selectedChannel.score}%`,
-                  backgroundColor: getVerdictColor(selectedChannel.verdict)
-                }}
-              />
-            </div>
-            <div className={styles.scoreInfo}>
-              <span className={styles.scoreNumber}>{selectedChannel.score}/100</span>
-              <span
-                className={styles.scoreVerdict}
-                style={{ color: getVerdictColor(selectedChannel.verdict) }}
-              >
-                {getVerdictText(selectedChannel.verdict)}
-              </span>
-            </div>
-          </div>
-
-          {/* Section: Score Breakdown - v7.0 All 13 metrics */}
-          <section className={styles.detailSection}>
-            <h3 className={styles.sectionTitle}>Оценка</h3>
-            {breakdown ? (
-              <div className={styles.breakdownGrid}>
-                {/* Quality Category */}
-                <div className={styles.breakdownCategory}>
-                  <div className={styles.breakdownRow}>
-                    <span className={styles.categoryLabel}>КАЧЕСТВО</span>
-                    <span>{breakdown.quality.total}/{breakdown.quality.max}</span>
-                  </div>
-                  <div className={styles.progressBar}>
-                    <div
-                      className={styles.progressFill}
-                      style={{ width: `${(breakdown.quality.total / breakdown.quality.max) * 100}%` }}
-                    />
-                  </div>
-                  {breakdown.quality.items && Object.entries(breakdown.quality.items).map(([key, item]) => (
-                    <div
-                      key={key}
-                      className={styles.breakdownItem}
-                      onClick={() => setSelectedMetric(key)}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      <span className={styles.breakdownLabel}>{item.label}</span>
-                      <div className={styles.breakdownBar}>
-                        <div
-                          className={`${styles.breakdownFill} ${styles[getMetricColor(item.score, item.max)]}`}
-                          style={{ width: `${(item.score / item.max) * 100}%` }}
-                        />
-                      </div>
-                      <span className={styles.breakdownValue}>{item.score}/{item.max}</span>
-                      <span className={styles.infoIcon}>ⓘ</span>
-                    </div>
-                  ))}
+          {/* v11.0: Key Alerts Block */}
+          <div className={styles.alertsSection}>
+            {mockRisks.length > 0 ? (
+              <>
+                <div className={styles.alertsHeader}>
+                  ⚠️ Риски ({mockRisks.length})
                 </div>
-
-                {/* Engagement Category */}
-                <div className={styles.breakdownCategory}>
-                  <div className={styles.breakdownRow}>
-                    <span className={styles.categoryLabel}>ВОВЛЕЧЁННОСТЬ</span>
-                    <span>{breakdown.engagement.total}/{breakdown.engagement.max}</span>
-                  </div>
-                  <div className={styles.progressBar}>
-                    <div
-                      className={styles.progressFill}
-                      style={{ width: `${(breakdown.engagement.total / breakdown.engagement.max) * 100}%` }}
-                    />
-                  </div>
-                  {breakdown.engagement.items && Object.entries(breakdown.engagement.items).map(([key, item]) => (
-                    <div
-                      key={key}
-                      className={styles.breakdownItem}
-                      onClick={() => setSelectedMetric(key)}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      <span className={styles.breakdownLabel}>{item.label}</span>
-                      <div className={styles.breakdownBar}>
-                        <div
-                          className={`${styles.breakdownFill} ${styles[getMetricColor(item.score, item.max)]}`}
-                          style={{ width: `${(item.score / item.max) * 100}%` }}
-                        />
-                      </div>
-                      <span className={styles.breakdownValue}>{item.score}/{item.max}</span>
-                      <span className={styles.infoIcon}>ⓘ</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Reputation Category */}
-                <div className={styles.breakdownCategory}>
-                  <div className={styles.breakdownRow}>
-                    <span className={styles.categoryLabel}>РЕПУТАЦИЯ</span>
-                    <span>{breakdown.reputation.total}/{breakdown.reputation.max}</span>
-                  </div>
-                  <div className={styles.progressBar}>
-                    <div
-                      className={styles.progressFill}
-                      style={{ width: `${(breakdown.reputation.total / breakdown.reputation.max) * 100}%` }}
-                    />
-                  </div>
-                  {breakdown.reputation.items && Object.entries(breakdown.reputation.items).map(([key, item]) => (
-                    <div
-                      key={key}
-                      className={styles.breakdownItem}
-                      onClick={() => setSelectedMetric(key)}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      <span className={styles.breakdownLabel}>{item.label}</span>
-                      <div className={styles.breakdownBar}>
-                        <div
-                          className={`${styles.breakdownFill} ${styles[getMetricColor(item.score, item.max)]}`}
-                          style={{ width: `${(item.score / item.max) * 100}%` }}
-                        />
-                      </div>
-                      <span className={styles.breakdownValue}>{item.score}/{item.max}</span>
-                      <span className={styles.infoIcon}>ⓘ</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className={styles.noPrice}>Данные загружаются...</div>
-            )}
-          </section>
-
-          {/* Section: Risks */}
-          <section className={styles.detailSection}>
-            <h3 className={styles.sectionTitle}>Риски</h3>
-            {mockRisks.length === 0 ? (
-              <div className={styles.noRisks}>
-                <span className={styles.noRisksIcon}>🛡️</span>
-                <span className={styles.noRisksTitle}>Рисков не обнаружено</span>
-                <span className={styles.noRisksText}>Канал прошёл все проверки на накрутку</span>
-              </div>
-            ) : (
-              <div className={styles.risksList}>
-                {mockRisks.map((risk, i) => (
-                  <div
-                    key={i}
-                    className={`${styles.riskItem} ${expandedRisks.has(i) ? styles.expanded : ''}`}
-                  >
-                    <button
-                      className={styles.riskHeader}
-                      onClick={() => toggleRisk(i)}
-                    >
-                      <span className={styles.riskIcon}>{expandedRisks.has(i) ? '▼' : '▶'}</span>
-                      <span className={styles.riskName}>{risk.name}</span>
-                      <span className={`${styles.riskMult} ${
-                        risk.multiplier >= 0.8 ? styles.riskLow :
-                        risk.multiplier >= 0.5 ? styles.riskMedium : styles.riskHigh
-                      }`}>
-                        ×{risk.multiplier.toFixed(1)}
+                {mockRisks.map((risk, i) => {
+                  const severity = getAlertSeverity(risk.multiplier)
+                  return (
+                    <div key={i} className={`${styles.alertCard} ${styles[severity]}`}>
+                      <span className={styles.alertIcon}>
+                        {severity === 'critical' ? '🚨' : '⚠️'}
                       </span>
-                    </button>
-                    {expandedRisks.has(i) && (
-                      <div className={styles.riskDesc}>
-                        {risk.description}
+                      <div className={styles.alertContent}>
+                        <div className={styles.alertTitle}>
+                          <span>{risk.name}</span>
+                          <span className={`${styles.alertMult} ${styles[severity]}`}>
+                            ×{risk.multiplier.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className={styles.alertDesc}>{risk.description}</div>
                       </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* Section: Price */}
-          <section className={styles.detailSection}>
-            <h3 className={styles.sectionTitle}>Цена</h3>
-            {selectedChannel.cpm_min && selectedChannel.cpm_max ? (
-              <div className={styles.priceBlock}>
-                <div className={styles.priceMain}>
-                  {formatPrice(selectedChannel.cpm_min, selectedChannel.cpm_max)}
-                </div>
-                <div className={styles.priceGrid}>
-                  <div className={styles.priceRow}>
-                    <span>Категория</span>
-                    <span>{selectedChannel.category ? getCategoryName(selectedChannel.category) : '—'}</span>
-                  </div>
-                  <div className={styles.priceRow}>
-                    <span>Подписчики</span>
-                    <span>{formatNumber(selectedChannel.members)}</span>
-                  </div>
-                  <div className={styles.priceRow}>
-                    <span>Score</span>
-                    <span>{selectedChannel.score}%</span>
-                  </div>
-                  <div className={styles.priceRow}>
-                    <span>Trust</span>
-                    <span>×{selectedChannel.trust_factor.toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
+                    </div>
+                  )
+                })}
+              </>
             ) : (
-              <div className={styles.noPrice}>
-                Недостаточно данных
+              <div className={styles.noAlertsCard}>
+                <span>🛡️</span>
+                <span className={styles.noAlertsText}>Рисков не обнаружено</span>
               </div>
             )}
-          </section>
+          </div>
 
-          {/* Section: Recommendations */}
-          {selectedChannel.recommendations && selectedChannel.recommendations.length > 0 && (
-            <section className={styles.detailSection}>
-              <h3 className={styles.sectionTitle}>Рекомендации</h3>
-              <div className={styles.recList}>
-                {selectedChannel.recommendations.map((rec, i) => (
-                  <div key={i} className={`${styles.recItem} ${styles[`rec_${rec.type}`]}`}>
-                    <span className={styles.recIcon}>{rec.icon}</span>
-                    <span className={styles.recText}>{rec.text}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
+          {/* v11.0: Breakdown with Accordions and Traffic Lights */}
+          {breakdown ? (
+            <div className={styles.accordionSection}>
+              {/* Quality Accordion */}
+              <button
+                className={`${styles.accordionHeader} ${expandedCategories.has('quality') ? styles.expanded : ''}`}
+                onClick={() => toggleCategory('quality')}
+              >
+                <span className={styles.accordionArrow}>›</span>
+                <span className={styles.accordionLabel}>КАЧЕСТВО</span>
+                <span className={styles.accordionScore}>{breakdown.quality.total}/{breakdown.quality.max}</span>
+              </button>
+              {expandedCategories.has('quality') && (
+                <div className={styles.accordionBody}>
+                  {breakdown.quality.items && Object.entries(breakdown.quality.items).map(([key, item]) => {
+                    const light = getTrafficLight(item.score, item.max)
+                    return (
+                      <div
+                        key={key}
+                        className={styles.metricRow}
+                        onClick={() => setSelectedMetric(key)}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <span className={styles.metricLight}>{light.emoji}</span>
+                        <span className={styles.metricLabel}>{item.label}</span>
+                        <span className={styles.metricValue}>{item.score}/{item.max}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Engagement Accordion */}
+              <button
+                className={`${styles.accordionHeader} ${expandedCategories.has('engagement') ? styles.expanded : ''}`}
+                onClick={() => toggleCategory('engagement')}
+              >
+                <span className={styles.accordionArrow}>›</span>
+                <span className={styles.accordionLabel}>ВОВЛЕЧЁННОСТЬ</span>
+                <span className={styles.accordionScore}>{breakdown.engagement.total}/{breakdown.engagement.max}</span>
+              </button>
+              {expandedCategories.has('engagement') && (
+                <div className={styles.accordionBody}>
+                  {breakdown.engagement.items && Object.entries(breakdown.engagement.items).map(([key, item]) => {
+                    const light = getTrafficLight(item.score, item.max)
+                    return (
+                      <div
+                        key={key}
+                        className={styles.metricRow}
+                        onClick={() => setSelectedMetric(key)}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <span className={styles.metricLight}>{light.emoji}</span>
+                        <span className={styles.metricLabel}>{item.label}</span>
+                        <span className={styles.metricValue}>{item.score}/{item.max}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Reputation Accordion */}
+              <button
+                className={`${styles.accordionHeader} ${expandedCategories.has('reputation') ? styles.expanded : ''}`}
+                onClick={() => toggleCategory('reputation')}
+              >
+                <span className={styles.accordionArrow}>›</span>
+                <span className={styles.accordionLabel}>РЕПУТАЦИЯ</span>
+                <span className={styles.accordionScore}>{breakdown.reputation.total}/{breakdown.reputation.max}</span>
+              </button>
+              {expandedCategories.has('reputation') && (
+                <div className={styles.accordionBody}>
+                  {breakdown.reputation.items && Object.entries(breakdown.reputation.items).map(([key, item]) => {
+                    const light = getTrafficLight(item.score, item.max)
+                    return (
+                      <div
+                        key={key}
+                        className={styles.metricRow}
+                        onClick={() => setSelectedMetric(key)}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <span className={styles.metricLight}>{light.emoji}</span>
+                        <span className={styles.metricLabel}>{item.label}</span>
+                        <span className={styles.metricValue}>{item.score}/{item.max}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className={styles.noPrice}>Данные загружаются...</div>
+          )}
+
+          {/* v10.1: Risks section REMOVED - now shown in Hero */}
+
+          {/* v10.1: Price section REMOVED - now shown in Hero */}
+
+          {/* Section: Recommendations - v10.1 filter out cpm (shown in Hero) */}
+          {selectedChannel.recommendations && selectedChannel.recommendations.filter(r => r.type !== 'cpm').length > 0 && (
+            <div className={styles.recsCompact}>
+              {selectedChannel.recommendations.filter(r => r.type !== 'cpm').slice(0, 2).map((rec, i) => (
+                <div key={i} className={styles.recCompactItem}>
+                  <span>{rec.icon}</span>
+                  <span>{rec.text}</span>
+                </div>
+              ))}
+            </div>
           )}
 
           {/* Meta Info */}
@@ -723,24 +737,69 @@ function App() {
     )
   }
 
-  // Main List View - v9.0 COMPACT HEADER
+  // v11.0: Stub pages for inactive tabs
+  if (activeTab !== 'search') {
+    const tabInfo = {
+      history: { icon: '📋', title: 'История', text: 'История просмотров появится здесь' },
+      watchlist: { icon: '⭐', title: 'Избранное', text: 'Сохраняйте интересные каналы' },
+      profile: { icon: '👤', title: 'Профиль', text: 'Настройки и статистика' },
+    }[activeTab]
+
+    return (
+      <div className={styles.app}>
+        <div className={styles.stubPage}>
+          <span className={styles.stubIcon}>{tabInfo.icon}</span>
+          <h2 className={styles.stubTitle}>{tabInfo.title}</h2>
+          <p className={styles.stubText}>{tabInfo.text}</p>
+          <p className={styles.stubText} style={{ marginTop: '8px', opacity: 0.6 }}>Скоро</p>
+        </div>
+
+        {/* v11.0: Bottom Navigation Bar */}
+        <nav className={styles.bottomNav}>
+          {[
+            { id: 'search' as const, icon: '🔍', label: 'Поиск' },
+            { id: 'history' as const, icon: '📋', label: 'История' },
+            { id: 'watchlist' as const, icon: '⭐', label: 'Избранное' },
+            { id: 'profile' as const, icon: '👤', label: 'Профиль' },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              className={`${styles.navItem} ${activeTab === tab.id ? styles.active : ''}`}
+              onClick={() => { hapticLight(); setActiveTab(tab.id) }}
+            >
+              <span className={styles.navIcon}>{tab.icon}</span>
+              <span className={styles.navLabel}>{tab.label}</span>
+            </button>
+          ))}
+        </nav>
+      </div>
+    )
+  }
+
+  // Main List View - v11.0 with Bottom Nav
   return (
     <div className={styles.app}>
-      {/* Sticky Header - v9.0: Compact search + one filter button */}
+      {/* Sticky Header - v11.1: Search + Quick Categories */}
       <div className={styles.stickyHeader}>
         <div className={styles.searchRow}>
           {/* Search Bar */}
           <div className={styles.searchBar}>
-            <span className={styles.searchIcon}>@</span>
+            <span className={styles.searchIconSvg}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="m21 21-4.35-4.35"/>
+              </svg>
+            </span>
             <input
               type="text"
               className={styles.searchInput}
-              placeholder="Проверить канал..."
+              placeholder="Поиск канала..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={handleKeyDown}
             />
-            {searchQuery && (
+            {scanning && <span className={styles.searchSpinner}>...</span>}
+            {searchQuery && !scanning && (
               <button
                 className={styles.clearButton}
                 onClick={() => setSearchQuery('')}
@@ -748,23 +807,20 @@ function App() {
                 ×
               </button>
             )}
-            <button
-              className={styles.scanButton}
-              onClick={handleSearch}
-              disabled={!searchQuery.trim() || scanning}
-            >
-              {scanning ? '...' : '→'}
-            </button>
           </div>
-          {/* v9.0: Single filter button */}
+          {/* Filter button with funnel SVG icon */}
           <button
-            className={`${styles.filtersButton} ${activeFilterCount > 0 ? styles.hasFilters : ''}`}
+            className={`${styles.filtersButtonNew} ${activeFilterCount > 0 ? styles.hasFilters : ''}`}
             onClick={() => { hapticLight(); setShowFilterSheet(true) }}
           >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+            </svg>
             Фильтры
             {activeFilterCount > 0 && <span className={styles.filterBadge}>{activeFilterCount}</span>}
           </button>
         </div>
+
       </div>
 
       {/* v9.0: UNIFIED Filter Bottom Sheet with categories */}
@@ -871,9 +927,9 @@ function App() {
         </>
       )}
 
-      {/* Content */}
+      {/* Content - v11.0: with padding for Bottom Nav */}
       <main
-        className={styles.content}
+        className={`${styles.content} ${styles.contentWithNav}`}
         ref={gridRef}
         onScroll={handleScroll}
       >
@@ -907,42 +963,48 @@ function App() {
           </div>
         ) : (
           <>
-            <div className={styles.channelGrid}>
+            {/* v11.1: Card List - структура как на референсе */}
+            <div className={styles.channelList}>
               {channels.map((channel, index) => (
                 <button
                   key={channel.username}
-                  className={styles.channelCard}
-                  data-verdict={channel.verdict}
+                  className={styles.channelCardNew}
                   onClick={() => handleChannelClick(channel)}
                   style={{ animationDelay: `${Math.min(index, 5) * 20}ms` }}
                 >
-                  {/* Avatar */}
-                  <Avatar
-                    username={channel.username}
-                    photoUrl={channel.photo_url}
-                    size={32}
-                  />
-
-                  {/* Card Info */}
-                  <div className={styles.cardInfo}>
-                    <div className={styles.cardTop}>
-                      <span className={styles.cardUsername}>@{channel.username}</span>
-                      <span
-                        className={styles.cardScore}
-                        style={{ color: getVerdictColor(channel.verdict) }}
-                      >
-                        {channel.score}
+                  {/* v11.5: Новая структура по референсу */}
+                  <div className={styles.cardRow1}>
+                    <Avatar
+                      username={channel.username}
+                      photoUrl={channel.photo_url}
+                      size={54}
+                    />
+                    <div className={styles.cardInfo}>
+                      {/* Name + Category в одной строке */}
+                      <div className={styles.cardNameLine}>
+                        <span className={styles.cardName}>
+                          {channel.username.charAt(0).toUpperCase() + channel.username.slice(1).replace(/_/g, ' ')}
+                        </span>
+                        {channel.category && (
+                          <span className={styles.categoryBadge}>
+                            <svg className={styles.categoryIcon} viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm2 4v2h2V8H8zm4 0v2h2V8h-2zm4 0v2h2V8h-2zM8 12v2h2v-2H8zm4 0v2h2v-2h-2zm4 0v2h2v-2h-2z"/>
+                            </svg>
+                            {getCategoryName(channel.category)}
+                          </span>
+                        )}
+                      </div>
+                      {/* Meta line */}
+                      <span className={styles.cardMeta}>
+                        @{channel.username} • {formatNumber(channel.members)} подписчиков • ER {estimateER(channel.members, channel.score)}%
                       </span>
                     </div>
-                    <div className={styles.cardBottom}>
-                      {channel.category && (
-                        <span className={styles.cardCategory}>{getCategoryName(channel.category)}</span>
-                      )}
-                      <span>•</span>
-                      <span>{formatNumber(channel.members)}</span>
-                      <span>•</span>
-                      <span>T:{channel.trust_factor.toFixed(2)}</span>
-                    </div>
+                    {/* Score Ring с галочкой внутри */}
+                    <ScoreRing
+                      score={channel.score}
+                      verdict={channel.verdict}
+                      showCheck={channel.trust_factor >= 0.9}
+                    />
                   </div>
                 </button>
               ))}
@@ -956,7 +1018,24 @@ function App() {
         )}
       </main>
 
-      {/* NO BOTTOM TABS in v6.0! */}
+      {/* v11.0: Bottom Navigation Bar */}
+      <nav className={styles.bottomNav}>
+        {[
+          { id: 'search' as const, icon: '🔍', label: 'Поиск' },
+          { id: 'history' as const, icon: '📋', label: 'История' },
+          { id: 'watchlist' as const, icon: '⭐', label: 'Избранное' },
+          { id: 'profile' as const, icon: '👤', label: 'Профиль' },
+        ].map(tab => (
+          <button
+            key={tab.id}
+            className={`${styles.navItem} ${activeTab === tab.id ? styles.active : ''}`}
+            onClick={() => { hapticLight(); setActiveTab(tab.id) }}
+          >
+            <span className={styles.navIcon}>{tab.icon}</span>
+            <span className={styles.navLabel}>{tab.label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   )
 }

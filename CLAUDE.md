@@ -24,6 +24,16 @@ python crawler.py --classify        # Классифицировать суще�
 
 # Install dependencies
 pip install -r requirements.txt
+
+# =============================================
+# ДЕПЛОЙ MINI APP — ВСЕГДА ИСПОЛЬЗОВАТЬ ЭТИ СКРИПТЫ!
+# =============================================
+# Frontend (37.140.192.181)
+cd mini-app/frontend && npm run build
+cd mini-app/deploy && python deploy_frontend.py
+
+# Backend (217.60.3.122 порт 3002)
+cd mini-app/deploy && python deploy_backend.py
 ```
 
 ## Configuration

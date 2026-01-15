@@ -391,20 +391,7 @@ def generate_recommendations(
     """
     recs = []
 
-    # 1. Ценовая рекомендация с контекстом
-    if cpm_min and cpm_max:
-        category_name = {
-            "CRYPTO": "Крипто", "FINANCE": "Финансы", "TECH": "Tech",
-            "AI_ML": "AI/ML", "BUSINESS": "Бизнес", "NEWS": "Новости",
-            "ENTERTAINMENT": "Развлечения", "EDUCATION": "Образование"
-        }.get(category, category or "")
-
-        members_str = f"{members // 1000}K" if members >= 1000 else str(members)
-        recs.append(Recommendation(
-            type="cpm",
-            icon="💰",
-            text=f"Цена за пост: {cpm_min:,}-{cpm_max:,}₽ • {category_name} • {members_str} подп."
-        ))
+    # v10.1: Price recommendation REMOVED - now shown in Hero section inline
 
     # 2. Анализ breakdown — сильные стороны
     if breakdown:
