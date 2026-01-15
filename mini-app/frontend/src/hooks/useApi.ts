@@ -61,7 +61,11 @@ export interface PriceEstimate {
   base_price: number
   size_mult: number
   quality_mult: number
+  engagement_mult?: number    // v13.0
+  reputation_mult?: number    // v13.0
   trust_mult: number
+  demand_mult?: number        // v13.0
+  total_mult?: number         // v13.0
 }
 
 export interface CategoryRank {

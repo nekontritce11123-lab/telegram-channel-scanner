@@ -17,27 +17,60 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 load_dotenv()
 
-# v7.0: Цена за 1000 подписчиков (калибровка по реальным данным)
-# Пример: канал 950 subs, score 82, крипто = ~3000₽ ($30)
-# Формула: BASE_PER_1K * size_k * size_mult * quality_mult * trust_factor
+# v13.2: Цена за 1000 подписчиков — ЦЕНТРАЛЬНЫЕ значения
+# Источники: Telega.in, TGStat, биржи рекламы (2025)
+# Формула v13.2: center_price × (1 ± PRICE_RANGE) для ±5% коридора
 BASE_PER_1K = {
-    "CRYPTO": {"min": 800, "max": 1500},       # Крипто - премиум
-    "FINANCE": {"min": 600, "max": 1200},      # Финансы
-    "REAL_ESTATE": {"min": 500, "max": 1000},  # Недвижимость
-    "BUSINESS": {"min": 500, "max": 1000},     # Бизнес
-    "TECH": {"min": 700, "max": 1400},         # Технологии
-    "AI_ML": {"min": 600, "max": 1200},        # ИИ/ML
-    "EDUCATION": {"min": 300, "max": 600},     # Образование
-    "BEAUTY": {"min": 250, "max": 500},        # Красота
-    "HEALTH": {"min": 200, "max": 400},        # Здоровье
-    "TRAVEL": {"min": 200, "max": 400},        # Путешествия
-    "RETAIL": {"min": 150, "max": 300},        # Ритейл
-    "ENTERTAINMENT": {"min": 50, "max": 100},  # Развлечения
-    "NEWS": {"min": 100, "max": 200},          # Новости
-    "LIFESTYLE": {"min": 150, "max": 300},     # Лайфстайл
-    "GAMBLING": {"min": 400, "max": 800},      # Азартные игры
-    "ADULT": {"min": 300, "max": 600},         # Взрослый контент
-    "OTHER": {"min": 100, "max": 200},         # Другое
+    # Премиум сегмент
+    "CRYPTO": 3500,       # центр 2000-5000
+    "FINANCE": 2250,      # центр 1500-3000
+    "REAL_ESTATE": 2250,  # центр 1500-3000
+    "BUSINESS": 1850,     # центр 1200-2500
+
+    # Технологии
+    "TECH": 750,          # центр 500-1000
+    "AI_ML": 1150,        # центр 800-1500
+
+    # Образование/Лайфстайл
+    "EDUCATION": 900,     # центр 600-1200
+    "BEAUTY": 700,        # центр 500-900
+    "HEALTH": 700,        # центр 500-900
+    "TRAVEL": 800,        # центр 600-1000
+
+    # Контент
+    "LIFESTYLE": 550,     # центр 400-700
+    "RETAIL": 450,        # центр 300-600
+    "NEWS": 300,          # центр 200-400
+    "ENTERTAINMENT": 225, # центр 150-300
+
+    # Риск сегмент
+    "GAMBLING": 1150,     # центр 800-1500
+    "ADULT": 750,         # центр 500-1000
+    "OTHER": 225,         # центр 150-300
+}
+
+# v13.2: Коридор цен ±5% от центральной цены (10% всего)
+PRICE_RANGE = 0.05
+
+# v13.0: Коэффициент спроса на категорию (тренды 2025)
+CATEGORY_DEMAND = {
+    "CRYPTO": 1.0,       # Волатильность рынка
+    "FINANCE": 1.0,      # Стабильный спрос
+    "REAL_ESTATE": 0.9,  # Небольшой спад
+    "BUSINESS": 1.1,     # Рост B2B
+    "TECH": 1.1,         # Стабильный спрос
+    "AI_ML": 1.3,        # Хайп AI = +30%
+    "EDUCATION": 1.2,    # Рост EdTech
+    "BEAUTY": 1.0,       # Стабильный
+    "HEALTH": 1.1,       # Рост ЗОЖ
+    "TRAVEL": 1.15,      # Восстановление туризма
+    "LIFESTYLE": 1.0,    # Стабильный
+    "RETAIL": 1.0,       # Стабильный
+    "NEWS": 0.9,         # Небольшой спад
+    "ENTERTAINMENT": 1.0, # Стабильный
+    "GAMBLING": 1.0,     # Стабильный
+    "ADULT": 0.9,        # Ограничения
+    "OTHER": 1.0,        # Базовый
 }
 
 # Legacy POST_PRICES для обратной совместимости (get_cpm_range)
@@ -184,66 +217,314 @@ app.add_middleware(
 )
 
 
+# =============================================================================
+# v13.0: Многоуровневые мультипликаторы на основе ВСЕХ метрик
+# =============================================================================
+
+def get_size_mult(size_k: float) -> float:
+    """Нелинейный коэффициент размера канала."""
+    if size_k <= 1:
+        return 1.2   # Микро-каналы: премиум за эксклюзивность
+    elif size_k <= 5:
+        return 1.0   # Малые: стандарт
+    elif size_k <= 20:
+        return 0.85  # Средние: небольшая скидка
+    elif size_k <= 50:
+        return 0.7   # Большие: скидка за объём
+    elif size_k <= 100:
+        return 0.55  # Крупные: значительная скидка
+    else:
+        return 0.4   # Огромные: максимальная скидка
+
+
+def calculate_quality_mult(breakdown: dict) -> float:
+    """
+    v13.0: Мультипликатор качества на основе breakdown.quality.
+    Использует реальные метрики вместо просто score.
+
+    Калибровка v13.1: уменьшены коэффициенты для реалистичных цен.
+    Returns:
+        float: 0.7 - 1.5+ (с бонусами до ~1.8)
+    """
+    if not breakdown:
+        return 1.0
+
+    quality = breakdown.get('quality', {})
+    q_total = quality.get('total', 20)
+    q_max = quality.get('max', 40)
+
+    if q_max == 0:
+        return 1.0
+
+    q_pct = q_total / q_max  # 0.0 - 1.0
+
+    # Базовый множитель: 0.7x - 1.5x (откалибровано)
+    quality_mult = 0.7 + q_pct * 0.8
+
+    # БОНУСЫ за отдельные метрики (уменьшены)
+    items = quality.get('items', {})
+
+    # CV Views: стабильные просмотры = +5%
+    cv = items.get('cv_views', {})
+    if cv.get('max', 0) > 0 and cv.get('score', 0) >= cv.get('max', 15) * 0.8:
+        quality_mult *= 1.05
+
+    # Reach: высокий охват = +7%
+    reach = items.get('reach', {})
+    if reach.get('max', 0) > 0 and reach.get('score', 0) >= reach.get('max', 10) * 0.8:
+        quality_mult *= 1.07
+
+    # Forward Rate: виральность = +8%
+    forward = items.get('forward_rate', {})
+    if forward.get('max', 0) > 0 and forward.get('score', 0) >= forward.get('max', 7) * 0.8:
+        quality_mult *= 1.08
+
+    return round(quality_mult, 3)
+
+
+def calculate_engagement_mult(breakdown: dict) -> float:
+    """
+    v13.0: Мультипликатор вовлечённости на основе breakdown.engagement.
+    Вовлечённость = главный показатель для рекламодателей.
+
+    Калибровка v13.1: уменьшены коэффициенты для реалистичных цен.
+    Returns:
+        float: 0.7 - 1.5+ (с бонусами до ~1.8)
+    """
+    if not breakdown:
+        return 1.0
+
+    engagement = breakdown.get('engagement', {})
+    e_total = engagement.get('total', 20)
+    e_max = engagement.get('max', 40)
+
+    if e_max == 0:
+        return 1.0
+
+    e_pct = e_total / e_max  # 0.0 - 1.0
+
+    # Базовый множитель: 0.7x - 1.5x (откалибровано)
+    engagement_mult = 0.7 + e_pct * 0.8
+
+    items = engagement.get('items', {})
+
+    # Комментарии активны = +10%
+    comments = items.get('comments', {})
+    if comments.get('max', 0) > 0 and comments.get('score', 0) >= comments.get('max', 15) * 0.6:
+        engagement_mult *= 1.10
+
+    # Высокий reaction rate = +7%
+    reactions = items.get('reaction_rate', {})
+    if reactions.get('max', 0) > 0 and reactions.get('score', 0) >= reactions.get('max', 15) * 0.7:
+        engagement_mult *= 1.07
+
+    # Разнообразие ER (не ботовый паттерн) = +5%
+    variation = items.get('er_variation', {})
+    if variation.get('max', 0) > 0 and variation.get('score', 0) >= variation.get('max', 5) * 0.8:
+        engagement_mult *= 1.05
+
+    return round(engagement_mult, 3)
+
+
+def calculate_reputation_mult(breakdown: dict) -> float:
+    """
+    v13.0: Мультипликатор репутации на основе breakdown.reputation.
+    Верификация, возраст, премиумы = доверие рекламодателей.
+
+    Калибровка v13.1: уменьшены коэффициенты для реалистичных цен.
+    Returns:
+        float: 0.9 - 1.3+ (с бонусами до ~1.6)
+    """
+    if not breakdown:
+        return 1.0
+
+    reputation = breakdown.get('reputation', {})
+    r_total = reputation.get('total', 10)
+    r_max = reputation.get('max', 20)
+
+    if r_max == 0:
+        return 1.0
+
+    r_pct = r_total / r_max  # 0.0 - 1.0
+
+    # Базовый множитель: 0.9x - 1.3x (откалибровано)
+    reputation_mult = 0.9 + r_pct * 0.4
+
+    items = reputation.get('items', {})
+
+    # ВЕРИФИКАЦИЯ = +20% премиум (откалибровано с +50%)
+    verified = items.get('verified', {})
+    if verified.get('max', 0) > 0 and verified.get('score', 0) == verified.get('max', 5):
+        reputation_mult *= 1.20
+
+    # Возраст >2 лет = +8%
+    age = items.get('age', {})
+    if age.get('score', 0) >= 4:  # established/veteran
+        reputation_mult *= 1.08
+
+    # Premium users >5% = +5%
+    premium = items.get('premium', {})
+    if premium.get('score', 0) >= 4:
+        reputation_mult *= 1.05
+
+    # Оригинальный контент = +5%
+    source = items.get('source', {})
+    if source.get('max', 0) > 0 and source.get('score', 0) >= source.get('max', 5) * 0.8:
+        reputation_mult *= 1.05
+
+    return round(reputation_mult, 3)
+
+
+def calculate_trust_mult(trust_factor: float, trust_penalties: list = None) -> float:
+    """
+    v13.0: Детализированный мультипликатор доверия.
+    Некоторые нарушения критичнее для цены чем другие.
+
+    Returns:
+        float: 0.1 - 1.0
+    """
+    trust_mult = trust_factor  # Базовый 0.0-1.0
+
+    # Дополнительные штрафы по типу нарушения
+    if trust_penalties:
+        for penalty in trust_penalties:
+            name = penalty.get('name', '').lower()
+
+            # Критические нарушения - дополнительный штраф
+            if 'накрутка' in name or 'боты' in name or 'критический' in name:
+                trust_mult *= 0.7  # Дополнительно -30%
+            elif 'спам' in name or 'реклама' in name:
+                trust_mult *= 0.8  # Дополнительно -20%
+
+    return max(0.1, round(trust_mult, 3))  # Минимум 10%
+
+
 def calculate_post_price(
     category: Optional[str],
     members: int,
     trust_factor: float = 1.0,
-    score: int = 50
+    score: int = 50,
+    breakdown: dict = None,
+    trust_penalties: list = None
 ) -> tuple:
     """
-    v7.0: Рассчитывает реальную цену за пост.
-    Калибровка: 950 subs, score 82, крипто = ~3000₽ ($30)
+    v13.2: Многоуровневая формула ценообразования с ±5% коридором.
+    Использует ВСЕ метрики из breakdown для точного расчёта.
 
-    Формула: BASE_PER_1K * size_k * size_mult * quality_mult * trust_factor
+    Формула v13.2:
+        price_center = BASE × size_k × size_mult × quality_mult × engagement_mult ×
+                       reputation_mult × trust_mult × demand_mult
+        price_min = price_center × (1 - PRICE_RANGE)
+        price_max = price_center × (1 + PRICE_RANGE)
 
-    size_mult - нелинейный коэффициент:
-      - Микро-каналы (<1K): премиум за эксклюзивность
-      - Малые (1-5K): высокий engagement
-      - Средние (5-50K): стандарт
-      - Большие (50K+): скидка за объём
-
-    quality_mult - экспоненциальный рост от качества:
-      - Score 50 = 1.0x
-      - Score 80 = 2.5x
-      - Score 100 = 4.0x
+    Returns:
+        (price_min, price_max): Диапазон цен за пост в рублях (±5%)
     """
     if not category or category not in BASE_PER_1K:
         return None, None
 
-    base = BASE_PER_1K[category]
-    base_min, base_max = base["min"], base["max"]
+    base_center = BASE_PER_1K[category]  # v13.2: одно число, не dict
 
     # Размер канала в тысячах
     size_k = members / 1000
 
-    # Нелинейный коэффициент размера
-    if size_k <= 1:
-        size_mult = 1.2   # Микро-каналы: небольшой премиум
-    elif size_k <= 5:
-        size_mult = 1.0   # Малые: стандарт
-    elif size_k <= 20:
-        size_mult = 0.85  # Средние: небольшая скидка
-    elif size_k <= 50:
-        size_mult = 0.7   # Большие: скидка за объём
-    elif size_k <= 100:
-        size_mult = 0.55  # Крупные: значительная скидка
+    # 1. Size multiplier (нелинейный)
+    size_mult = get_size_mult(size_k)
+
+    # Если есть breakdown - используем детальные мультипликаторы
+    if breakdown:
+        # 2. Quality multiplier (из breakdown.quality)
+        quality_mult = calculate_quality_mult(breakdown)
+
+        # 3. Engagement multiplier (из breakdown.engagement)
+        engagement_mult = calculate_engagement_mult(breakdown)
+
+        # 4. Reputation multiplier (из breakdown.reputation)
+        reputation_mult = calculate_reputation_mult(breakdown)
     else:
-        size_mult = 0.4   # Огромные: максимальная скидка
+        # Fallback: используем score как приближение
+        score_normalized = score / 100
+        quality_mult = 0.5 + (score_normalized ** 1.5) * 2.5
+        engagement_mult = 1.0
+        reputation_mult = 1.0
 
-    # Коэффициент качества (экспоненциальный рост)
-    # Score 50 = 1.0, Score 80 = 2.5, Score 100 = 4.0
-    score_normalized = score / 100
-    quality_mult = 0.5 + (score_normalized ** 1.5) * 3.5
+    # 5. Trust multiplier (детализированный)
+    trust_mult = calculate_trust_mult(trust_factor, trust_penalties)
 
-    # Итоговая цена
-    price_min = int(base_min * size_k * size_mult * quality_mult * trust_factor)
-    price_max = int(base_max * size_k * size_mult * quality_mult * trust_factor)
+    # 6. Category demand multiplier (тренды 2025)
+    demand_mult = CATEGORY_DEMAND.get(category, 1.0)
 
-    # Минимальная цена 300₽
-    price_min = max(300, price_min)
-    price_max = max(500, price_max)
+    # ИТОГОВЫЙ РАСЧЁТ
+    total_mult = (
+        size_mult *
+        quality_mult *
+        engagement_mult *
+        reputation_mult *
+        trust_mult *
+        demand_mult
+    )
+
+    # v13.2: Центральная цена с ±5% коридором
+    price_center = int(base_center * size_k * total_mult)
+    price_min = max(500, int(price_center * (1 - PRICE_RANGE)))
+    price_max = max(800, int(price_center * (1 + PRICE_RANGE)))
 
     return price_min, price_max
+
+
+def calculate_post_price_details(
+    category: Optional[str],
+    members: int,
+    trust_factor: float = 1.0,
+    score: int = 50,
+    breakdown: dict = None,
+    trust_penalties: list = None
+) -> dict:
+    """
+    v13.2: Расширенная версия calculate_post_price с деталями расчёта.
+    Возвращает все мультипликаторы для отображения в UI.
+    """
+    if not category or category not in BASE_PER_1K:
+        return None
+
+    base_center = BASE_PER_1K[category]  # v13.2: одно число
+    size_k = members / 1000
+
+    # Все мультипликаторы
+    size_mult = get_size_mult(size_k)
+
+    if breakdown:
+        quality_mult = calculate_quality_mult(breakdown)
+        engagement_mult = calculate_engagement_mult(breakdown)
+        reputation_mult = calculate_reputation_mult(breakdown)
+    else:
+        score_normalized = score / 100
+        quality_mult = 0.5 + (score_normalized ** 1.5) * 2.5
+        engagement_mult = 1.0
+        reputation_mult = 1.0
+
+    trust_mult = calculate_trust_mult(trust_factor, trust_penalties)
+    demand_mult = CATEGORY_DEMAND.get(category, 1.0)
+
+    total_mult = size_mult * quality_mult * engagement_mult * reputation_mult * trust_mult * demand_mult
+
+    # v13.2: Центральная цена с ±5% коридором
+    price_center = int(base_center * size_k * total_mult)
+    price_min = max(500, int(price_center * (1 - PRICE_RANGE)))
+    price_max = max(800, int(price_center * (1 + PRICE_RANGE)))
+
+    return {
+        "min": price_min,
+        "max": price_max,
+        "base_price": base_center,
+        "size_mult": round(size_mult, 2),
+        "quality_mult": round(quality_mult, 2),
+        "engagement_mult": round(engagement_mult, 2),
+        "reputation_mult": round(reputation_mult, 2),
+        "trust_mult": round(trust_mult, 2),
+        "demand_mult": round(demand_mult, 2),
+        "total_mult": round(total_mult, 2),
+    }
 
 
 def get_cpm_range(category: Optional[str]) -> tuple:
@@ -578,8 +859,14 @@ async def get_channels(
         members = safe_int(row[4], 0)
         category = row[5]
 
-        # Рассчитываем реальную цену за пост
-        price_min, price_max = calculate_post_price(category, members, trust_factor, score)
+        # v13.1: Используем breakdown для консистентных цен
+        breakdown = estimate_breakdown(score, trust_factor)
+        trust_penalties = estimate_trust_penalties(trust_factor, score)
+        price_min, price_max = calculate_post_price(
+            category, members, trust_factor, score,
+            breakdown=breakdown,
+            trust_penalties=trust_penalties
+        )
 
         channels.append(ChannelSummary(
             username=str(row[0]) if row[0] else "",
@@ -630,41 +917,40 @@ async def get_channel(username: str):
     members = safe_int(row[4], 0)
     category = row[5]
 
-    # Рассчитываем реальную цену за пост
-    price_min, price_max = calculate_post_price(category, members, trust_factor, score)
-
     # v7.0: Детальный breakdown метрик
     breakdown = estimate_breakdown(score, trust_factor)
 
     # v7.0: Trust penalties (риски)
     trust_penalties = estimate_trust_penalties(trust_factor, score)
 
-    # v7.0: Структура price_estimate
-    size_k = members / 1000
-    if size_k <= 1:
-        size_mult = 1.2
-    elif size_k <= 5:
-        size_mult = 1.0
-    elif size_k <= 20:
-        size_mult = 0.85
-    elif size_k <= 50:
-        size_mult = 0.7
-    elif size_k <= 100:
-        size_mult = 0.55
-    else:
-        size_mult = 0.4
+    # v13.0: Рассчитываем цену с ВСЕМИ мультипликаторами
+    price_min, price_max = calculate_post_price(
+        category, members, trust_factor, score,
+        breakdown=breakdown,
+        trust_penalties=trust_penalties
+    )
 
-    score_normalized = score / 100
-    quality_mult = 0.5 + (score_normalized ** 1.5) * 3.5
+    # v13.0: Детальная структура price_estimate с ВСЕМИ мультипликаторами
+    price_estimate = calculate_post_price_details(
+        category, members, trust_factor, score,
+        breakdown=breakdown,
+        trust_penalties=trust_penalties
+    )
 
-    price_estimate = {
-        "min": price_min,
-        "max": price_max,
-        "base_price": BASE_PER_1K.get(category, {"min": 100})["min"] if category else 100,
-        "size_mult": round(size_mult, 2),
-        "quality_mult": round(quality_mult, 2),
-        "trust_mult": round(trust_factor, 2),
-    }
+    # Fallback если категория не найдена
+    if price_estimate is None:
+        price_estimate = {
+            "min": price_min or 500,
+            "max": price_max or 800,
+            "base_price": 100,
+            "size_mult": 1.0,
+            "quality_mult": 1.0,
+            "engagement_mult": 1.0,
+            "reputation_mult": 1.0,
+            "trust_mult": round(trust_factor, 2),
+            "demand_mult": 1.0,
+            "total_mult": 1.0,
+        }
 
     # Генерируем рекомендации (v8.0: с breakdown)
     recommendations = generate_recommendations(

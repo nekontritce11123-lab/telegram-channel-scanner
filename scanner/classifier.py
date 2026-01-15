@@ -1,12 +1,13 @@
 """
 AI Классификатор тем Telegram каналов.
-v18.0: Расширенные категории + Multi-label поддержка
+v14.0: Процентная классификация без fallback keywords
 
 Архитектура:
-  - 17 категорий (вместо 11) на основе анализа рынка рекламы
-  - Multi-label: основная + вторичная категория (CAT+CAT2)
+  - 17 категорий на основе анализа рынка рекламы
+  - Multi-label: основная + вторичная категория с процентами
+  - Формат ответа: "CATEGORY:PERCENT" или "CAT1:PCT1+CAT2:PCT2"
   - Groq API + Llama 3.3 70B
-  - Fallback на ключевые слова
+  - Без fallback keywords (убраны false positives)
   - Кэширование результатов на 7 дней
 """
 
@@ -73,133 +74,48 @@ MAX_POSTS_FOR_AI = 10
 MAX_CHARS_PER_POST = 500
 
 
-# === СИСТЕМНЫЙ ПРОМПТ ===
+# === СИСТЕМНЫЙ ПРОМПТ v14.0 ===
 
 SYSTEM_PROMPT = """You are a Telegram channel topic classifier.
-Analyze the channel and return the PRIMARY category + optional SECONDARY category.
+Analyze the channel and return categories WITH PERCENTAGES.
 
-FORMAT: CATEGORY or CATEGORY+SECONDARY (if clearly fits two)
+FORMAT: CATEGORY:PERCENT or CATEGORY1:PERCENT1+CATEGORY2:PERCENT2
+Percentages must sum to 100.
+
+EXAMPLES:
+- Pure crypto channel: "CRYPTO:100"
+- Crypto memes: "ENTERTAINMENT:70+CRYPTO:30"
+- Tech news: "TECH:60+NEWS:40"
+- Gaming channel: "ENTERTAINMENT:100"
 
 CATEGORIES:
 - CRYPTO: cryptocurrency, DeFi, NFT, Web3, blockchain, Bitcoin, Ethereum, trading signals
-- FINANCE: stocks, investing, forex, banks, economics (NOT crypto)
+- FINANCE: stocks, investing, forex, banks, economics (NOT crypto!)
 - REAL_ESTATE: property, mortgages, apartments, real estate agents
 - BUSINESS: B2B services, SaaS, consulting, startups, entrepreneurs
 - TECH: programming, IT, gadgets, DevOps, software development
-- AI_ML: neural networks, ML, ChatGPT, LLM, Data Science, Midjourney, Stable Diffusion
-- EDUCATION: courses, tutorials, learning, online schools, how-to guides
-- BEAUTY: cosmetics, makeup, skincare, perfume, beauty salons
-- HEALTH: fitness, medicine, wellness, diet, sports, gym
-- TRAVEL: tourism, hotels, flights, vacations, travel guides
-- RETAIL: e-commerce, shops, products, delivery, sales
-- ENTERTAINMENT: games, movies, music, memes, humor, streaming
-- NEWS: news aggregators, politics, current events, breaking news
-- LIFESTYLE: personal blogs, lifestyle, diary, thoughts, opinions
-- GAMBLING: betting, casinos, sports predictions, poker, slots
-- ADULT: 18+ content, dating, explicit material
-- OTHER: does not clearly fit any category
+- AI_ML: neural networks, ML, ChatGPT, LLM, Data Science
+- EDUCATION: courses, tutorials, learning, online schools
+- BEAUTY: cosmetics, makeup, skincare, beauty salons
+- HEALTH: fitness, medicine, wellness, diet, sports
+- TRAVEL: tourism, hotels, flights, travel guides
+- RETAIL: e-commerce, shops, products, delivery
+- ENTERTAINMENT: games, movies, music, memes, humor, streaming, TON games, P2E
+- NEWS: news, politics, current events
+- LIFESTYLE: personal blogs, diary, thoughts
+- GAMBLING: betting, casinos, poker
+- ADULT: 18+ content
+- OTHER: does not fit any category
 
 RULES:
-1. Return ONLY category name(s), no explanations
-2. Use + for dual categories: "AI_ML+NEWS" or "TECH+ENTERTAINMENT"
-3. Use dual category ONLY when channel clearly fits both (15-20% of cases)
-4. If truly unclear, return OTHER"""
-
-
-# === FALLBACK КЛЮЧЕВЫЕ СЛОВА ===
-
-FALLBACK_KEYWORDS = {
-    # Премиальные категории
-    "CRYPTO": [
-        "bitcoin", "btc", "ethereum", "eth", "крипта", "криптовалют", "трейдинг",
-        "сигнал", "defi", "nft", "блокчейн", "токен", "альткоин", "биржа", "binance",
-        "bybit", "памп", "дамп", "холд", "стейкинг", "майнинг", "usdt", "tether",
-        "web3", "ton", "solana", "криптотрейд"
-    ],
-    "FINANCE": [
-        "инвестиц", "акции", "дивиденд", "брокер", "тинькофф", "сбер",
-        "фондовый", "облигаци", "портфель", "пассивный доход", "форекс",
-        "биржев", "трейдер", "капитал", "финанс", "банк"
-    ],
-    "REAL_ESTATE": [
-        "недвижимост", "квартир", "ипотек", "застройщик", "новостройк",
-        "жилье", "аренда", "риэлтор", "метр", "жк ", "пик", "лср",
-        "жилищ", "коммерческ", "офис", "помещени"
-    ],
-    "BUSINESS": [
-        "b2b", "saas", "стартап", "startup", "консалтинг", "бизнес",
-        "предприниматель", "ceo", "founder", "инвестор", "венчур",
-        "предпринимател", "масштабирован", "франшиз", "бизнес-модел"
-    ],
-
-    # Технологии
-    "TECH": [
-        "программ", "python", "javascript", "разработ", "код", "developer",
-        "github", "api", "frontend", "backend", "devops", "linux", "айти",
-        "software", "typescript", "react", "vue", "java", "kotlin", "swift"
-    ],
-    "AI_ML": [
-        "нейросет", "chatgpt", "gpt", "llm", "машинное обучение", "data science",
-        "deep learning", "nlp", "computer vision", "midjourney", "stable diffusion",
-        "claude", "gemini", "anthropic", "openai", "нейронн", "искусственн интеллект",
-        "ai", "ml", "модел", "датасет", "обучен модел"
-    ],
-
-    # Образование и развитие
-    "EDUCATION": [
-        "курс", "обучени", "урок", "tutorial", "учи", "образовани",
-        "вебинар", "мастер-класс", "гайд", "инструкц", "онлайн-школ",
-        "лекци", "преподава", "студент"
-    ],
-    "BEAUTY": [
-        "косметик", "макияж", "makeup", "парфюм", "красот", "уход за",
-        "skincare", "ногт", "маникюр", "визаж", "бьют", "beauty",
-        "крем", "сыворотк", "маска для лиц"
-    ],
-    "HEALTH": [
-        "фитнес", "тренировк", "спорт", "здоровь", "зож", "диет",
-        "похудени", "медицин", "врач", "клиник", "fitness", "gym",
-        "спортзал", "питани", "белок", "калори"
-    ],
-    "TRAVEL": [
-        "путешеств", "туризм", "отель", "авиабилет", "тур", "виза",
-        "отпуск", "поездк", "страна", "travel", "booking", "airbnb",
-        "самолет", "гостиниц", "экскурси"
-    ],
-
-    # Коммерция
-    "RETAIL": [
-        "магазин", "купить", "продаж", "товар", "доставк", "скидк",
-        "акция", "распродаж", "shop", "store", "заказ", "ozon",
-        "wildberries", "aliexpress", "маркетплейс"
-    ],
-
-    # Контент
-    "ENTERTAINMENT": [
-        "игр", "кино", "фильм", "музык", "мем", "юмор", "смешн",
-        "приколы", "развлечени", "стрим", "twitch", "youtube",
-        "сериал", "аниме", "gaming", "steam", "playstation", "xbox"
-    ],
-    "NEWS": [
-        "новости", "срочно", "breaking", "политик", "событи", "происшеств",
-        "сводка", "дайджест", "главное за", "что случилось", "инфо",
-        "пресс", "журналист", "сми", "медиа"
-    ],
-    "LIFESTYLE": [
-        "мысли", "размышлени", "личн", "дневник", "lifestyle", "лайфстайл",
-        "моя жизнь", "блог", "заметк", "opinion", "мнени"
-    ],
-
-    # Высокий риск
-    "GAMBLING": [
-        "казино", "ставк", "букмекер", "1xbet", "fonbet", "покер", "слот",
-        "рулетк", "betting", "прогноз на матч", "коэффициент", "экспресс"
-    ],
-    "ADULT": [
-        "18+", "xxx", "эротик", "adult", "знакомств", "интим", "секс",
-        "onlyfans", "nsfw"
-    ],
-}
+1. ALWAYS return percentages (e.g., "TECH:100" not just "TECH")
+2. Use + for mixed content: "ENTERTAINMENT:70+CRYPTO:30"
+3. Percentages MUST sum to 100
+4. Max 2 categories per channel
+5. ANALYZE TONE: memes about crypto = ENTERTAINMENT+CRYPTO, not just CRYPTO
+6. "TON games", "play to earn", "P2E" = ENTERTAINMENT, not CRYPTO
+7. If >80% one topic, use single category: "CRYPTO:100"
+8. If truly unclear, return "OTHER:100\""""
 
 
 # === КЭШИРОВАНИЕ ===
@@ -306,44 +222,65 @@ def _prepare_context(title: str, description: str, messages: list) -> str:
     return "\n\n".join(parts)
 
 
+# === ПАРСИНГ ОТВЕТА LLM v14.0 ===
+
+def parse_category_response(response: str) -> tuple:
+    """
+    Парсит ответ LLM с процентами.
+    Input: "ENTERTAINMENT:70+CRYPTO:30" или "TECH:100"
+    Output: ("ENTERTAINMENT", "CRYPTO", 70) или ("TECH", None, 100)
+    """
+    response = response.strip().upper()
+
+    # Паттерн: CATEGORY:PERCENT+CATEGORY:PERCENT
+    pattern = r'([A-Z_]+):(\d+)(?:\+([A-Z_]+):(\d+))?'
+    match = re.match(pattern, response)
+
+    if match:
+        cat1 = match.group(1)
+        pct1 = int(match.group(2))
+        cat2 = match.group(3)
+        pct2 = int(match.group(4)) if match.group(4) else 0
+
+        if cat1 not in CATEGORIES:
+            cat1 = "OTHER"
+        if cat2 and cat2 not in CATEGORIES:
+            cat2 = None
+            pct1 = 100
+
+        return (cat1, cat2, pct1)
+
+    # Legacy: "CAT+CAT" без процентов
+    if "+" in response:
+        parts = response.split("+")
+        cat1 = parts[0].strip()
+        cat2 = parts[1].strip() if len(parts) > 1 else None
+        if cat1 in CATEGORIES:
+            if cat2 and cat2 in CATEGORIES:
+                return (cat1, cat2, 50)
+            return (cat1, None, 100)
+
+    # Просто категория без процентов
+    if response in CATEGORIES:
+        return (response, None, 100)
+
+    # Пытаемся найти категорию в ответе
+    for cat in CATEGORIES:
+        if cat in response:
+            return (cat, None, 100)
+
+    return ("OTHER", None, 100)
+
+
 # === FALLBACK КЛАССИФИКАЦИЯ ===
 
 def classify_fallback(title: str, description: str, messages: list) -> str:
     """
-    Классификация по ключевым словам (без AI).
-    Используется как fallback если API недоступен.
+    v14.0: Fallback без ключевых слов.
+    Если API недоступен - просто возвращаем OTHER.
+    LLM достаточно умный, ключевые слова создают false positives.
     """
-    # Собираем весь текст
-    all_text = ""
-    if title:
-        all_text += " " + title.lower()
-    if description:
-        all_text += " " + description.lower()
-
-    for msg in messages[:15]:
-        text = ""
-        if hasattr(msg, 'message') and msg.message:
-            text = msg.message
-        elif hasattr(msg, 'text') and msg.text:
-            text = msg.text
-        if text:
-            all_text += " " + text.lower()
-
-    # Считаем совпадения по категориям
-    scores = {}
-    for category, keywords in FALLBACK_KEYWORDS.items():
-        score = 0
-        for keyword in keywords:
-            count = all_text.count(keyword.lower())
-            score += count
-        scores[category] = score
-
-    # Выбираем категорию с максимумом
-    if not scores or max(scores.values()) == 0:
-        return "OTHER"
-
-    best_category = max(scores, key=scores.get)
-    return best_category
+    return "OTHER"
 
 
 # === GROQ API ===
@@ -378,30 +315,15 @@ async def _call_groq_api(context: str, api_key: str) -> Optional[str]:
             response.raise_for_status()
             data = response.json()
 
-            answer = data["choices"][0]["message"]["content"].strip().upper()
+            answer = data["choices"][0]["message"]["content"].strip()
 
-            # Поддержка multi-label формата: "CAT1+CAT2"
-            if "+" in answer:
-                parts = answer.split("+")
-                primary = parts[0].strip()
-                secondary = parts[1].strip() if len(parts) > 1 else None
+            # v14.0: Используем новый парсер с процентами
+            cat1, cat2, pct1 = parse_category_response(answer)
 
-                # Валидируем обе категории
-                if primary in CATEGORIES:
-                    if secondary and secondary in CATEGORIES:
-                        return f"{primary}+{secondary}"
-                    return primary
-
-            # Обычный single-label
-            if answer in CATEGORIES:
-                return answer
-
-            # Пытаемся извлечь категорию из ответа
-            for cat in CATEGORIES:
-                if cat in answer:
-                    return cat
-
-            return "OTHER"
+            # Возвращаем в формате "CAT1+CAT2" или "CAT1"
+            if cat2:
+                return f"{cat1}+{cat2}"
+            return cat1
 
     except httpx.TimeoutException:
         return None
