@@ -435,3 +435,39 @@ sleep 30 && curl https://ads-api.factchain-traker.online/api/health
 ### 5. Показывали только 3 метрики из 13
 **Проблема:** UI показывал Quality/Engagement/Reputation агрегаты, не детали.
 **Решение v7.0:** Добавить breakdown с 13 метриками (cv_views, reach, comments, reactions, etc.)
+
+---
+
+## КРИТИЧЕСКИЕ ОШИБКИ КОДИРОВАНИЯ v22.1 — НЕ ПОВТОРЯТЬ!
+
+### 1. Trust Penalties ≠ Score Metrics
+**Проблема:** Добавил `posting_frequency` и `private_links` в METRIC_CONFIG → показывало 0/0.
+**Причина:** Это Trust Penalties (влияют на trust_factor), НЕ Score Metrics (нет points/max).
+**Правило:** ВСЕГДА проверять структуру в scorer.py перед добавлением метрики в UI:
+- Score Metrics: `{'value': X, 'points': Y, 'max': Z}` → показывать в breakdown
+- Trust Penalties: `{'ratio': X, 'trust_multiplier': Y}` → НЕ показывать как метрику
+
+### 2. Несовпадение ключей между файлами
+**Проблема:** estimate_breakdown() использовал `stability`, `source`, а METRIC_CONFIG ожидал `reaction_stability`, `source_diversity`.
+**Правило:** Ключи ДОЛЖНЫ совпадать везде:
+- scorer.py: возвращает breakdown с определёнными ключами
+- format_breakdown_for_ui(): читает эти ключи
+- estimate_breakdown(): fallback должен использовать ТЕ ЖЕ ключи
+- METRIC_CONFIG: маппинг ключ → label
+
+### 3. Floating Weights (max=0 это НЕ баг)
+**Проблема:** reaction_rate показывал 0/0, думал что баг.
+**Причина:** Когда реакции выключены на канале, scorer.py возвращает max=0 — это floating weights (баллы перераспределяются на другие метрики).
+**Правило:** max=0 для comments/reaction_rate = метрика отключена, показывать "откл."
+
+### 4. Не проверять данные перед изменением кода
+**Проблема:** Менял код не понимая какие данные реально возвращает scorer.py.
+**Правило:** ПЕРЕД изменением UI/API:
+1. Проверить что возвращает scorer.py (читать код или тестировать)
+2. Проверить что хранится в БД (sqlite3 SELECT)
+3. Проверить что отдаёт API (curl)
+4. Только потом менять код
+
+### 5. Curl на Windows с Python парсингом
+**Проблема:** `curl ... | python -c "..."` часто ломается на Windows.
+**Правило:** Использовать отдельные команды или сохранять в файл, потом читать.

@@ -52,6 +52,8 @@ from .metrics import (
     # v15.0: New metrics
     calculate_posts_per_day,
     analyze_private_invites,
+    # v22.3: Для определения reactions_enabled
+    get_message_reactions_count,
 )
 from .forensics import UserForensics
 
@@ -1061,8 +1063,9 @@ def calculate_final_score(
 
     # v15.2: Определяем включены ли реакции
     # Если total_reactions = 0 на ВСЕХ постах - реакции отключены
+    # v22.3: Используем get_message_reactions_count() вместо несуществующего поля
     total_reactions = sum(
-        getattr(m, 'reactions_count', 0) or 0
+        get_message_reactions_count(m)
         for m in messages
     )
     reactions_enabled = total_reactions > 0

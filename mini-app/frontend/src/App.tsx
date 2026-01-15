@@ -81,6 +81,27 @@ function getCategoryName(category: string): string {
   return CATEGORY_NAMES[category] || category
 }
 
+// v20.0: Format category with percentage for multi-label
+function formatCategoryWithPercent(
+  category: string | null,
+  categorySecondary: string | null,
+  categoryPercent: number | null
+): string {
+  if (!category) return ''
+
+  const primaryName = getCategoryName(category)
+
+  // Если нет второй категории или 100% — просто показываем основную
+  if (!categorySecondary || categoryPercent === 100 || categoryPercent === null) {
+    return primaryName
+  }
+
+  const secondaryName = getCategoryName(categorySecondary)
+  const secondaryPercent = 100 - categoryPercent
+
+  return `${primaryName} ${categoryPercent}% + ${secondaryName} ${secondaryPercent}%`
+}
+
 // Format number
 function formatNumber(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
@@ -293,6 +314,17 @@ const METRIC_DESCRIPTIONS: Record<string, { title: string; description: string; 
     title: 'Оригинальность',
     description: 'Сколько контента создано автором.',
     interpretation: 'Много оригинального контента — авторский канал. Одни репосты — агрегатор.'
+  },
+  // v20.0: Новые метрики
+  'posting': {
+    title: 'Частота постинга',
+    description: 'Сколько постов публикуется в день.',
+    interpretation: 'Оптимально 3-6 постов в день. Слишком много — реклама "тонет" в потоке контента.'
+  },
+  'links': {
+    title: 'Качество связей',
+    description: 'Репутация рекламируемых каналов.',
+    interpretation: 'Реклама SCAM каналов или много приватных ссылок — признак участия в скам-сети.'
   }
 }
 
@@ -711,9 +743,9 @@ function App() {
             </div>
           )}
 
-          {/* v12.0: Footer */}
+          {/* v12.0: Footer with v20.0 category percentages */}
           <div className={styles.detailFooter}>
-            <span>{selectedChannel.category ? getCategoryName(selectedChannel.category) : ''}</span>
+            <span>{formatCategoryWithPercent(selectedChannel.category, selectedChannel.category_secondary, selectedChannel.category_percent)}</span>
             <span>{selectedChannel.scanned_at ? new Date(selectedChannel.scanned_at).toLocaleDateString('ru-RU') : ''}</span>
           </div>
         </div>

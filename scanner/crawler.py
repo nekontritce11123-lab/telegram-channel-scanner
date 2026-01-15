@@ -25,6 +25,7 @@ AI классификация v18.0:
 import asyncio
 import re
 import random
+import base64
 from datetime import datetime
 from typing import Optional
 
@@ -33,7 +34,7 @@ from pyrogram import Client
 from .database import CrawlerDB
 from .client import get_client, smart_scan_safe, resolve_invite_link
 from .scorer import calculate_final_score
-from .classifier import get_classifier, ChannelClassifier
+from .classifier import get_classifier, ChannelClassifier, parse_category_response
 
 
 # Настройки rate limiting
@@ -46,6 +47,52 @@ RATE_LIMIT = {
 # Пороги качества
 GOOD_THRESHOLD = 60      # Минимум для статуса GOOD в базе
 COLLECT_THRESHOLD = 66   # Минимум для сбора ссылок (размножения)
+
+
+async def get_avatar_base64(client: Client, chat) -> str | None:
+    """
+    Скачивает аватарку канала и конвертирует в base64 data URL.
+
+    v22.0: Аватарки хранятся в БД как data:image/jpeg;base64,...
+    Размер ~10KB на канал, работает офлайн без proxy.
+
+    Args:
+        client: Pyrogram клиент
+        chat: Объект канала из scan_result.chat
+
+    Returns:
+        str: data:image/jpeg;base64,... или None если нет аватарки
+    """
+    if not chat:
+        return None
+
+    # Проверяем наличие фото
+    photo = getattr(chat, 'photo', None)
+    if not photo:
+        return None
+
+    # Получаем file_id большой версии фото
+    big_file_id = getattr(photo, 'big_file_id', None)
+    if not big_file_id:
+        return None
+
+    try:
+        # Скачиваем в память (BytesIO)
+        photo_bytes = await client.download_media(
+            big_file_id,
+            in_memory=True
+        )
+
+        if photo_bytes:
+            # Конвертируем BytesIO в base64
+            b64 = base64.b64encode(photo_bytes.getvalue()).decode('utf-8')
+            return f"data:image/jpeg;base64,{b64}"
+
+    except Exception as e:
+        # Тихо игнорируем ошибки скачивания (канал может запретить)
+        pass
+
+    return None
 
 
 class SmartCrawler:
@@ -92,19 +139,14 @@ class SmartCrawler:
     def _on_category_ready(self, channel_id: int, category: str):
         """
         Callback когда категория готова - сохраняем в БД.
-        Поддерживает multi-label формат: "CAT+CAT2"
+        v20.0: Поддерживает проценты формат: "ENTERTAINMENT:70+CRYPTO:30"
         """
         # Находим username по channel_id (храним маппинг)
         username = self._channel_id_to_username.get(channel_id)
         if username:
-            # Парсим multi-label формат
-            if "+" in category:
-                parts = category.split("+")
-                primary = parts[0].strip()
-                secondary = parts[1].strip() if len(parts) > 1 else None
-                self.db.set_category(username, primary, secondary)
-            else:
-                self.db.set_category(username, category.strip())
+            # Парсим категории с процентами
+            primary, secondary, percent = parse_category_response(category)
+            self.db.set_category(username, primary, secondary, percent)
             self.classified_count += 1
 
     def add_seeds(self, channels: list):
@@ -259,6 +301,9 @@ class SmartCrawler:
             result['verdict'] = str(e)
             return result
 
+        # v22.0: Извлекаем аватарку для сохранения в БД
+        photo_url = await get_avatar_base64(self.client, scan_result.chat)
+
         # Определяем статус (GOOD если score >= 60)
         if score >= GOOD_THRESHOLD:
             status = 'GOOD'
@@ -288,18 +333,37 @@ class SmartCrawler:
 
                 result['new_channels'] = new_count
 
+                # v21.0: Передаём реальный breakdown для сохранения в БД
+                # v22.0: Добавляем photo_url (base64)
                 self.db.mark_done(
                     username, status, score, verdict, trust_factor, members,
-                    ad_links=list(links)
+                    ad_links=list(links),
+                    photo_url=photo_url,
+                    breakdown=score_result.get('breakdown'),
+                    categories=score_result.get('categories')
                 )
             else:
                 # 60-65: GOOD но ссылки не собираем (тупиковая ветка)
-                self.db.mark_done(username, status, score, verdict, trust_factor, members)
+                # v21.0: Передаём реальный breakdown
+                # v22.0: Добавляем photo_url (base64)
+                self.db.mark_done(
+                    username, status, score, verdict, trust_factor, members,
+                    photo_url=photo_url,
+                    breakdown=score_result.get('breakdown'),
+                    categories=score_result.get('categories')
+                )
 
         else:
             status = 'BAD'
             # Ссылки НЕ собираем с плохих каналов
-            self.db.mark_done(username, status, score, verdict, trust_factor, members)
+            # v21.0: Передаём реальный breakdown
+            # v22.0: Добавляем photo_url (base64)
+            self.db.mark_done(
+                username, status, score, verdict, trust_factor, members,
+                photo_url=photo_url,
+                breakdown=score_result.get('breakdown'),
+                categories=score_result.get('categories')
+            )
 
         result['status'] = status
         return result

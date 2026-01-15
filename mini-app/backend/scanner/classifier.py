@@ -1,13 +1,12 @@
 """
 AI Классификатор тем Telegram каналов.
-v14.0: Процентная классификация без fallback keywords
+v15.0: ОДНА категория (без multi-label)
 
 Архитектура:
   - 17 категорий на основе анализа рынка рекламы
-  - Multi-label: основная + вторичная категория с процентами
-  - Формат ответа: "CATEGORY:PERCENT" или "CAT1:PCT1+CAT2:PCT2"
+  - Single-label: возвращаем ОДНУ категорию
+  - Формат ответа: просто "CATEGORY"
   - Groq API + Llama 3.3 70B
-  - Без fallback keywords (убраны false positives)
   - Кэширование результатов на 7 дней
 """
 
@@ -74,48 +73,47 @@ MAX_POSTS_FOR_AI = 10
 MAX_CHARS_PER_POST = 500
 
 
-# === СИСТЕМНЫЙ ПРОМПТ v14.0 ===
+# === СИСТЕМНЫЙ ПРОМПТ v15.0 (ОДНА КАТЕГОРИЯ) ===
 
-SYSTEM_PROMPT = """You are a Telegram channel topic classifier.
-Analyze the channel and return categories WITH PERCENTAGES.
+SYSTEM_PROMPT = """You are a Telegram channel classifier.
+Analyze the channel and return EXACTLY ONE category.
 
-FORMAT: CATEGORY:PERCENT or CATEGORY1:PERCENT1+CATEGORY2:PERCENT2
-Percentages must sum to 100.
+OUTPUT FORMAT: Just the category name, nothing else.
+Example: CRYPTO
 
-EXAMPLES:
-- Pure crypto channel: "CRYPTO:100"
-- Crypto memes: "ENTERTAINMENT:70+CRYPTO:30"
-- Tech news: "TECH:60+NEWS:40"
-- Gaming channel: "ENTERTAINMENT:100"
-
-CATEGORIES:
-- CRYPTO: cryptocurrency, DeFi, NFT, Web3, blockchain, Bitcoin, Ethereum, trading signals
-- FINANCE: stocks, investing, forex, banks, economics (NOT crypto!)
-- REAL_ESTATE: property, mortgages, apartments, real estate agents
-- BUSINESS: B2B services, SaaS, consulting, startups, entrepreneurs
-- TECH: programming, IT, gadgets, DevOps, software development
-- AI_ML: neural networks, ML, ChatGPT, LLM, Data Science
+CATEGORIES (pick ONE):
+- CRYPTO: Bitcoin, Ethereum, DeFi, NFT, Web3, trading signals, blockchain, airdrops
+- FINANCE: stocks, forex, banks, investing, economics (NOT crypto!)
+- REAL_ESTATE: property, apartments, mortgages, real estate
+- BUSINESS: B2B, SaaS, startups, consulting, entrepreneurs
+- TECH: programming, IT, DevOps, gadgets, software development
+- AI_ML: ChatGPT, neural networks, ML, LLM, Data Science, prompts
 - EDUCATION: courses, tutorials, learning, online schools
 - BEAUTY: cosmetics, makeup, skincare, beauty salons
 - HEALTH: fitness, medicine, wellness, diet, sports
 - TRAVEL: tourism, hotels, flights, travel guides
-- RETAIL: e-commerce, shops, products, delivery
-- ENTERTAINMENT: games, movies, music, memes, humor, streaming, TON games, P2E
-- NEWS: news, politics, current events
-- LIFESTYLE: personal blogs, diary, thoughts
-- GAMBLING: betting, casinos, poker
-- ADULT: 18+ content
+- RETAIL: shops, e-commerce, products, delivery, marketplaces
+- ENTERTAINMENT: games, movies, music, memes, humor, TON games, P2E, streaming
+- NEWS: news, politics, current events, war, world events
+- LIFESTYLE: personal blogs, diary, thoughts, motivation
+- GAMBLING: betting, casinos, poker, sports betting
+- ADULT: 18+ content, dating, escorts
 - OTHER: does not fit any category
 
-RULES:
-1. ALWAYS return percentages (e.g., "TECH:100" not just "TECH")
-2. Use + for mixed content: "ENTERTAINMENT:70+CRYPTO:30"
-3. Percentages MUST sum to 100
-4. Max 2 categories per channel
-5. ANALYZE TONE: memes about crypto = ENTERTAINMENT+CRYPTO, not just CRYPTO
-6. "TON games", "play to earn", "P2E" = ENTERTAINMENT, not CRYPTO
-7. If >80% one topic, use single category: "CRYPTO:100"
-8. If truly unclear, return "OTHER:100\""""
+DECISION RULES (IMPORTANT):
+1. Memes about crypto → ENTERTAINMENT (humor is primary, not topic)
+2. TON games, P2E, play-to-earn → ENTERTAINMENT (it's gaming)
+3. News about crypto/tech/politics → NEWS (news format is primary)
+4. Tech news channel → NEWS (not TECH)
+5. Trading education/courses → EDUCATION (teaching is primary)
+6. Beauty/fitness blogger → LIFESTYLE (personal blog format)
+7. Crypto trading signals → CRYPTO (trading is the service)
+8. AI tools reviews → AI_ML (tools are primary)
+9. Startup news → BUSINESS (business focus)
+10. Product reviews → RETAIL (commerce focus)
+
+Pick the DOMINANT theme based on content FORMAT, not just topic.
+Return ONE word only."""
 
 
 # === КЭШИРОВАНИЕ ===
@@ -222,54 +220,36 @@ def _prepare_context(title: str, description: str, messages: list) -> str:
     return "\n\n".join(parts)
 
 
-# === ПАРСИНГ ОТВЕТА LLM v14.0 ===
+# === ПАРСИНГ ОТВЕТА LLM v15.0 (ОДНА КАТЕГОРИЯ) ===
 
-def parse_category_response(response: str) -> tuple:
+def parse_category_response(response: str) -> str:
     """
-    Парсит ответ LLM с процентами.
-    Input: "ENTERTAINMENT:70+CRYPTO:30" или "TECH:100"
-    Output: ("ENTERTAINMENT", "CRYPTO", 70) или ("TECH", None, 100)
+    Парсит ответ LLM - одна категория.
+    Input: "CRYPTO" или "ENTERTAINMENT" или любой текст с категорией
+    Output: "CRYPTO" или "OTHER"
     """
     response = response.strip().upper()
 
-    # Паттерн: CATEGORY:PERCENT+CATEGORY:PERCENT
-    pattern = r'([A-Z_]+):(\d+)(?:\+([A-Z_]+):(\d+))?'
-    match = re.match(pattern, response)
+    # Убираем возможные артефакты (кавычки, точки, двоеточия с процентами)
+    response = re.sub(r'["\'\.\:\d\+\%]', '', response).strip()
 
-    if match:
-        cat1 = match.group(1)
-        pct1 = int(match.group(2))
-        cat2 = match.group(3)
-        pct2 = int(match.group(4)) if match.group(4) else 0
-
-        if cat1 not in CATEGORIES:
-            cat1 = "OTHER"
-        if cat2 and cat2 not in CATEGORIES:
-            cat2 = None
-            pct1 = 100
-
-        return (cat1, cat2, pct1)
-
-    # Legacy: "CAT+CAT" без процентов
-    if "+" in response:
-        parts = response.split("+")
-        cat1 = parts[0].strip()
-        cat2 = parts[1].strip() if len(parts) > 1 else None
-        if cat1 in CATEGORIES:
-            if cat2 and cat2 in CATEGORIES:
-                return (cat1, cat2, 50)
-            return (cat1, None, 100)
-
-    # Просто категория без процентов
+    # Прямое совпадение
     if response in CATEGORIES:
-        return (response, None, 100)
+        return response
 
-    # Пытаемся найти категорию в ответе
+    # Ищем категорию в ответе (AI иногда добавляет пояснения)
     for cat in CATEGORIES:
         if cat in response:
-            return (cat, None, 100)
+            return cat
 
-    return ("OTHER", None, 100)
+    return "OTHER"
+
+
+# Legacy функция для обратной совместимости
+def parse_category_response_legacy(response: str) -> tuple:
+    """Legacy: возвращает tuple (cat1, cat2, percent) для старого кода."""
+    cat = parse_category_response(response)
+    return (cat, None, 100)
 
 
 # === FALLBACK КЛАССИФИКАЦИЯ ===
@@ -286,7 +266,7 @@ def classify_fallback(title: str, description: str, messages: list) -> str:
 # === GROQ API ===
 
 async def _call_groq_api(context: str, api_key: str) -> Optional[str]:
-    """Отправляет запрос к Groq API."""
+    """Отправляет запрос к Groq API. Возвращает ОДНУ категорию."""
     if not HTTPX_AVAILABLE:
         return None
 
@@ -317,13 +297,9 @@ async def _call_groq_api(context: str, api_key: str) -> Optional[str]:
 
             answer = data["choices"][0]["message"]["content"].strip()
 
-            # v14.0: Используем новый парсер с процентами
-            cat1, cat2, pct1 = parse_category_response(answer)
-
-            # Возвращаем в формате "CAT1+CAT2" или "CAT1"
-            if cat2:
-                return f"{cat1}+{cat2}"
-            return cat1
+            # v15.0: Одна категория
+            category = parse_category_response(answer)
+            return category
 
     except httpx.TimeoutException:
         return None

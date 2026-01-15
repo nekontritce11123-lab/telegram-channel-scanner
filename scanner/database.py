@@ -43,7 +43,9 @@ class ChannelRecord:
     ad_links: list = None
     category: str = None  # v18.0: AI категория (основная)
     category_secondary: str = None  # v18.0: Вторичная категория (multi-label)
+    category_percent: int = 100  # v20.0: Процент основной категории
     photo_url: str = None  # v19.0: URL аватарки канала
+    breakdown_json: str = None  # v21.0: Детальный breakdown метрик (JSON)
     scanned_at: datetime = None
     created_at: datetime = None
 
@@ -102,6 +104,9 @@ class CrawlerDB:
         # v19.0: Миграция - добавляем колонку photo_url для аватарок
         self._migrate_add_photo_url()
 
+        # v21.0: Миграция - добавляем колонку breakdown_json для реальных метрик
+        self._migrate_add_breakdown()
+
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category_secondary ON channels(category_secondary)')
@@ -142,6 +147,28 @@ class CrawlerDB:
             if 'photo_url' not in columns:
                 cursor.execute("ALTER TABLE channels ADD COLUMN photo_url TEXT DEFAULT NULL")
                 print("Миграция v19.0: добавлена колонка photo_url")
+        except sqlite3.Error:
+            pass
+
+        # v20.0: category_percent для мульти-категорий с процентами
+        try:
+            cursor.execute("PRAGMA table_info(channels)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'category_percent' not in columns:
+                cursor.execute("ALTER TABLE channels ADD COLUMN category_percent INTEGER DEFAULT 100")
+                print("Миграция v20.0: добавлена колонка category_percent")
+        except sqlite3.Error:
+            pass
+
+    def _migrate_add_breakdown(self):
+        """Миграция v21.0: добавляет колонку breakdown_json для реальных метрик."""
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("PRAGMA table_info(channels)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'breakdown_json' not in columns:
+                cursor.execute("ALTER TABLE channels ADD COLUMN breakdown_json TEXT DEFAULT NULL")
+                print("Миграция v21.0: добавлена колонка breakdown_json")
         except sqlite3.Error:
             pass
 
@@ -211,7 +238,9 @@ class CrawlerDB:
         ad_links: list = None,
         category: str = None,
         category_secondary: str = None,
-        photo_url: str = None
+        photo_url: str = None,
+        breakdown: dict = None,    # v21.0: детальный breakdown метрик
+        categories: dict = None    # v21.0: итоги по категориям (quality/engagement/reputation)
     ):
         """
         Помечает канал как проверенный.
@@ -226,9 +255,19 @@ class CrawlerDB:
             category: AI категория основная (CRYPTO, NEWS, TECH и т.д.)
             category_secondary: AI категория вторичная (для multi-label)
             photo_url: URL аватарки канала (Telegram CDN)
+            breakdown: v21.0 - детальные метрики (cv_views, reach, verified, etc.)
+            categories: v21.0 - итоги по категориям (quality, engagement, reputation)
         """
         username = username.lower().lstrip('@')
         ad_links_json = json.dumps(ad_links or [])
+
+        # v21.0: Сериализуем breakdown в JSON
+        breakdown_json = None
+        if breakdown or categories:
+            breakdown_json = json.dumps({
+                'breakdown': breakdown,
+                'categories': categories
+            }, ensure_ascii=False)
 
         cursor = self.conn.cursor()
         cursor.execute('''
@@ -242,12 +281,13 @@ class CrawlerDB:
                 category = ?,
                 category_secondary = ?,
                 photo_url = ?,
+                breakdown_json = ?,
                 scanned_at = ?
             WHERE username = ?
-        ''', (status, score, verdict, trust_factor, members, ad_links_json, category, category_secondary, photo_url, datetime.now(), username))
+        ''', (status, score, verdict, trust_factor, members, ad_links_json, category, category_secondary, photo_url, breakdown_json, datetime.now(), username))
         self.conn.commit()
 
-    def set_category(self, username: str, category: str, category_secondary: str = None):
+    def set_category(self, username: str, category: str, category_secondary: str = None, percent: int = 100):
         """
         Устанавливает категорию для канала (для догоняния).
 
@@ -255,12 +295,13 @@ class CrawlerDB:
             username: имя канала
             category: основная категория
             category_secondary: вторичная категория (опционально, для multi-label)
+            percent: процент основной категории (по умолчанию 100)
         """
         username = username.lower().lstrip('@')
         cursor = self.conn.cursor()
         cursor.execute(
-            "UPDATE channels SET category = ?, category_secondary = ? WHERE username = ?",
-            (category, category_secondary, username)
+            "UPDATE channels SET category = ?, category_secondary = ?, category_percent = ? WHERE username = ?",
+            (category, category_secondary, percent, username)
         )
         self.conn.commit()
 
@@ -292,7 +333,9 @@ class CrawlerDB:
             ad_links=json.loads(row['ad_links']) if row['ad_links'] else [],
             category=row['category'] if 'category' in row.keys() else None,
             category_secondary=row['category_secondary'] if 'category_secondary' in row.keys() else None,
+            category_percent=row['category_percent'] if 'category_percent' in row.keys() else 100,
             photo_url=row['photo_url'] if 'photo_url' in row.keys() else None,
+            breakdown_json=row['breakdown_json'] if 'breakdown_json' in row.keys() else None,  # v21.0
             scanned_at=row['scanned_at'],
             created_at=row['created_at']
         )

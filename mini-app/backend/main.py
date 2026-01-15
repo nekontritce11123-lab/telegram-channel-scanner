@@ -5,6 +5,7 @@ Reklamshik API - FastAPI backend для Mini App.
 
 import os
 import sys
+import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -110,6 +111,7 @@ class ChannelSummary(BaseModel):
     members: int
     category: Optional[str] = None
     category_secondary: Optional[str] = None
+    category_percent: Optional[int] = None  # v20.0: процент основной категории
     scanned_at: Optional[str] = None
     cpm_min: Optional[int] = None
     cpm_max: Optional[int] = None
@@ -276,8 +278,13 @@ def calculate_quality_mult(breakdown: dict) -> float:
 
     # Forward Rate: виральность = +8%
     forward = items.get('forward_rate', {})
-    if forward.get('max', 0) > 0 and forward.get('score', 0) >= forward.get('max', 7) * 0.8:
+    if forward.get('max', 0) > 0 and forward.get('score', 0) >= forward.get('max', 5) * 0.8:
         quality_mult *= 1.08
+
+    # v20.0: Posting: хорошая частота постинга = +5%
+    posting = items.get('posting', {})
+    if posting.get('max', 0) > 0 and posting.get('score', 0) >= posting.get('max', 5) * 0.8:
+        quality_mult *= 1.05
 
     return round(quality_mult, 3)
 
@@ -354,7 +361,7 @@ def calculate_reputation_mult(breakdown: dict) -> float:
 
     # ВЕРИФИКАЦИЯ = +20% премиум (откалибровано с +50%)
     verified = items.get('verified', {})
-    if verified.get('max', 0) > 0 and verified.get('score', 0) == verified.get('max', 5):
+    if verified.get('max', 0) > 0 and verified.get('score', 0) == verified.get('max', 4):
         reputation_mult *= 1.20
 
     # Возраст >2 лет = +8%
@@ -369,7 +376,12 @@ def calculate_reputation_mult(breakdown: dict) -> float:
 
     # Оригинальный контент = +5%
     source = items.get('source', {})
-    if source.get('max', 0) > 0 and source.get('score', 0) >= source.get('max', 5) * 0.8:
+    if source.get('max', 0) > 0 and source.get('score', 0) >= source.get('max', 4) * 0.8:
+        reputation_mult *= 1.05
+
+    # v20.0: Чистые связи (нет SCAM, мало приватных) = +5%
+    links = items.get('links', {})
+    if links.get('max', 0) > 0 and links.get('score', 0) >= links.get('max', 4) * 0.8:
         reputation_mult *= 1.05
 
     return round(reputation_mult, 3)
@@ -537,14 +549,14 @@ def get_cpm_range(category: Optional[str]) -> tuple:
 
 def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
     """
-    v7.0: Оценивает детальный breakdown метрик на основе итогового score.
+    v22.1: Оценивает детальный breakdown метрик на основе итогового score.
 
-    Поскольку детальные метрики не хранятся в БД, делаем обоснованную оценку:
-    - Quality (40 max): 40% от total
-    - Engagement (40 max): 40% от total
-    - Reputation (20 max): 20% от total
+    Используется как fallback когда нет breakdown_json в БД.
+    Ключи должны совпадать с METRIC_CONFIG в format_breakdown_for_ui().
 
-    Внутри категорий распределяем пропорционально весам.
+    - Quality (35 max): cv_views, reach, views_decay, forward_rate
+    - Engagement (40 max): comments, reaction_rate, er_variation, reaction_stability
+    - Reputation (16 max): verified, age, premium, source_diversity
     """
     # Raw score до trust factor
     raw_score = score / trust_factor if trust_factor > 0 else score
@@ -553,25 +565,25 @@ def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
     # Процент от максимума (приблизительно)
     pct = raw_score / 100
 
-    # Детальные веса из scorer.py
+    # v22.1: Ключи совпадают с METRIC_CONFIG и scorer.py
     weights = {
         'quality': {
-            'cv_views': {'max': 15, 'label': 'CV просмотров'},
+            'cv_views': {'max': 13, 'label': 'CV просмотров'},
             'reach': {'max': 10, 'label': 'Охват'},
-            'views_decay': {'max': 8, 'label': 'Стабильность'},
-            'forward_rate': {'max': 7, 'label': 'Репосты'},
+            'views_decay': {'max': 7, 'label': 'Стабильность'},
+            'forward_rate': {'max': 5, 'label': 'Репосты'},
         },
         'engagement': {
             'comments': {'max': 15, 'label': 'Комментарии'},
             'reaction_rate': {'max': 15, 'label': 'Реакции'},
             'er_variation': {'max': 5, 'label': 'Разнообразие'},
-            'stability': {'max': 5, 'label': 'Стабильность ER'},
+            'reaction_stability': {'max': 5, 'label': 'Стабильность ER'},
         },
         'reputation': {
-            'verified': {'max': 5, 'label': 'Верификация'},
-            'age': {'max': 5, 'label': 'Возраст'},
-            'premium': {'max': 5, 'label': 'Премиумы'},
-            'source': {'max': 5, 'label': 'Оригинальность'},
+            'verified': {'max': 4, 'label': 'Верификация'},
+            'age': {'max': 4, 'label': 'Возраст'},
+            'premium': {'max': 4, 'label': 'Премиумы'},
+            'source_diversity': {'max': 4, 'label': 'Оригинальность'},
         },
     }
 
@@ -607,6 +619,130 @@ def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
             }
 
     return breakdown
+
+
+def format_breakdown_for_ui(breakdown_data: dict) -> dict:
+    """
+    v21.0: Преобразует реальный breakdown из scorer.py в формат для UI.
+
+    scorer.py возвращает:
+        {
+            'breakdown': {
+                'cv_views': {'value': 45.2, 'points': 12, 'max': 13},
+                'reach': {'value': 8.5, 'points': 8, 'max': 10},
+                ...
+            },
+            'categories': {
+                'quality': {'score': 30, 'max': 40},
+                'engagement': {'score': 33, 'max': 40},
+                'reputation': {'score': 15, 'max': 20}
+            }
+        }
+
+    UI ожидает:
+        {
+            'quality': {
+                'total': 30, 'max': 40,
+                'items': {
+                    'cv_views': {'score': 12, 'max': 13, 'label': 'CV просмотров'},
+                    ...
+                }
+            },
+            ...
+        }
+    """
+    breakdown = breakdown_data.get('breakdown', {})
+    categories = breakdown_data.get('categories', {})
+
+    # Маппинг метрик в категории с labels
+    # v22.1: Убраны posting_frequency и private_links — это Trust Penalties,
+    # не метрики с баллами (у них нет points/max в scorer.py)
+    METRIC_CONFIG = {
+        'quality': {
+            'cv_views': 'CV просмотров',
+            'reach': 'Охват',
+            'views_decay': 'Стабильность',
+            'forward_rate': 'Репосты',
+        },
+        'engagement': {
+            'comments': 'Комментарии',
+            'reaction_rate': 'Реакции',
+            'er_variation': 'Разнообразие',
+            'reaction_stability': 'Стабильность ER',
+        },
+        'reputation': {
+            'verified': 'Верификация',
+            'age': 'Возраст',
+            'premium': 'Премиумы',
+            'source_diversity': 'Оригинальность',
+        },
+    }
+
+    result = {}
+
+    for cat_key, metrics in METRIC_CONFIG.items():
+        cat_data = categories.get(cat_key, {})
+
+        items = {}
+        calculated_max = 0  # v22.2: Сумма max всех items (учитывает floating weights)
+        for metric_key, label in metrics.items():
+            metric_data = breakdown.get(metric_key, {})
+
+            # Получаем значения (scorer.py использует 'points', UI ожидает 'score')
+            score_val = metric_data.get('points', metric_data.get('score', 0))
+            max_val = metric_data.get('max', 0)
+
+            # v22.1: Если max=0, значит метрика отключена (floating weights)
+            # Например, reaction_rate=0 когда реакции выключены на канале
+            if max_val == 0 and metric_key in ('reaction_rate', 'comments'):
+                item_data = {
+                    'score': 0,
+                    'max': 0,
+                    'label': label,
+                    'value': 'откл.',  # Показываем что метрика отключена
+                    'disabled': True,
+                }
+                items[metric_key] = item_data
+                continue
+
+            # Формируем human-readable value если есть
+            value = None
+            if 'value' in metric_data:
+                raw_value = metric_data['value']
+                if metric_key == 'verified':
+                    value = 'Да' if raw_value else 'Нет'
+                elif metric_key == 'age':
+                    # Возраст в днях -> человекочитаемый формат
+                    days = raw_value if isinstance(raw_value, (int, float)) else 0
+                    if days >= 365 * 2:
+                        value = f"{int(days / 365)} года"
+                    elif days >= 365:
+                        value = "1 год"
+                    elif days >= 30:
+                        value = f"{int(days / 30)} мес."
+                    else:
+                        value = f"{int(days)} дн."
+                elif isinstance(raw_value, float):
+                    value = f"{raw_value:.1f}%"
+
+            item_data = {
+                'score': score_val,
+                'max': max_val,
+                'label': label,
+            }
+            if value:
+                item_data['value'] = value
+
+            items[metric_key] = item_data
+            calculated_max += max_val  # v22.2: Суммируем max каждого item
+
+        result[cat_key] = {
+            'total': cat_data.get('score', 0),
+            'max': calculated_max,  # v22.2: Используем сумму из items, НЕ fallback
+            'items': items,
+        }
+
+    return result
 
 
 def estimate_trust_penalties(trust_factor: float, score: int) -> list:
@@ -840,7 +976,7 @@ async def get_channels(
     # Main query
     query = f"""
         SELECT username, score, verdict, trust_factor, members,
-               category, category_secondary, scanned_at, photo_url
+               category, category_secondary, scanned_at, photo_url, category_percent
         FROM channels {where_clause}
     """
 
@@ -876,6 +1012,7 @@ async def get_channels(
             members=members,
             category=category,
             category_secondary=row[6],
+            category_percent=safe_int(row[9], 100) if row[9] else 100,  # v20.0
             scanned_at=str(row[7]) if row[7] else None,
             cpm_min=price_min,
             cpm_max=price_max,
@@ -896,12 +1033,16 @@ async def get_channel(username: str):
     """
     Получить детали канала по username.
     Если канала нет в базе - вернуть 404.
+
+    v21.0: Читает реальный breakdown из БД если доступен.
     """
     username = username.lower().lstrip("@")
 
+    # v21.0: Добавляем breakdown_json в SELECT
     cursor = db.conn.execute("""
         SELECT username, score, verdict, trust_factor, members,
-               category, category_secondary, scanned_at, status, photo_url
+               category, category_secondary, scanned_at, status, photo_url, category_percent,
+               breakdown_json
         FROM channels
         WHERE username = ?
     """, (username,))
@@ -916,9 +1057,19 @@ async def get_channel(username: str):
     trust_factor = safe_float(row[3], 1.0)
     members = safe_int(row[4], 0)
     category = row[5]
+    breakdown_json_raw = row[11] if len(row) > 11 else None
 
-    # v7.0: Детальный breakdown метрик
-    breakdown = estimate_breakdown(score, trust_factor)
+    # v21.0: Используем РЕАЛЬНЫЙ breakdown если доступен
+    if breakdown_json_raw:
+        try:
+            breakdown_data = json.loads(breakdown_json_raw)
+            breakdown = format_breakdown_for_ui(breakdown_data)
+        except (json.JSONDecodeError, TypeError):
+            # Fallback при ошибке парсинга
+            breakdown = estimate_breakdown(score, trust_factor)
+    else:
+        # Fallback для старых записей без breakdown_json
+        breakdown = estimate_breakdown(score, trust_factor)
 
     # v7.0: Trust penalties (риски)
     trust_penalties = estimate_trust_penalties(trust_factor, score)
@@ -972,6 +1123,7 @@ async def get_channel(username: str):
         "members": members,
         "category": category,
         "category_secondary": row[6],
+        "category_percent": safe_int(row[10], 100) if row[10] else 100,  # v20.0
         "scanned_at": str(row[7]) if row[7] else None,
         "status": row[8],
         "photo_url": str(row[9]) if row[9] else None,

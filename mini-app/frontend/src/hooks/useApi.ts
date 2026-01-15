@@ -17,6 +17,7 @@ export interface Channel {
   members: number
   category: string | null
   category_secondary: string | null
+  category_percent: number | null  // v20.0: процент основной категории
   scanned_at: string | null
   cpm_min: number | null
   cpm_max: number | null
