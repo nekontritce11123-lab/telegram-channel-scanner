@@ -3010,40 +3010,76 @@
   margin-bottom: var(--spacing-sm);
 }
 
+/* v12.4: Рекомендации с градиентами и SVG */
 .recItemNew {
   display: flex;
   align-items: flex-start;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm);
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: var(--radius-sm);
-  margin-bottom: var(--spacing-xs);
-  border-left: 3px solid var(--hint-color);
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
 }
 
 .recItemNew:last-child {
   margin-bottom: 0;
 }
 
+/* Success - зелёный градиент */
 .recItemNew.rec_success {
-  border-left-color: var(--verdict-excellent);
+  background: linear-gradient(135deg, rgba(52, 199, 89, 0.12) 0%, rgba(52, 199, 89, 0.04) 100%);
+  border-color: rgba(52, 199, 89, 0.25);
 }
 
+.recItemNew.rec_success .recIconNew {
+  color: var(--verdict-excellent);
+}
+
+/* Tip - синий градиент */
 .recItemNew.rec_tip {
-  border-left-color: var(--button-color);
+  background: linear-gradient(135deg, rgba(51, 144, 236, 0.12) 0%, rgba(51, 144, 236, 0.04) 100%);
+  border-color: rgba(51, 144, 236, 0.25);
 }
 
+.recItemNew.rec_tip .recIconNew {
+  color: var(--button-color);
+}
+
+/* Warning - оранжевый градиент */
 .recItemNew.rec_warning {
-  border-left-color: var(--verdict-high-risk);
+  background: linear-gradient(135deg, rgba(255, 149, 0, 0.12) 0%, rgba(255, 149, 0, 0.04) 100%);
+  border-color: rgba(255, 149, 0, 0.25);
 }
 
+.recItemNew.rec_warning .recIconNew {
+  color: var(--verdict-high-risk);
+}
+
+/* CPM - жёлто-зелёный градиент */
 .recItemNew.rec_cpm {
-  border-left-color: var(--verdict-good);
+  background: linear-gradient(135deg, rgba(255, 204, 0, 0.12) 0%, rgba(255, 204, 0, 0.04) 100%);
+  border-color: rgba(255, 204, 0, 0.25);
 }
 
+.recItemNew.rec_cpm .recIconNew {
+  color: var(--verdict-good);
+}
+
+/* v12.4: SVG иконка рекомендации */
 .recIconNew {
-  font-size: 16px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.recIconNew svg {
+  width: 100%;
+  height: 100%;
 }
 
 .recTextNew {
