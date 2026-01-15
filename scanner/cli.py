@@ -243,6 +243,27 @@ def print_result(result: dict) -> None:
             if regularity:
                 print(f"    regularity: CV {regularity.get('value', 'N/A')}")
 
+            # v15.0: Posting Frequency
+            posting = breakdown.get('posting_frequency', {})
+            if posting and posting.get('posts_per_day', 0) > 0:
+                posts_day = posting['posts_per_day']
+                status = posting.get('status', 'normal')
+                trust_mult = posting.get('trust_multiplier', 1.0)
+                if trust_mult < 1.0:
+                    print(f"    {yellow}posting: {posts_day:.1f}/день [{status.upper()}] ×{trust_mult}{reset}")
+                else:
+                    print(f"    posting: {posts_day:.1f}/день [{status}]")
+
+            # v15.0: Private Links
+            private = breakdown.get('private_links', {})
+            if private and private.get('total_ad_posts', 0) > 0:
+                priv_ratio = private.get('private_ratio', 0)
+                trust_mult = private.get('trust_multiplier', 1.0)
+                if priv_ratio > 0.3:
+                    print(f"    {yellow}private_links: {priv_ratio*100:.0f}% приватных ×{trust_mult}{reset}")
+                elif priv_ratio > 0:
+                    print(f"    private_links: {priv_ratio*100:.0f}% приватных")
+
     # User Forensics
     forensics = result.get('forensics')
     if forensics and forensics.get('status') == 'complete':

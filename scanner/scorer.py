@@ -49,6 +49,9 @@ from .metrics import (
     calculate_ad_load,
     get_channel_age_days,
     get_raw_stats,
+    # v15.0: New metrics
+    calculate_posts_per_day,
+    analyze_private_invites,
 )
 from .forensics import UserForensics
 
@@ -107,6 +110,18 @@ TRUST_FACTORS = {
     # Conviction-based penalties
     'conviction_critical': 0.3,       # Conviction >= 70
     'conviction_high': 0.6,           # Conviction >= 50
+
+    # v15.0: Spam Posting penalties
+    'spam_posting_spam': 0.55,        # >20 posts/day
+    'spam_posting_heavy': 0.75,       # 12-20 posts/day
+    'spam_posting_active': 0.90,      # 6-12 posts/day
+
+    # v15.0: Private Links penalties (всё в %)
+    'private_100': 0.25,              # 100% приватных
+    'private_80': 0.35,               # >80% приватных
+    'private_60': 0.50,               # >60% приватных
+    'private_crypto_combo': 0.45,     # CRYPTO + >40% приватных
+    'private_hidden_combo': 0.40,     # >50% + комменты выкл
 }
 
 # Backward compatibility alias
@@ -532,7 +547,12 @@ def calculate_trust_factor(
     # v15.1: Decay Trust Parameters
     decay_ratio: float = 0.7,
     # v15.2: Satellite Parameters
-    avg_comments: float = 0
+    avg_comments: float = 0,
+    # v15.0: New Penalties
+    posting_data: dict = None,
+    network_data: dict = None,
+    private_data: dict = None,
+    category: str = None
 ) -> tuple[float, dict]:
     """
     v15.2: Вычисляет мультипликатор доверия.
@@ -756,6 +776,69 @@ def calculate_trust_factor(
         details['budget_cliff'] = {
             'multiplier': 0.7,
             'reason': f'Обрыв: новые = {decay_ratio*100:.0f}% от старых'
+        }
+
+    # =========================================================================
+    # v15.0: SPAM POSTING PENALTY
+    # Штраф за слишком частый постинг (реклама теряется в потоке)
+    # =========================================================================
+
+    if posting_data and posting_data.get('trust_multiplier', 1.0) < 1.0:
+        posting_mult = posting_data['trust_multiplier']
+        posts_per_day = posting_data.get('posts_per_day', 0)
+        posting_status = posting_data.get('posting_status', 'normal')
+
+        multipliers.append(posting_mult)
+        details['spam_posting'] = {
+            'multiplier': posting_mult,
+            'reason': f'{posts_per_day:.1f} постов/день ({posting_status})',
+            'posts_per_day': posts_per_day,
+            'status': posting_status
+        }
+
+    # =========================================================================
+    # v15.0: SCAM NETWORK PENALTY (накопительный)
+    # Штраф за рекламу SCAM/BAD каналов
+    # =========================================================================
+
+    if network_data and network_data.get('trust_multiplier', 1.0) < 1.0:
+        network_mult = network_data['trust_multiplier']
+        scam_count = network_data.get('scam_count', 0)
+        bad_count = network_data.get('bad_count', 0)
+
+        multipliers.append(network_mult)
+
+        # Формируем описание
+        parts = []
+        if scam_count:
+            parts.append(f'{scam_count} SCAM')
+        if bad_count:
+            parts.append(f'{bad_count} BAD')
+
+        details['scam_network'] = {
+            'multiplier': network_mult,
+            'reason': f"Рекламирует: {' + '.join(parts)}" if parts else 'Плохие связи',
+            'scam_count': scam_count,
+            'bad_count': bad_count,
+            'scam_channels': network_data.get('scam_channels', [])
+        }
+
+    # =========================================================================
+    # v15.0: PRIVATE LINKS PENALTY (по процентам)
+    # Штраф за много приватных ссылок (нельзя проверить качество)
+    # =========================================================================
+
+    if private_data and private_data.get('trust_multiplier', 1.0) < 1.0:
+        private_mult = private_data['trust_multiplier']
+        private_ratio = private_data.get('private_ratio', 0)
+
+        multipliers.append(private_mult)
+        details['private_links'] = {
+            'multiplier': private_mult,
+            'reason': f'{private_ratio*100:.0f}% рекламы — приватные каналы',
+            'private_ratio': private_ratio,
+            'private_posts': private_data.get('private_posts', 0),
+            'total_ad_posts': private_data.get('total_ad_posts', 0)
         }
 
     # Выбираем ХУДШИЙ (минимальный) множитель
@@ -1236,6 +1319,40 @@ def calculate_final_score(
     online_count = channel_health.get('online_count', 0)
     participants_count = channel_health.get('participants_count', 0)
 
+    # =========================================================================
+    # v15.0: NEW METRICS - Spam Posting + Private Links
+    # =========================================================================
+
+    # Определяем категорию канала (если есть)
+    channel_category = getattr(chat, 'category', None)
+
+    # Posting frequency: NEWS каналы имеют выше пороги
+    is_news = channel_category == 'NEWS' if channel_category else False
+    posting_data = calculate_posts_per_day(messages, is_news=is_news)
+
+    # Private links: анализируем % приватных ссылок в рекламе
+    private_data = analyze_private_invites(
+        messages,
+        category=channel_category,
+        comments_enabled=comments_enabled
+    )
+
+    # Scam network: требует БД, передаём None (будет вычислен в cli.py если нужно)
+    network_data = None
+
+    # Сохраняем данные в breakdown для отображения
+    breakdown['posting_frequency'] = {
+        'posts_per_day': posting_data['posts_per_day'],
+        'status': posting_data['posting_status'],
+        'trust_multiplier': posting_data['trust_multiplier']
+    }
+    breakdown['private_links'] = {
+        'private_ratio': private_data.get('private_ratio', 0),
+        'private_posts': private_data.get('private_posts', 0),
+        'total_ad_posts': private_data.get('total_ad_posts', 0),
+        'trust_multiplier': private_data.get('trust_multiplier', 1.0)
+    }
+
     trust_factor, trust_details = calculate_trust_factor(
         forensics_result=forensics_result,
         ad_load_data=ad_load_data,
@@ -1254,7 +1371,12 @@ def calculate_final_score(
         # v15.1: Decay Trust Parameters
         decay_ratio=decay_ratio,
         # v15.2: Satellite Parameters
-        avg_comments=comments_data.get('avg_comments', 0)
+        avg_comments=comments_data.get('avg_comments', 0),
+        # v15.0: New Penalties
+        posting_data=posting_data,
+        network_data=network_data,
+        private_data=private_data,
+        category=channel_category
     )
 
     # F16: Reaction Flatness в Hardcore mode (дополнительный сигнал для Trust)

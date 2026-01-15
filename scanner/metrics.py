@@ -927,6 +927,63 @@ def calculate_post_regularity(messages: list) -> float:
     return std_interval / mean_interval
 
 
+def calculate_posts_per_day(messages: list, is_news: bool = False) -> dict:
+    """
+    Рассчитывает частоту постинга.
+
+    Пороги (обычный канал):
+    - < 6/day = normal (×1.0)
+    - 6-12/day = active (×0.90)
+    - 12-20/day = heavy (×0.75)
+    - > 20/day = spam (×0.55)
+
+    Для NEWS пороги выше: 20/40/60
+    """
+    sorted_msgs = sorted(
+        [m for m in messages if hasattr(m, 'date') and m.date],
+        key=lambda m: m.date
+    )
+
+    if len(sorted_msgs) < 2:
+        return {
+            'posts_per_day': 0,
+            'total_days': 0,
+            'posting_status': 'insufficient_data',
+            'trust_multiplier': 1.0
+        }
+
+    total_seconds = (sorted_msgs[-1].date - sorted_msgs[0].date).total_seconds()
+    total_days = max(total_seconds / 86400, 0.1)
+    posts_per_day = len(sorted_msgs) / total_days
+
+    # Пороги для NEWS выше
+    if is_news:
+        thresholds = (20, 40, 60)
+    else:
+        thresholds = (6, 12, 20)
+
+    # Статус и множитель
+    if posts_per_day < thresholds[0]:
+        status = 'normal'
+        trust_mult = 1.0
+    elif posts_per_day < thresholds[1]:
+        status = 'active'
+        trust_mult = 0.90
+    elif posts_per_day < thresholds[2]:
+        status = 'heavy'
+        trust_mult = 0.75
+    else:
+        status = 'spam'
+        trust_mult = 0.55
+
+    return {
+        'posts_per_day': round(posts_per_day, 1),
+        'total_days': round(total_days, 1),
+        'posting_status': status,
+        'trust_multiplier': trust_mult
+    }
+
+
 # ============================================================================
 # КАТЕГОРИЯ D: АНАЛИЗ РЕАКЦИЙ (10 баллов)
 # ============================================================================
@@ -1444,4 +1501,151 @@ def get_raw_stats(messages: list) -> dict:
         'total_reactions': total_reactions,
         'avg_views': round(avg_views, 1),
         'posts_analyzed': posts_count
+    }
+
+
+# ============================================================================
+# v15.0: SCAM NETWORK + PRIVATE LINKS DETECTION
+# ============================================================================
+
+def check_scam_network(ad_links: list, db) -> dict:
+    """
+    Проверяет статус рекламируемых каналов.
+    НАКОПИТЕЛЬНАЯ система штрафов:
+    - 1 BAD канал = ×0.93 (почти без штрафа)
+    - 1 SCAM канал = ×0.85
+    - Много плохих = накопительный штраф
+    - >50% SCAM = ×0.40 (участник скам-сети)
+    """
+    scam_count = 0
+    bad_count = 0
+    risk_count = 0
+    checked = []
+    scam_channels = []
+
+    for link in ad_links:
+        if not link:
+            continue
+        # Нормализуем username
+        username = link.lower().strip().lstrip('@')
+        channel = db.get_channel(username) if db else None
+
+        if not channel:
+            continue
+        checked.append(username)
+
+        # Проверяем score
+        score = channel.get('score') or channel.get('final_score') or 100
+        if hasattr(channel, 'score'):
+            score = channel.score
+        elif isinstance(channel, dict):
+            score = channel.get('score', channel.get('final_score', 100))
+
+        if score < 25:  # SCAM
+            scam_count += 1
+            scam_channels.append(username)
+        elif score < 40:  # BAD
+            bad_count += 1
+        elif score < 55:  # RISK
+            risk_count += 1
+
+    # Накопительный множитель
+    trust_mult = 1.0
+    trust_mult *= 0.85 ** scam_count   # каждый SCAM = ×0.85
+    trust_mult *= 0.93 ** bad_count    # каждый BAD = ×0.93
+    trust_mult *= 0.97 ** risk_count   # каждый RISK = ×0.97
+
+    # Если >50% рекламы = SCAM — жёсткий штраф
+    total_checked = len(checked)
+    scam_ratio = scam_count / max(total_checked, 1)
+    if scam_ratio > 0.5:
+        trust_mult = min(trust_mult, 0.40)
+
+    return {
+        'scam_count': scam_count,
+        'bad_count': bad_count,
+        'risk_count': risk_count,
+        'total_checked': total_checked,
+        'scam_ratio': round(scam_ratio, 2),
+        'trust_multiplier': round(trust_mult, 3),
+        'scam_channels': scam_channels[:3]
+    }
+
+
+def analyze_private_invites(messages: list, category: str = None, comments_enabled: bool = True) -> dict:
+    """
+    Анализирует приватные ссылки в постах.
+    ВСЁ В ПРОЦЕНТАХ — абсолютные числа не важны.
+
+    Пороги:
+    - >60% приватных = ×0.50
+    - >80% приватных = ×0.35
+    - 100% приватных = ×0.25
+
+    Комбо:
+    - CRYPTO + >40% приватных = ×0.45
+    - >50% приватных + комменты выкл = ×0.40
+    """
+    import re
+
+    private_pattern = re.compile(r't\.me/(?:\+|joinchat/)([a-zA-Z0-9_-]+)', re.IGNORECASE)
+    public_pattern = re.compile(r't\.me/([a-zA-Z][a-zA-Z0-9_]{3,})', re.IGNORECASE)
+
+    private_links = set()
+    posts_with_private = 0
+    posts_with_public = 0
+
+    for msg in messages:
+        text = getattr(msg, 'text', '') or ''
+        if not text:
+            continue
+
+        has_private = bool(private_pattern.search(text))
+        has_public = bool(public_pattern.search(text))
+
+        if has_private:
+            posts_with_private += 1
+            private_links.update(private_pattern.findall(text))
+        if has_public:
+            posts_with_public += 1
+
+    # Считаем % от ВСЕХ рекламных постов
+    total_ad_posts = posts_with_private + posts_with_public
+    if total_ad_posts == 0:
+        return {
+            'private_ratio': 0,
+            'private_posts': 0,
+            'total_ad_posts': 0,
+            'trust_multiplier': 1.0,
+            'unique_private': 0,
+            'has_ads': False
+        }
+
+    private_ratio = posts_with_private / total_ad_posts
+
+    # Базовый штраф по проценту
+    if private_ratio >= 1.0:
+        trust_mult = 0.25  # 100% приватных
+    elif private_ratio > 0.8:
+        trust_mult = 0.35  # >80%
+    elif private_ratio > 0.6:
+        trust_mult = 0.50  # >60%
+    else:
+        trust_mult = 1.0   # норма
+
+    # Комбо: CRYPTO + много приватных
+    if category == 'CRYPTO' and private_ratio > 0.4:
+        trust_mult = min(trust_mult, 0.45)
+
+    # Комбо: приватные + комменты выключены
+    if not comments_enabled and private_ratio > 0.5:
+        trust_mult = min(trust_mult, 0.40)
+
+    return {
+        'private_ratio': round(private_ratio, 2),
+        'private_posts': posts_with_private,
+        'total_ad_posts': total_ad_posts,
+        'trust_multiplier': round(trust_mult, 2),
+        'unique_private': len(private_links),
+        'has_ads': True
     }
