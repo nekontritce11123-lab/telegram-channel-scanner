@@ -25,8 +25,7 @@ const ALL_CATEGORIES = [
   { id: 'OTHER', label: 'Др.' },
 ]
 
-// Quick filter categories (shown in sticky header)
-const QUICK_CATEGORIES = ALL_CATEGORIES.slice(0, 6)
+// v9.0: All categories shown in filter sheet (no quick categories)
 
 // Category names for display
 const CATEGORY_NAMES: Record<string, string> = Object.fromEntries(
@@ -96,67 +95,67 @@ function getMetricColor(score: number, max: number): string {
   return 'poor'
 }
 
-// v8.0: Metric descriptions for modal
+// v9.0: Metric descriptions - simple Russian without numbers
 const METRIC_DESCRIPTIONS: Record<string, { title: string; description: string; interpretation: string }> = {
   'cv_views': {
     title: 'CV просмотров',
-    description: 'Коэффициент вариации просмотров между постами. Показывает естественность распределения просмотров.',
-    interpretation: '30-60% = идеально. < 10% = подозрительно ровно (боты). > 100% = волновая накрутка.'
+    description: 'Насколько разные просмотры на разных постах.',
+    interpretation: 'Хорошо когда просмотры разные на разных постах. Если везде одинаково — возможна накрутка.'
   },
   'reach': {
     title: 'Охват аудитории',
-    description: 'Какой процент подписчиков видит каждый пост в среднем.',
-    interpretation: '30-60% = норма. > 100% = накрутка просмотров.'
+    description: 'Какая часть подписчиков видит каждый пост.',
+    interpretation: 'Нормально когда каждый пост видит часть аудитории. Если охват больше подписчиков — накрутка.'
   },
   'views_decay': {
     title: 'Стабильность просмотров',
-    description: 'Соотношение просмотров новых и старых постов. Показывает органичность роста.',
-    interpretation: '0.3-0.95 = органический рост. 0.98-1.02 = Bot Wall (автонакрутка).'
+    description: 'Как меняются просмотры со временем.',
+    interpretation: 'Старые посты должны получать меньше просмотров. Если везде одинаково — это накрутка ботами.'
   },
   'forward_rate': {
     title: 'Виральность',
-    description: 'Сколько раз посты репостят другие каналы и пользователи.',
-    interpretation: '> 3% = вирусный контент. < 0.5% = низкая виральность.'
+    description: 'Как часто посты репостят.',
+    interpretation: 'Вирусный контент постоянно репостят. Мало репостов — слабая виральность.'
   },
   'comments': {
     title: 'Комментарии',
-    description: 'Среднее количество комментариев на пост.',
-    interpretation: 'Зависит от размера канала. Важна живость дискуссий и отсутствие спама.'
+    description: 'Активность в комментариях.',
+    interpretation: 'Живые обсуждения — признак настоящей аудитории. Пустые комменты или спам — плохо.'
   },
   'reaction_rate': {
     title: 'Реакции',
-    description: 'Процент постов с реакциями от подписчиков.',
-    interpretation: '> 2% = хорошая вовлечённость. < 0.1% = Zombie Engagement (мёртвая аудитория).'
+    description: 'Как активно подписчики ставят реакции.',
+    interpretation: 'Подписчики должны реагировать на посты. Нет реакций — мёртвая аудитория.'
   },
   'er_variation': {
     title: 'Разнообразие вовлечения',
     description: 'Насколько разные реакции на разные посты.',
-    interpretation: 'Высокое = естественное поведение. Низкое = накрутка одним методом.'
+    interpretation: 'Естественно когда на разные посты разная реакция. Одинаково везде — накрутка.'
   },
   'stability': {
     title: 'Стабильность ER',
-    description: 'Постоянство вовлечённости во времени.',
-    interpretation: 'Стабильный ER = качественная лояльная аудитория.'
+    description: 'Постоянство активности аудитории.',
+    interpretation: 'Стабильная вовлечённость = лояльная аудитория. Скачки — подозрительно.'
   },
   'verified': {
     title: 'Верификация',
-    description: 'Канал верифицирован Telegram.',
-    interpretation: 'Верификация = доверие платформы и подтверждённый автор.'
+    description: 'Официальная верификация от Telegram.',
+    interpretation: 'Верификация означает что Telegram подтвердил подлинность канала.'
   },
   'age': {
     title: 'Возраст канала',
     description: 'Сколько времени существует канал.',
-    interpretation: '> 2 лет = устоявшийся канал. < 3 мес = новый (высокий риск).'
+    interpretation: 'Старые каналы проверены временем. Новые каналы — высокий риск.'
   },
   'premium': {
     title: 'Премиум подписчики',
-    description: 'Процент подписчиков с Telegram Premium.',
-    interpretation: '> 5% = платёжеспособная аудитория. 0% = подозрительно.'
+    description: 'Есть ли подписчики с Telegram Premium.',
+    interpretation: 'Премиум подписчики — признак живой платёжеспособной аудитории.'
   },
   'source': {
     title: 'Оригинальность',
-    description: 'Доля оригинального контента (не репосты).',
-    interpretation: '> 70% = авторский канал. < 30% = агрегатор.'
+    description: 'Сколько контента создано автором.',
+    interpretation: 'Много оригинального контента — авторский канал. Одни репосты — агрегатор.'
   }
 }
 
@@ -204,7 +203,7 @@ function SkeletonCard() {
 function App() {
   const { webApp, hapticLight, hapticMedium, hapticSuccess, hapticError } = useTelegram()
   const { channels, total, loading, error, hasMore, fetchChannels, reset } = useChannels()
-  const { stats, fetchStats } = useStats()
+  const { fetchStats } = useStats()  // v9.0: stats removed from UI
   const { result: scanResult, loading: scanning, error: scanError, scanChannel, reset: resetScan } = useScan()
 
   // State
@@ -219,8 +218,7 @@ function App() {
   const [verdictFilter, setVerdictFilter] = useState<'good_plus' | null>(null)
   const [page, setPage] = useState(1)
   const [selectedChannel, setSelectedChannel] = useState<ChannelDetail | null>(null)
-  const [showCategorySheet, setShowCategorySheet] = useState(false)
-  const [showFilterSheet, setShowFilterSheet] = useState(false)
+  const [showFilterSheet, setShowFilterSheet] = useState(false)  // v9.0: single unified filter sheet
   const [expandedRisks, setExpandedRisks] = useState<Set<number>>(new Set())
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null)  // v8.0: Modal state
 
@@ -289,20 +287,9 @@ function App() {
     reset()
     fetchChannels(buildFilters(1))
     setShowFilterSheet(false)
-    setShowCategorySheet(false)
   }, [buildFilters, reset, fetchChannels])
 
-  // Handle category change
-  const handleCategorySelect = useCallback((categoryId: string | null) => {
-    hapticLight()
-    setSelectedCategory(categoryId)
-    setPage(1)
-    reset()
-    fetchChannels({
-      ...buildFilters(1),
-      category: categoryId || undefined,
-    })
-  }, [hapticLight, reset, fetchChannels, buildFilters])
+  // v9.0: Category selection now happens in filter sheet, applied on "Показать"
 
   // Handle search
   const handleSearch = useCallback(async () => {
@@ -354,35 +341,7 @@ function App() {
     resetScan()
   }, [hapticLight, resetScan])
 
-  // Toggle sort order
-  const toggleSort = useCallback(() => {
-    hapticLight()
-    const newOrder = sortOrder === 'desc' ? 'asc' : 'desc'
-    setSortOrder(newOrder)
-    setPage(1)
-    reset()
-    fetchChannels({ ...buildFilters(1), sort_order: newOrder })
-  }, [hapticLight, sortOrder, reset, fetchChannels, buildFilters])
-
-  // Toggle sort field
-  const toggleSortField = useCallback(() => {
-    hapticLight()
-    const newField = sortBy === 'score' ? 'members' : 'score'
-    setSortBy(newField)
-    setPage(1)
-    reset()
-    fetchChannels({ ...buildFilters(1), sort_by: newField })
-  }, [hapticLight, sortBy, reset, fetchChannels, buildFilters])
-
-  // Toggle verdict filter
-  const toggleVerdictFilter = useCallback(() => {
-    hapticLight()
-    const newVerdict = verdictFilter === 'good_plus' ? null : 'good_plus'
-    setVerdictFilter(newVerdict)
-    setPage(1)
-    reset()
-    fetchChannels({ ...buildFilters(1), verdict: newVerdict || undefined })
-  }, [hapticLight, verdictFilter, reset, fetchChannels, buildFilters])
+  // v9.0: All filter toggles now in unified filter sheet, applied on "Показать"
 
   // Clear filters
   const clearFilters = useCallback(() => {
@@ -470,29 +429,28 @@ function App() {
     return risks
   }, [selectedChannel])
 
-  // Channel Detail Page - v6.0 UNIFIED (no tabs!)
+  // Channel Detail Page - v9.0 COMPACT LAYOUT
   if (selectedChannel) {
     return (
       <div className={styles.detailPage}>
-        {/* Header */}
+        {/* Header - v9.0: Compact, no nickname */}
         <header className={styles.detailHeader}>
           <button className={styles.backButton} onClick={closeChannelDetail}>
-            <span>&larr;</span>
+            ← Назад
           </button>
-          <span className={styles.detailHeaderTitle}>@{selectedChannel.username}</span>
           <a
             href={`https://t.me/${selectedChannel.username}`}
             target="_blank"
             rel="noopener noreferrer"
             className={styles.openLink}
           >
-            Открыть
+            Открыть →
           </a>
         </header>
 
         {/* Content - ALL SECTIONS UNIFIED */}
         <div className={styles.detailContent}>
-          {/* Profile Hero */}
+          {/* Profile Hero - v9.0: Nickname near avatar */}
           <div className={styles.detailHero}>
             <Avatar
               username={selectedChannel.username}
@@ -500,21 +458,33 @@ function App() {
               size={56}
             />
             <div className={styles.heroInfo}>
-              <div className={styles.heroScore}>
-                <span className={styles.heroScoreNum}>{selectedChannel.score}</span>
-                <span className={styles.heroScoreMax}>/100</span>
-              </div>
+              {/* v9.0: Nickname moved here from header */}
+              <span className={styles.heroUsername}>@{selectedChannel.username}</span>
+              <span className={styles.heroSubtitle}>
+                {formatNumber(selectedChannel.members)} подп. • Trust ×{selectedChannel.trust_factor.toFixed(2)}
+              </span>
+            </div>
+          </div>
+
+          {/* Score Bar - v9.0: Separate prominent section */}
+          <div className={styles.scoreSection}>
+            <div className={styles.scoreBar}>
+              <div
+                className={styles.scoreBarFill}
+                style={{
+                  width: `${selectedChannel.score}%`,
+                  backgroundColor: getVerdictColor(selectedChannel.verdict)
+                }}
+              />
+            </div>
+            <div className={styles.scoreInfo}>
+              <span className={styles.scoreNumber}>{selectedChannel.score}/100</span>
               <span
-                className={styles.heroVerdict}
+                className={styles.scoreVerdict}
                 style={{ color: getVerdictColor(selectedChannel.verdict) }}
               >
                 {getVerdictText(selectedChannel.verdict)}
               </span>
-            </div>
-            <div className={styles.heroMeta}>
-              <span>{formatNumber(selectedChannel.members)}</span>
-              <span>•</span>
-              <span>Trust ×{selectedChannel.trust_factor.toFixed(2)}</span>
             </div>
           </div>
 
@@ -753,22 +723,12 @@ function App() {
     )
   }
 
-  // Main List View - v6.0 NO BOTTOM TABS
+  // Main List View - v9.0 COMPACT HEADER
   return (
     <div className={styles.app}>
-      {/* Sticky Header */}
+      {/* Sticky Header - v9.0: Compact search + one filter button */}
       <div className={styles.stickyHeader}>
-        <header className={styles.header}>
-          {/* Stats Bar - NO duplicate title! Telegram shows it */}
-          <div className={styles.statsBar}>
-            <span className={styles.statsBadge}>
-              <strong>{stats ? formatNumber(stats.total) : '...'}</strong> каналов
-              {stats && stats.good > 0 && (
-                <span className={styles.statsGood}> • {formatNumber(stats.good)} ✓</span>
-              )}
-            </span>
-          </div>
-
+        <div className={styles.searchRow}>
           {/* Search Bar */}
           <div className={styles.searchBar}>
             <span className={styles.searchIcon}>@</span>
@@ -785,7 +745,7 @@ function App() {
                 className={styles.clearButton}
                 onClick={() => setSearchQuery('')}
               >
-                &times;
+                ×
               </button>
             )}
             <button
@@ -793,94 +753,21 @@ function App() {
               onClick={handleSearch}
               disabled={!searchQuery.trim() || scanning}
             >
-              {scanning ? '...' : '▶'}
+              {scanning ? '...' : '→'}
             </button>
           </div>
-        </header>
-
-        {/* Category Chips + Filter Button */}
-        <div className={styles.categories}>
-          {QUICK_CATEGORIES.map((cat) => (
-            <button
-              key={cat.id || 'all'}
-              className={`${styles.chip} ${selectedCategory === cat.id ? styles.chipSelected : ''}`}
-              onClick={() => handleCategorySelect(cat.id)}
-            >
-              {cat.label}
-            </button>
-          ))}
+          {/* v9.0: Single filter button */}
           <button
-            className={styles.chip}
-            onClick={() => { hapticLight(); setShowCategorySheet(true) }}
-          >
-            ...
-          </button>
-          <button
-            className={`${styles.filterButton} ${activeFilterCount > 0 ? styles.hasFilters : ''}`}
+            className={`${styles.filtersButton} ${activeFilterCount > 0 ? styles.hasFilters : ''}`}
             onClick={() => { hapticLight(); setShowFilterSheet(true) }}
           >
-            ⚙{activeFilterCount > 0 && <span className={styles.filterBadge}>{activeFilterCount}</span>}
+            Фильтры
+            {activeFilterCount > 0 && <span className={styles.filterBadge}>{activeFilterCount}</span>}
           </button>
-        </div>
-
-        {/* Active Filters Chips */}
-        <div className={styles.activeFilters}>
-          <button className={styles.sortChip} onClick={toggleSortField}>
-            {sortBy === 'score' ? 'Score' : 'Подп.'}
-          </button>
-          <button className={styles.sortChip} onClick={toggleSort}>
-            {sortOrder === 'desc' ? '↓' : '↑'}
-          </button>
-          <button
-            className={`${styles.filterChip} ${verdictFilter ? styles.active : ''}`}
-            onClick={toggleVerdictFilter}
-          >
-            {verdictFilter ? 'GOOD+' : 'Все'}
-          </button>
-          {minScore > 0 && (
-            <span className={styles.activeChip}>{minScore}+</span>
-          )}
-          {minTrust > 0 && (
-            <span className={styles.activeChip}>T≥{minTrust}</span>
-          )}
-          {(minMembers > 0 || maxMembers > 0) && (
-            <span className={styles.activeChip}>
-              {minMembers > 0 ? formatNumber(minMembers) : '0'}-{maxMembers > 0 ? formatNumber(maxMembers) : '∞'}
-            </span>
-          )}
-          {hasActiveFilters && (
-            <button className={styles.clearChip} onClick={clearFilters}>×</button>
-          )}
-          <span className={styles.channelCount}>{total}</span>
         </div>
       </div>
 
-      {/* Category Bottom Sheet */}
-      {showCategorySheet && (
-        <>
-          <div className={styles.sheetOverlay} onClick={() => setShowCategorySheet(false)} />
-          <div className={styles.bottomSheet}>
-            <div className={styles.sheetHandle} />
-            <h3 className={styles.sheetTitle}>Категория</h3>
-            <div className={styles.categoryGrid}>
-              {ALL_CATEGORIES.map((cat) => (
-                <button
-                  key={cat.id || 'all'}
-                  className={`${styles.categoryOption} ${selectedCategory === cat.id ? styles.selected : ''}`}
-                  onClick={() => {
-                    handleCategorySelect(cat.id)
-                    setShowCategorySheet(false)
-                  }}
-                >
-                  {cat.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Filter Bottom Sheet - v6.0 EXTENDED */}
+      {/* v9.0: UNIFIED Filter Bottom Sheet with categories */}
       {showFilterSheet && (
         <>
           <div className={styles.sheetOverlay} onClick={() => setShowFilterSheet(false)} />
@@ -891,6 +778,22 @@ function App() {
               <button className={styles.sheetClose} onClick={() => setShowFilterSheet(false)}>×</button>
             </div>
 
+            {/* Category - moved from separate sheet */}
+            <div className={styles.filterGroup}>
+              <label className={styles.filterLabel}>Категория</label>
+              <div className={styles.categoryChips}>
+                {ALL_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.id || 'all'}
+                    className={`${styles.categoryChip} ${selectedCategory === cat.id ? styles.active : ''}`}
+                    onClick={() => setSelectedCategory(cat.id)}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Sort */}
             <div className={styles.filterGroup}>
               <label className={styles.filterLabel}>Сортировка</label>
@@ -899,19 +802,13 @@ function App() {
                   className={`${styles.filterOption} ${sortBy === 'score' ? styles.active : ''}`}
                   onClick={() => setSortBy('score')}
                 >
-                  Score
+                  Score ↓
                 </button>
                 <button
                   className={`${styles.filterOption} ${sortBy === 'members' ? styles.active : ''}`}
                   onClick={() => setSortBy('members')}
                 >
-                  Подп.
-                </button>
-                <button
-                  className={`${styles.filterOption} ${sortBy === 'trust_factor' ? styles.active : ''}`}
-                  onClick={() => setSortBy('trust_factor')}
-                >
-                  Trust
+                  Подписчики
                 </button>
                 <button
                   className={`${styles.filterOption} ${sortBy === 'scanned_at' ? styles.active : ''}`}
@@ -936,11 +833,11 @@ function App() {
               />
             </div>
 
-            {/* Min Trust */}
+            {/* Trust Factor */}
             <div className={styles.filterGroup}>
-              <label className={styles.filterLabel}>Мин. Trust: {minTrust.toFixed(1)}</label>
+              <label className={styles.filterLabel}>Trust Factor</label>
               <div className={styles.trustChips}>
-                {[0, 0.5, 0.7, 0.9].map((t) => (
+                {[0, 0.7, 0.9].map((t) => (
                   <button
                     key={t}
                     className={`${styles.trustChip} ${minTrust === t ? styles.active : ''}`}
@@ -952,50 +849,10 @@ function App() {
               </div>
             </div>
 
-            {/* Verdict */}
-            <div className={styles.filterGroup}>
-              <label className={styles.filterLabel}>Вердикт</label>
-              <div className={styles.verdictToggle}>
-                <button
-                  className={`${styles.verdictOption} ${!verdictFilter ? styles.active : ''}`}
-                  onClick={() => setVerdictFilter(null)}
-                >
-                  Все
-                </button>
-                <button
-                  className={`${styles.verdictOption} ${verdictFilter === 'good_plus' ? styles.active : ''}`}
-                  onClick={() => setVerdictFilter('good_plus')}
-                >
-                  GOOD+
-                </button>
-              </div>
-            </div>
-
-            {/* Members Range */}
-            <div className={styles.filterGroup}>
-              <label className={styles.filterLabel}>Подписчики</label>
-              <div className={styles.rangeInputs}>
-                <input
-                  type="number"
-                  placeholder="от"
-                  value={minMembers || ''}
-                  onChange={(e) => setMinMembers(Number(e.target.value) || 0)}
-                  className={styles.rangeInput}
-                />
-                <span>—</span>
-                <input
-                  type="number"
-                  placeholder="до"
-                  value={maxMembers || ''}
-                  onChange={(e) => setMaxMembers(Number(e.target.value) || 0)}
-                  className={styles.rangeInput}
-                />
-              </div>
-            </div>
-
             {/* Actions */}
             <div className={styles.sheetActions}>
               <button className={styles.filterReset} onClick={() => {
+                setSelectedCategory(null)
                 setMinScore(0)
                 setMinTrust(0)
                 setMinMembers(0)
@@ -1007,7 +864,7 @@ function App() {
                 Сбросить
               </button>
               <button className={styles.filterApply} onClick={applyFilters}>
-                Показать {total}
+                Показать {total} шт.
               </button>
             </div>
           </div>

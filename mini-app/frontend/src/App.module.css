@@ -1,6 +1,6 @@
 /* ============================================
-   REKLAMSHIK MINI APP v7.0
-   Improved typography + unified colors
+   REKLAMSHIK MINI APP v9.0
+   Compact header, unified filters, clean layout
    ============================================ */
 
 /* ============================================
@@ -80,43 +80,51 @@
   padding: var(--spacing-sm) var(--spacing-md);
 }
 
-/* Stats Bar - compact */
-.statsBar {
+/* v9.0: Compact search row with single filter button */
+.searchRow {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--spacing-sm);
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
 }
 
-.appTitle {
-  font-size: var(--font-title);
-  font-weight: 700;
+/* v9.0: Single filter button */
+.filtersButton {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 0 var(--spacing-md);
+  background-color: var(--section-bg);
   color: var(--text-color);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-secondary);
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  position: relative;
+  transition: all 150ms;
 }
 
-.statsBadge {
-  font-size: var(--font-meta);
-  color: var(--hint-color);
+.filtersButton:active {
+  transform: scale(0.97);
 }
 
-.statsBadge strong {
-  color: var(--text-color);
-}
-
-.statsGood {
-  margin-left: var(--spacing-xs);
-  color: var(--verdict-good);
+.filtersButton.hasFilters {
+  background-color: var(--button-color);
+  color: var(--button-text-color);
 }
 
 /* Search Bar - compact 40px */
 .searchBar {
+  flex: 1;  /* v9.0: fill available space */
   display: flex;
   align-items: center;
   background-color: var(--section-bg);
   border-radius: var(--radius-sm);
   padding: 0 var(--spacing-md);
   height: 40px;
-  margin-bottom: var(--spacing-sm);
 }
 
 .searchIcon {
@@ -600,6 +608,31 @@
   color: var(--hint-color);
 }
 
+/* v9.0: Category chips in filter sheet */
+.categoryChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.categoryChip {
+  min-height: 32px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-color);
+  color: var(--hint-color);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-meta);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 150ms;
+}
+
+.categoryChip.active {
+  background: var(--button-color);
+  color: var(--button-text-color);
+}
+
 /* Trust chips */
 .trustChips {
   display: flex;
@@ -722,16 +755,17 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+/* v9.0: Back button with text */
 .backButton {
-  min-width: 40px;
   min-height: 40px;
+  padding: 0 var(--spacing-sm);
   display: flex;
   align-items: center;
-  justify-content: center;
   background: transparent;
   border: none;
   color: var(--link-color);
-  font-size: 22px;
+  font-size: var(--font-body);
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -1455,7 +1489,7 @@
   display: block;
 }
 
-/* Filter Button */
+/* Filter Button - v9.0: removed margin-left: auto */
 .filterButton {
   flex-shrink: 0;
   min-height: 32px;
@@ -1471,7 +1505,6 @@
   align-items: center;
   justify-content: center;
   position: relative;
-  margin-left: auto;
 }
 
 .filterButton.hasFilters {
@@ -1629,43 +1662,66 @@
   margin-bottom: var(--spacing-md);
 }
 
+/* v9.0: Hero info with nickname */
 .heroInfo {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  min-width: 0;
 }
 
-.heroScore {
-  display: flex;
-  align-items: baseline;
-  gap: 2px;
-}
-
-.heroScoreNum {
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--text-color);
-  line-height: 1;
-}
-
-.heroScoreMax {
-  font-size: var(--font-secondary);
-  color: var(--hint-color);
-}
-
-.heroVerdict {
+.heroUsername {
   font-size: var(--font-body);
   font-weight: 600;
+  color: var(--text-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heroSubtitle {
+  font-size: var(--font-secondary);
+  color: var(--hint-color);
   margin-top: 2px;
 }
 
-.heroMeta {
+/* v9.0: Score section - prominent bar */
+.scoreSection {
+  padding: var(--spacing-md);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.scoreBar {
+  height: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: var(--spacing-sm);
+}
+
+.scoreBarFill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 300ms ease;
+}
+
+.scoreInfo {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: var(--spacing-xs);
-  margin-left: auto;
-  font-size: var(--font-secondary);
-  color: var(--hint-color);
+}
+
+.scoreNumber {
+  font-size: var(--font-title);
+  font-weight: 700;
+  color: var(--text-color);
+}
+
+.scoreVerdict {
+  font-size: var(--font-body);
+  font-weight: 600;
 }
 
 /* Card Layout v6.0 */
