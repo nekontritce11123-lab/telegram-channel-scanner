@@ -76,7 +76,7 @@ Type=simple
 User=root
 WorkingDirectory={REMOTE_PATH}
 Environment=PATH={REMOTE_PATH}/venv/bin
-ExecStart={REMOTE_PATH}/venv/bin/uvicorn main:app --host 0.0.0.0 --port 3001
+ExecStart={REMOTE_PATH}/venv/bin/uvicorn main:app --host 0.0.0.0 --port 3002
 Restart=always
 RestartSec=10
 
@@ -119,7 +119,7 @@ WantedBy=multi-user.target
     ssh.close()
 
     print("\nДеплой backend завершён!")
-    print(f"API: http://{BACKEND_HOST}:3001/api/health")
+    print(f"API: http://{BACKEND_HOST}:3002/api/health")
 
 
 if __name__ == "__main__":

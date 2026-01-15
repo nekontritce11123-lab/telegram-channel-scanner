@@ -169,3 +169,259 @@ Both off:         0 comments + 0 reactions + 37 forward = 37
 ### Language
 
 Code comments and documentation are in Russian. User-facing output is in Russian.
+
+---
+
+## Mini App Deployment
+
+### Серверы
+
+| Сервер | IP | Назначение |
+|--------|----|-----------|
+| Frontend | 37.140.192.181 | ads.factchain-traker.online |
+| Backend | 217.60.3.122 | ads-api.factchain-traker.online (порт 3002) |
+
+**ВАЖНО:** Домен `api.factchain-traker.online` принадлежит t-cloud! Reklamshik использует `ads-api.factchain-traker.online`.
+
+### Критические ошибки при деплое (НЕ ПОВТОРЯТЬ!)
+
+#### 1. НИКОГДА не убивать процессы на портах без проверки
+```bash
+# ЗАПРЕЩЕНО - убьёт чужие приложения!
+fuser -k 3001/tcp
+```
+На сервере 217.60.3.122 работают НЕСКОЛЬКО приложений:
+- **t-cloud** (порт 3000, 3001) - НЕ ТРОГАТЬ
+- **subscription-tracker** - НЕ ТРОГАТЬ
+- **reklamshik-api** (порт 3002)
+
+#### 2. Перед деплоем backend ПРОВЕРИТЬ свободный порт
+```bash
+# Сначала проверь что на порте
+ss -tlnp | grep 3002
+# Если занят - НЕ УБИВАТЬ, а выбрать другой порт
+```
+
+#### 3. Nginx конфликты доменов
+На сервере несколько nginx конфигов могут иметь ОДИН домен.
+Проверка:
+```bash
+nginx -T 2>/dev/null | grep -A5 "server_name api.factchain"
+```
+Если несколько блоков с одним server_name — будет конфликт. Первый загруженный выиграет.
+
+**ВАЖНО:** НЕ создавать nginx конфиг для reklamshik-api с доменом api.factchain-traker.online — этот домен принадлежит t-cloud!
+
+#### 4. Не забывать симлинки nginx
+```bash
+# После создания конфига ОБЯЗАТЕЛЬНО создать симлинк
+ln -sf /etc/nginx/sites-available/reklamshik-api /etc/nginx/sites-enabled/
+nginx -t && nginx -s reload
+```
+
+#### 5. Миграции БД перед деплоем
+Если в коде есть новые колонки (например `photo_url`), СНАЧАЛА запустить миграцию:
+```python
+# На сервере
+cursor.execute("ALTER TABLE channels ADD COLUMN photo_url TEXT DEFAULT NULL")
+```
+Иначе будет `sqlite3.OperationalError: no such column`
+
+#### 6. База данных находится в /root/reklamshik/crawler.db
+НЕ в mini-app/backend/! При деплое копируется только код, БД остаётся на месте.
+
+### Чеклист деплоя Mini App
+
+1. [ ] Проверить что порт 3002 свободен или занят reklamshik-api
+2. [ ] Запустить миграции БД если есть новые колонки
+3. [ ] Создать/проверить симлинк nginx в sites-enabled
+4. [ ] Убедиться что нет конфликта доменов с другими конфигами
+5. [ ] `nginx -t && nginx -s reload`
+6. [ ] Проверить API: `curl https://api.factchain-traker.online/api/health`
+7. [ ] Проверить каналы: `curl https://api.factchain-traker.online/api/channels`
+
+### UI ошибки
+
+1. **justify-content: center в flex контейнере** — если контейнер занимает 100% высоты, контент будет висеть посередине с пустым пространством сверху и снизу
+2. **margin-left: auto** — создаёт огромный разрыв между элементами в flex row
+3. **Увеличивать размеры постепенно** — не делать сразу +50%, проверять на реальном устройстве
+4. **Не использовать один зелёный цвет везде** — цены, вердикты, успехи должны иметь разные цвета для визуального различия
+
+---
+
+## Mini App v7.0 (2026-01-15)
+
+### Формула расчёта цен за пост
+
+```python
+# v7.0: Цена за 1000 подписчиков
+BASE_PER_1K = {
+    "CRYPTO": {"min": 800, "max": 1500},
+    "TECH": {"min": 700, "max": 1400},
+    "FINANCE": {"min": 600, "max": 1200},
+    ...
+}
+
+def calculate_post_price(category, members, trust_factor, score):
+    base = BASE_PER_1K[category]
+    size_k = members / 1000
+
+    # Нелинейный коэффициент размера
+    if size_k <= 1:     size_mult = 1.2   # Микро: небольшой премиум
+    elif size_k <= 5:   size_mult = 1.0   # Малые: стандарт
+    elif size_k <= 20:  size_mult = 0.85  # Средние
+    elif size_k <= 50:  size_mult = 0.7   # Большие
+    elif size_k <= 100: size_mult = 0.55  # Крупные
+    else:               size_mult = 0.4   # Огромные
+
+    # Quality mult: экспоненциальный рост
+    # Score 50 = 1.0x, Score 80 = 2.5x, Score 100 = 4.0x
+    quality_mult = 0.5 + (score/100)**1.5 * 3.5
+
+    price = base * size_k * size_mult * quality_mult * trust_factor
+```
+
+**Калибровка:**
+- 950 subs, score 82, крипто = 2,800-5,300₽ (пользователь продаёт за 3000₽ ✓)
+- 22K subs, score 79, крипто = 36K-68K₽ (было 2K-5K₽ — НЕПРАВИЛЬНО!)
+
+### Детальный Breakdown (13 метрик)
+
+API endpoint `/api/channels/{username}` теперь возвращает:
+
+```json
+{
+  "breakdown": {
+    "quality": {
+      "total": 35, "max": 40,
+      "items": {
+        "cv_views": {"score": 13, "max": 15, "label": "CV просмотров"},
+        "reach": {"score": 8, "max": 10, "label": "Охват"},
+        "views_decay": {"score": 7, "max": 8, "label": "Стабильность"},
+        "forward_rate": {"score": 7, "max": 7, "label": "Репосты"}
+      }
+    },
+    "engagement": {
+      "total": 35, "max": 40,
+      "items": {
+        "comments": {"score": 13, "max": 15, "label": "Комментарии"},
+        "reaction_rate": {"score": 13, "max": 15, "label": "Реакции"},
+        "er_variation": {"score": 4, "max": 5, "label": "Разнообразие"},
+        "stability": {"score": 5, "max": 5, "label": "Стабильность ER"}
+      }
+    },
+    "reputation": {
+      "total": 17, "max": 20,
+      "items": {
+        "verified": {"score": 4, "max": 5, "label": "Верификация"},
+        "age": {"score": 4, "max": 5, "label": "Возраст"},
+        "premium": {"score": 4, "max": 5, "label": "Премиумы"},
+        "source": {"score": 5, "max": 5, "label": "Оригинальность"}
+      }
+    }
+  },
+  "price_estimate": {
+    "min": 66320, "max": 132640,
+    "base_price": 700,
+    "size_mult": 0.55,
+    "quality_mult": 3.44,
+    "trust_mult": 1.0
+  },
+  "trust_penalties": []
+}
+```
+
+### CSS v7.0
+
+```css
+/* Увеличенные шрифты (+20-30% от v6.0) */
+--font-title: clamp(22px, 4vw, 28px);
+--font-body: clamp(15px, 2.5vw, 17px);
+--font-secondary: clamp(13px, 2vw, 15px);
+--font-meta: clamp(12px, 1.5vw, 14px);
+
+/* Увеличенные отступы */
+--spacing-sm: 8px;
+--spacing-md: 14px;
+
+/* Progress bars 10px высотой */
+.breakdownBar { height: 10px; }
+```
+
+### Унификация цветов (убрать зелёный хаос)
+
+```css
+/* БЫЛО (v6.0) - всё зелёное: */
+.priceMain { color: var(--verdict-excellent); }
+.noRisks { color: var(--verdict-excellent); }
+.verdictOption.active { background: var(--verdict-excellent); }
+
+/* СТАЛО (v7.0) - разные цвета: */
+.priceMain { color: var(--text-color); }  /* Белый */
+.noRisks { color: var(--accent); }        /* Telegram accent */
+.verdictOption.active { background: var(--button-color); }
+```
+
+### КРИТИЧЕСКИЕ ОШИБКИ ДЕПЛОЯ — НЕ ПОВТОРЯТЬ!
+
+1. **НИКОГДА не убивать процессы на портах без проверки!**
+   - На сервере 217.60.3.122 порт 3001 занят Node.js (t-cloud бот)
+   - Reklamshik API должен работать на порту **3002** (см. nginx config)
+   - Если видишь "Address already in use" — НЕ УБИВАТЬ процесс, а изменить порт!
+
+2. **Порты на сервере 217.60.3.122:**
+   - 3000 — ЗАНЯТ (t-cloud API) — НЕ ТРОГАТЬ!
+   - 3001 — ЗАНЯТ — НЕ ТРОГАТЬ!
+   - 3002 — reklamshik-api (FastAPI/uvicorn)
+
+3. **Что произошло 2026-01-15:**
+   - При деплое reklamshik-api пытался запуститься на порту 3001
+   - Claude убил Node.js процесс (PID 689483) думая что это старый reklamshik
+   - На самом деле это был t-cloud бот пользователя
+   - Правильное решение: изменить порт uvicorn на 3002 (как в nginx config)
+
+4. **Nginx конфликт доменов (ВТОРОЙ СБОЙ 2026-01-15):**
+   - На сервере было ДВА nginx конфига для `api.factchain-traker.online`:
+     - `t-cloud` → проксирует на порт 3000 (t-cloud backend)
+     - `reklamshik-api` → проксирует на порт 3002 (reklamshik)
+   - Nginx загружает конфиги в АЛФАВИТНОМ порядке
+   - `reklamshik-api` загружался раньше `t-cloud` → перехватывал запросы → "Not Found"
+   - После удаления симлинка reklamshik-api и перезапуска — сломался SSL конфиг t-cloud
+   - **НИКОГДА не трогать nginx конфиги других сервисов!**
+   - **Домен api.factchain-traker.online принадлежит t-cloud, НЕ reklamshik!**
+
+---
+
+## Ошибки v7.0 (2026-01-15)
+
+### 1. API 502 Bad Gateway после деплоя
+**Проблема:** После `systemctl restart reklamshik-api` API возвращает 502.
+**Причина:** Uvicorn/FastAPI ещё запускается (занимает 10-30 секунд).
+**Решение:** Подождать 30 секунд и проверить снова:
+```bash
+sleep 30 && curl https://ads-api.factchain-traker.online/api/health
+```
+
+### 2. Формула цены v6.0 была НЕПРАВИЛЬНОЙ
+**Проблема:** 22K крипто канал показывал цену 2K-5K₽, а микро-канал 950 subs продаётся за 3000₽.
+**Причина:** Старая формула: `base × (members/50000)^0.7 × quality` — давала слишком низкие цены.
+**Решение v7.0:** Новая формула с BASE_PER_1K и нелинейными коэффициентами размера.
+
+### 3. "Зелёный хаос" в UI
+**Проблема:** Цены, вердикты, успехи, риски — всё зелёного цвета (--verdict-excellent).
+**Причина:** Копипаста CSS без учёта семантики цветов.
+**Решение v7.0:**
+- `.priceMain` → `var(--text-color)` (белый)
+- `.noRisks` → `var(--accent)` (Telegram accent)
+- `.verdictOption.active` → `var(--button-color)`
+
+### 4. Слишком мелкий текст на мобильных
+**Проблема:** Шрифт 13px нечитаем на iPhone.
+**Решение v7.0:** Увеличить на 20-30%:
+```css
+--font-body: clamp(15px, 2.5vw, 17px);  /* было 13px */
+```
+
+### 5. Показывали только 3 метрики из 13
+**Проблема:** UI показывал Quality/Engagement/Reputation агрегаты, не детали.
+**Решение v7.0:** Добавить breakdown с 13 метриками (cv_views, reach, comments, reactions, etc.)

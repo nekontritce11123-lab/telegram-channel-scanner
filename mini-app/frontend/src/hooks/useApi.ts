@@ -1,8 +1,14 @@
 import { useState, useCallback } from 'react'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'https://api.factchain-traker.online'
+const API_BASE = import.meta.env.VITE_API_BASE || 'https://ads-api.factchain-traker.online'
 
 // Types
+export interface Recommendation {
+  type: 'cpm' | 'tip' | 'warning' | 'success'
+  icon: string
+  text: string
+}
+
 export interface Channel {
   username: string
   score: number
@@ -14,6 +20,64 @@ export interface Channel {
   scanned_at: string | null
   cpm_min: number | null
   cpm_max: number | null
+  photo_url: string | null
+}
+
+// v7.0: Detailed breakdown structure
+export interface MetricItem {
+  score: number
+  max: number
+  label: string
+  value?: string  // Optional human-readable value (e.g., "2 года")
+}
+
+export interface BreakdownCategory {
+  total: number
+  max: number
+  items: Record<string, MetricItem>
+}
+
+export interface Breakdown {
+  quality: BreakdownCategory
+  engagement: BreakdownCategory
+  reputation: BreakdownCategory
+}
+
+// Legacy simple breakdown (for backwards compatibility)
+export interface BreakdownItem {
+  score: number
+  max: number
+}
+
+export interface TrustPenalty {
+  name: string
+  multiplier: number
+  description: string
+}
+
+export interface PriceEstimate {
+  min: number
+  max: number
+  base_price: number
+  size_mult: number
+  quality_mult: number
+  trust_mult: number
+}
+
+export interface CategoryRank {
+  position: number
+  total: number
+  avg_score: number
+}
+
+export interface ChannelDetail extends Channel {
+  recommendations: Recommendation[]
+  status?: string
+  source?: string
+  breakdown?: Breakdown
+  trust_penalties?: TrustPenalty[]
+  price_estimate?: PriceEstimate
+  category_rank?: CategoryRank
 }
 
 export interface ChannelListResponse {
@@ -51,7 +115,9 @@ export interface ChannelFilters {
   max_score?: number
   min_members?: number
   max_members?: number
-  sort_by?: 'score' | 'members' | 'scanned_at'
+  min_trust?: number  // v6.0: min Trust Factor (0.0-1.0)
+  verdict?: 'good_plus' | null  // v6.0: good_plus = EXCELLENT + GOOD only
+  sort_by?: 'score' | 'members' | 'scanned_at' | 'trust_factor'
   sort_order?: 'asc' | 'desc'
   page?: number
   page_size?: number
@@ -150,7 +216,7 @@ export function useStats() {
 }
 
 export function useScan() {
-  const [result, setResult] = useState<Channel | null>(null)
+  const [result, setResult] = useState<ChannelDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -161,7 +227,7 @@ export function useScan() {
 
     try {
       // Сначала пробуем получить из базы
-      const data = await fetchAPI<Channel>(`/api/channels/${username}`)
+      const data = await fetchAPI<ChannelDetail>(`/api/channels/${username}`)
       setResult(data)
     } catch {
       // Если нет в базе - пока показываем ошибку

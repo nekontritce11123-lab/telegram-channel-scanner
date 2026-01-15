@@ -43,6 +43,7 @@ class ChannelRecord:
     ad_links: list = None
     category: str = None  # v18.0: AI категория (основная)
     category_secondary: str = None  # v18.0: Вторичная категория (multi-label)
+    photo_url: str = None  # v19.0: URL аватарки канала
     scanned_at: datetime = None
     created_at: datetime = None
 
@@ -98,6 +99,9 @@ class CrawlerDB:
         # v18.0: Миграция - добавляем колонку category_secondary для multi-label
         self._migrate_add_category_secondary()
 
+        # v19.0: Миграция - добавляем колонку photo_url для аватарок
+        self._migrate_add_photo_url()
+
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category_secondary ON channels(category_secondary)')
@@ -126,6 +130,18 @@ class CrawlerDB:
             if 'category_secondary' not in columns:
                 cursor.execute("ALTER TABLE channels ADD COLUMN category_secondary TEXT DEFAULT NULL")
                 print("Миграция v18.0: добавлена колонка category_secondary")
+        except sqlite3.Error:
+            pass
+
+    def _migrate_add_photo_url(self):
+        """Миграция v19.0: добавляет колонку photo_url для аватарок каналов."""
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("PRAGMA table_info(channels)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'photo_url' not in columns:
+                cursor.execute("ALTER TABLE channels ADD COLUMN photo_url TEXT DEFAULT NULL")
+                print("Миграция v19.0: добавлена колонка photo_url")
         except sqlite3.Error:
             pass
 
@@ -194,7 +210,8 @@ class CrawlerDB:
         members: int = 0,
         ad_links: list = None,
         category: str = None,
-        category_secondary: str = None
+        category_secondary: str = None,
+        photo_url: str = None
     ):
         """
         Помечает канал как проверенный.
@@ -208,6 +225,7 @@ class CrawlerDB:
             ad_links: Список найденных рекламных ссылок
             category: AI категория основная (CRYPTO, NEWS, TECH и т.д.)
             category_secondary: AI категория вторичная (для multi-label)
+            photo_url: URL аватарки канала (Telegram CDN)
         """
         username = username.lower().lstrip('@')
         ad_links_json = json.dumps(ad_links or [])
@@ -223,9 +241,10 @@ class CrawlerDB:
                 ad_links = ?,
                 category = ?,
                 category_secondary = ?,
+                photo_url = ?,
                 scanned_at = ?
             WHERE username = ?
-        ''', (status, score, verdict, trust_factor, members, ad_links_json, category, category_secondary, datetime.now(), username))
+        ''', (status, score, verdict, trust_factor, members, ad_links_json, category, category_secondary, photo_url, datetime.now(), username))
         self.conn.commit()
 
     def set_category(self, username: str, category: str, category_secondary: str = None):
@@ -273,6 +292,7 @@ class CrawlerDB:
             ad_links=json.loads(row['ad_links']) if row['ad_links'] else [],
             category=row['category'] if 'category' in row.keys() else None,
             category_secondary=row['category_secondary'] if 'category_secondary' in row.keys() else None,
+            photo_url=row['photo_url'] if 'photo_url' in row.keys() else None,
             scanned_at=row['scanned_at'],
             created_at=row['created_at']
         )
@@ -323,6 +343,7 @@ class CrawlerDB:
                 ad_links=json.loads(row['ad_links']) if row['ad_links'] else [],
                 category=row['category'] if 'category' in row.keys() else None,
                 category_secondary=row['category_secondary'] if 'category_secondary' in row.keys() else None,
+                photo_url=row['photo_url'] if 'photo_url' in row.keys() else None,
                 scanned_at=row['scanned_at'],
                 created_at=row['created_at']
             ))
