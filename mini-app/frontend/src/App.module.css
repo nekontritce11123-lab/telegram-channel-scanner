@@ -7,15 +7,15 @@
    1. CSS VARIABLES - TELEGRAM THEME
    ============================================ */
 :root {
-  /* Telegram theme colors (with fallbacks) */
-  --bg-color: var(--tg-theme-bg-color, #18222d);
+  /* Telegram theme colors (with fallbacks matching Telegram Dark theme) */
+  --bg-color: var(--tg-theme-bg-color, #1c1c1e);
   --text-color: var(--tg-theme-text-color, #ffffff);
-  --hint-color: var(--tg-theme-hint-color, #708499);
-  --button-color: var(--tg-theme-button-color, #5288c1);
+  --hint-color: var(--tg-theme-hint-color, #8e8e93);
+  --button-color: var(--tg-theme-button-color, #3390ec);
   --button-text-color: var(--tg-theme-button-text-color, #ffffff);
-  --section-bg: var(--tg-theme-section-bg-color, #232e3c);
-  --accent: var(--tg-theme-accent-text-color, #5288c1);
-  --link-color: var(--tg-theme-link-color, #5288c1);
+  --section-bg: var(--tg-theme-section-bg-color, #2c2c2e);
+  --accent: var(--tg-theme-accent-text-color, #3390ec);
+  --link-color: var(--tg-theme-link-color, #3390ec);
 
   /* Verdict colors */
   --verdict-excellent: #34c759;
@@ -897,31 +897,53 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* v9.0: Back button with text */
+/* v12.3: Redesigned header buttons */
 .backButton {
-  min-height: 40px;
+  min-height: 36px;
   padding: 0 var(--spacing-sm);
   display: flex;
   align-items: center;
+  gap: 4px;
   background: transparent;
   border: none;
-  color: var(--link-color);
-  font-size: var(--font-body);
+  color: var(--hint-color);
+  font-size: var(--font-secondary);
   font-weight: 500;
   cursor: pointer;
+  transition: color 150ms, opacity 150ms;
+}
+
+.backButton:hover {
+  color: var(--text-color);
+}
+
+.backButton:active {
+  opacity: 0.7;
 }
 
 .openLink {
-  min-height: 36px;
+  min-height: 32px;
   padding: 0 var(--spacing-md);
   display: flex;
   align-items: center;
-  background: var(--button-color);
-  color: var(--button-text-color);
+  gap: 4px;
+  background: transparent;
+  color: var(--text-color);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: var(--radius-sm);
   font-size: var(--font-secondary);
   font-weight: 500;
   text-decoration: none;
+  transition: all 150ms;
+}
+
+.openLink:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.openLink:active {
+  transform: scale(0.97);
 }
 
 .detailContent {
@@ -2188,9 +2210,18 @@
   color: var(--button-color);
 }
 
+/* v12.3: SVG иконки вместо эмодзи */
 .navIcon {
-  font-size: 20px;
-  line-height: 1;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.navIcon svg {
+  width: 100%;
+  height: 100%;
 }
 
 .navLabel {
@@ -2633,6 +2664,15 @@
 .categoryIcon {
   width: 12px;
   height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.categoryIcon svg {
+  width: 100%;
+  height: 100%;
 }
 
 
@@ -2669,11 +2709,11 @@
   color: var(--text-color);
 }
 
-/* Синий кружок с галочкой справа-сверху */
+/* v12.3: Галочка НА кольце (не снаружи) */
 .verifiedBadge {
   position: absolute;
-  top: -2px;
-  right: -2px;
+  top: 4px;
+  right: 4px;
   width: 20px;
   height: 20px;
   background-color: #5fbdf9;
@@ -2713,8 +2753,8 @@
 }
 
 .scoreRingLarge .verifiedBadge {
-  top: -3px;
-  right: -3px;
+  top: 8px;
+  right: 8px;
   width: 24px;
   height: 24px;
 }
@@ -2722,4 +2762,303 @@
 .scoreRingLarge .verifiedBadge svg {
   width: 14px;
   height: 14px;
+}
+
+/* ============================================
+   29. v12.0: НОВАЯ ДЕТАЛЬНАЯ СТРАНИЦА
+   ============================================ */
+
+/* Hero Section - Avatar + Name + ScoreRing */
+.detailHeroNew {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.heroNameBlock {
+  flex: 1;
+  min-width: 0;
+}
+
+.heroName {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heroHandle {
+  font-size: var(--font-secondary);
+  color: var(--hint-color);
+  margin-top: 2px;
+}
+
+/* Status Banner - Safe/Warning/Danger */
+.statusBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.statusBanner.safe {
+  background: rgba(52, 199, 89, 0.15);
+  border-left: 3px solid var(--verdict-excellent);
+}
+
+.statusBanner.warning {
+  background: rgba(255, 204, 0, 0.15);
+  border-left: 3px solid var(--verdict-medium);
+}
+
+.statusBanner.danger {
+  background: rgba(255, 59, 48, 0.15);
+  border-left: 3px solid var(--verdict-scam);
+}
+
+.statusIcon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.statusText {
+  font-size: var(--font-secondary);
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+/* Stats Row - 3 карточки */
+.statsRow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.statCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--spacing-md);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.statLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--hint-color);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.statValue {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-color);
+  margin: 4px 0 2px;
+  white-space: nowrap;
+}
+
+/* v12.2: Уменьшить шрифт цены на мобильных чтобы влезало */
+.statCard:first-child .statValue {
+  font-size: 14px;
+}
+
+@media (min-width: 600px) {
+  .statCard:first-child .statValue {
+    font-size: 18px;
+  }
+}
+
+.statSubtext {
+  font-size: 11px;
+  color: var(--hint-color);
+}
+
+/* Metrics Grid - v12.1: 3 блока с адаптивной раскладкой */
+.metricsGrid {
+  display: grid;
+  /* Мобильные: 2 колонки */
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+/* ПК (>600px): 3 колонки в ряд */
+@media (min-width: 600px) {
+  .metricsGrid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Репутация на мобильных занимает всю ширину */
+.metricsBlock:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 600px) {
+  .metricsBlock:nth-child(3) {
+    grid-column: auto;
+  }
+}
+
+.metricsBlock {
+  padding: var(--spacing-md);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.metricsBlockTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--spacing-sm);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.metricsBlockScore {
+  font-size: 12px;
+  color: var(--text-color);
+  font-weight: 500;
+}
+
+/* Metric Item with progress bar */
+.metricItem {
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.metricItem:last-child {
+  margin-bottom: 0;
+}
+
+.metricItemHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.metricItemLabel {
+  font-size: 13px;
+  color: var(--text-color);
+}
+
+.metricItemValue {
+  font-size: 13px;
+  color: var(--hint-color);
+}
+
+.metricBar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.metricBarFill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 300ms ease;
+}
+
+.metricBarFill.excellent {
+  background: var(--verdict-excellent);
+}
+
+.metricBarFill.good {
+  background: var(--verdict-good);
+}
+
+.metricBarFill.warning {
+  background: var(--verdict-medium);
+}
+
+.metricBarFill.poor {
+  background: var(--verdict-scam);
+}
+
+/* v12.1: Recommendations Section */
+.recommendationsSection {
+  padding: var(--spacing-md);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.recommendationsTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--spacing-sm);
+}
+
+.recItemNew {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--spacing-xs);
+  border-left: 3px solid var(--hint-color);
+}
+
+.recItemNew:last-child {
+  margin-bottom: 0;
+}
+
+.recItemNew.rec_success {
+  border-left-color: var(--verdict-excellent);
+}
+
+.recItemNew.rec_tip {
+  border-left-color: var(--button-color);
+}
+
+.recItemNew.rec_warning {
+  border-left-color: var(--verdict-high-risk);
+}
+
+.recItemNew.rec_cpm {
+  border-left-color: var(--verdict-good);
+}
+
+.recIconNew {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.recTextNew {
+  font-size: var(--font-secondary);
+  color: var(--text-color);
+  line-height: 1.3;
+}
+
+/* Detail Footer */
+.detailFooter {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--spacing-sm) 0;
+  font-size: var(--font-meta);
+  color: var(--hint-color);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  margin-top: var(--spacing-md);
 }

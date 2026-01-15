@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, JSX } from 'react'
 import { useTelegram } from './hooks/useTelegram'
 import { useChannels, useStats, useScan, Channel, ChannelDetail, ChannelFilters } from './hooks/useApi'
 import styles from './App.module.css'
@@ -32,6 +32,32 @@ const CATEGORY_NAMES: Record<string, string> = Object.fromEntries(
   ALL_CATEGORIES.filter(c => c.id).map(c => [c.id!, c.label])
 )
 
+// v12.3: SVG иконки для категорий
+const CATEGORY_ICONS: Record<string, JSX.Element> = {
+  CRYPTO: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M14.8 9a2 2 0 0 0-1.8-1h-2a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4h-2a2 2 0 0 1-1.8-1M12 6v2m0 8v2"/></svg>,
+  FINANCE: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>,
+  REAL_ESTATE: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
+  BUSINESS: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
+  TECH: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>,
+  AI_ML: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>,
+  EDUCATION: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 2 2 3 6 3s6-1 6-3v-5"/></svg>,
+  BEAUTY: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.937A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.582a.5.5 0 0 1 0 .962L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>,
+  HEALTH: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>,
+  TRAVEL: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
+  RETAIL: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18M16 10a4 4 0 0 1-8 0"/></svg>,
+  ENTERTAINMENT: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>,
+  NEWS: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/></svg>,
+  LIFESTYLE: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>,
+  GAMBLING: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M16 8h.01M8 8h.01M8 16h.01M16 16h.01M12 12h.01"/></svg>,
+  ADULT: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/></svg>,
+  OTHER: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5ZM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>,
+}
+
+// v12.3: Получить иконку категории
+function getCategoryIcon(category: string): JSX.Element | null {
+  return CATEGORY_ICONS[category] || null
+}
+
 // Get category name
 function getCategoryName(category: string): string {
   return CATEGORY_NAMES[category] || category
@@ -63,13 +89,6 @@ function getVerdictColor(verdict: string): string {
     case 'SCAM': return 'var(--verdict-scam)'
     default: return 'var(--hint-color)'
   }
-}
-
-// v10.0: Trust label — понятный текст вместо ×1.00
-function getTrustLabel(trust: number): { text: string; color: string } {
-  if (trust >= 0.9) return { text: 'высокое', color: 'var(--verdict-excellent)' }
-  if (trust >= 0.7) return { text: 'среднее', color: 'var(--verdict-medium)' }
-  return { text: 'низкое', color: 'var(--verdict-scam)' }
 }
 
 // Avatar colors
@@ -108,19 +127,45 @@ function estimateER(members: number, score: number): number {
   return Math.round(er * 10) / 10
 }
 
-// v11.0: Traffic Light system
-function getTrafficLight(score: number, max: number): { emoji: string; color: 'green' | 'yellow' | 'red' } {
-  const pct = (score / max) * 100
-  if (pct >= 70) return { emoji: '🟢', color: 'green' }
-  if (pct >= 40) return { emoji: '🟡', color: 'yellow' }
-  return { emoji: '🔴', color: 'red' }
+// v12.0: Status banner based on trust and risks
+function getStatusBanner(trustFactor: number, risksCount: number): { type: 'safe' | 'warning' | 'danger'; icon: string; text: string } {
+  if (trustFactor >= 0.9 && risksCount === 0) {
+    return { type: 'safe', icon: '✓', text: 'Рисков не обнаружено. Канал безопасен.' }
+  }
+  if (trustFactor >= 0.7) {
+    return { type: 'warning', icon: '⚠️', text: `Обнаружено ${risksCount} ${risksCount === 1 ? 'риск' : risksCount < 5 ? 'риска' : 'рисков'}` }
+  }
+  return { type: 'danger', icon: '🚨', text: 'Высокий риск!' }
 }
 
-// v11.0: Alert severity based on multiplier
-function getAlertSeverity(multiplier: number): 'critical' | 'warning' | 'info' {
-  if (multiplier < 0.7) return 'critical'
-  if (multiplier < 0.9) return 'warning'
-  return 'info'
+// v12.0: Members size label
+function getMembersSizeLabel(members: number): string {
+  if (members < 5000) return 'Микро'
+  if (members < 20000) return 'Малый'
+  if (members < 50000) return 'Средний'
+  if (members < 100000) return 'Большой'
+  return 'Крупный'
+}
+
+// v12.0: ER quality label
+function getERLabel(er: number): string {
+  if (er >= 15) return 'Высокий'
+  if (er >= 5) return 'Норма'
+  return 'Низкий'
+}
+
+// v12.0: Format channel name (capitalize, replace underscores)
+function formatChannelName(username: string): string {
+  return username.charAt(0).toUpperCase() + username.slice(1).replace(/_/g, ' ')
+}
+
+// v12.0: Get color class for metric bar
+function getMetricColorClass(score: number, max: number): string {
+  const pct = (score / max) * 100
+  if (pct >= 70) return 'excellent'
+  if (pct >= 50) return 'good'
+  if (pct >= 30) return 'warning'
+  return 'poor'
 }
 
 // v11.5: ScoreRing компонент для карточек (SVG circle с прогрессом)
@@ -274,6 +319,27 @@ function SkeletonCard() {
   )
 }
 
+// v12.0: MetricItem component with progress bar
+function MetricItem({ item, onClick }: { item: { score: number; max: number; label: string }; onClick: () => void }) {
+  const pct = (item.score / item.max) * 100
+  const colorClass = getMetricColorClass(item.score, item.max)
+
+  return (
+    <div className={styles.metricItem} onClick={onClick} role="button" tabIndex={0}>
+      <div className={styles.metricItemHeader}>
+        <span className={styles.metricItemLabel}>{item.label}</span>
+        <span className={styles.metricItemValue}>{item.score}/{item.max}</span>
+      </div>
+      <div className={styles.metricBar}>
+        <div
+          className={`${styles.metricBarFill} ${styles[colorClass]}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const { webApp, hapticLight, hapticMedium, hapticSuccess, hapticError } = useTelegram()
   const { channels, total, loading, error, hasMore, fetchChannels, reset } = useChannels()
@@ -295,7 +361,6 @@ function App() {
   const [showFilterSheet, setShowFilterSheet] = useState(false)  // v9.0: single unified filter sheet
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null)  // v8.0: Modal state
   const [activeTab, setActiveTab] = useState<'search' | 'history' | 'watchlist' | 'profile'>('search')  // v11.0: Bottom Nav
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())  // v11.0: Accordions
 
   const gridRef = useRef<HTMLDivElement>(null)
   const isInitialized = useRef(false)
@@ -439,19 +504,6 @@ function App() {
     }
   }, [scanError, hapticError])
 
-  // v11.0: Toggle accordion category
-  const toggleCategory = useCallback((cat: string) => {
-    setExpandedCategories(prev => {
-      const next = new Set(prev)
-      if (next.has(cat)) {
-        next.delete(cat)
-      } else {
-        next.add(cat)
-      }
-      return next
-    })
-  }, [])
-
   // Has active filters
   const hasActiveFilters = selectedCategory || minScore > 0 || minTrust > 0 ||
     minMembers > 0 || maxMembers > 0 || verdictFilter || sortBy !== 'score'
@@ -501,11 +553,15 @@ function App() {
     return risks
   }, [selectedChannel])
 
-  // Channel Detail Page - v9.0 COMPACT LAYOUT
+  // v12.0: Compute ER and status banner
+  const channelER = selectedChannel ? estimateER(selectedChannel.members, selectedChannel.score) : 0
+  const statusBanner = selectedChannel ? getStatusBanner(selectedChannel.trust_factor, mockRisks.length) : null
+
+  // Channel Detail Page - v12.0 NEW LAYOUT
   if (selectedChannel) {
     return (
       <div className={styles.detailPage}>
-        {/* Header - v9.0: Compact, no nickname */}
+        {/* Header */}
         <header className={styles.detailHeader}>
           <button className={styles.backButton} onClick={closeChannelDetail}>
             ← Назад
@@ -520,30 +576,19 @@ function App() {
           </a>
         </header>
 
-        {/* Content - ALL SECTIONS UNIFIED */}
+        {/* Content */}
         <div className={styles.detailContent}>
-          {/* v11.0: Hero with Speedometer instead of badge */}
-          <div className={styles.heroWithSpeedometer}>
+          {/* v12.0: New Hero Section - Avatar + Name + ScoreRing */}
+          <div className={styles.detailHeroNew}>
             <Avatar
               username={selectedChannel.username}
               photoUrl={selectedChannel.photo_url}
-              size={56}
+              size={64}
             />
-            <div className={styles.heroInfoCompact}>
-              <span className={styles.heroUsername}>@{selectedChannel.username}</span>
-              <span className={styles.heroSubtitle}>
-                {formatNumber(selectedChannel.members)} • {selectedChannel.trust_factor >= 0.9 ? '🛡️' : '⚠️'}{' '}
-                <span style={{ color: getTrustLabel(selectedChannel.trust_factor).color }}>
-                  {getTrustLabel(selectedChannel.trust_factor).text}
-                </span>
-              </span>
-              {selectedChannel.cpm_min && selectedChannel.cpm_max && (
-                <span className={styles.heroPrice}>
-                  💰 {formatPrice(selectedChannel.cpm_min, selectedChannel.cpm_max)}
-                </span>
-              )}
+            <div className={styles.heroNameBlock}>
+              <div className={styles.heroName}>{formatChannelName(selectedChannel.username)}</div>
+              <div className={styles.heroHandle}>@{selectedChannel.username}</div>
             </div>
-            {/* v11.5: Единый ScoreRing (большой размер) */}
             <ScoreRing
               score={selectedChannel.score}
               verdict={selectedChannel.verdict}
@@ -552,166 +597,110 @@ function App() {
             />
           </div>
 
-          {/* v11.0: Key Alerts Block */}
-          <div className={styles.alertsSection}>
-            {mockRisks.length > 0 ? (
-              <>
-                <div className={styles.alertsHeader}>
-                  ⚠️ Риски ({mockRisks.length})
-                </div>
-                {mockRisks.map((risk, i) => {
-                  const severity = getAlertSeverity(risk.multiplier)
-                  return (
-                    <div key={i} className={`${styles.alertCard} ${styles[severity]}`}>
-                      <span className={styles.alertIcon}>
-                        {severity === 'critical' ? '🚨' : '⚠️'}
-                      </span>
-                      <div className={styles.alertContent}>
-                        <div className={styles.alertTitle}>
-                          <span>{risk.name}</span>
-                          <span className={`${styles.alertMult} ${styles[severity]}`}>
-                            ×{risk.multiplier.toFixed(2)}
-                          </span>
-                        </div>
-                        <div className={styles.alertDesc}>{risk.description}</div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </>
-            ) : (
-              <div className={styles.noAlertsCard}>
-                <span>🛡️</span>
-                <span className={styles.noAlertsText}>Рисков не обнаружено</span>
-              </div>
-            )}
+          {/* v12.0: Status Banner */}
+          {statusBanner && (
+            <div className={`${styles.statusBanner} ${styles[statusBanner.type]}`}>
+              <span className={styles.statusIcon}>{statusBanner.icon}</span>
+              <span className={styles.statusText}>{statusBanner.text}</span>
+            </div>
+          )}
+
+          {/* v12.0: Stats Row - 3 cards */}
+          <div className={styles.statsRow}>
+            <div className={styles.statCard}>
+              <span className={styles.statLabel}>ЦЕНА</span>
+              <span className={styles.statValue}>
+                {selectedChannel.cpm_min && selectedChannel.cpm_max
+                  ? formatPrice(selectedChannel.cpm_min, selectedChannel.cpm_max)
+                  : '—'}
+              </span>
+              <span className={styles.statSubtext}>за пост</span>
+            </div>
+            <div className={styles.statCard}>
+              <span className={styles.statLabel}>ПОДПИСЧИКИ</span>
+              <span className={styles.statValue}>{formatNumber(selectedChannel.members)}</span>
+              <span className={styles.statSubtext}>{getMembersSizeLabel(selectedChannel.members)}</span>
+            </div>
+            <div className={styles.statCard}>
+              <span className={styles.statLabel}>ER</span>
+              <span className={styles.statValue}>{channelER}%</span>
+              <span className={styles.statSubtext}>{getERLabel(channelER)}</span>
+            </div>
           </div>
 
-          {/* v11.0: Breakdown with Accordions and Traffic Lights */}
+          {/* v12.1: Metrics Grid - 3 blocks (Quality, Engagement, Reputation) */}
           {breakdown ? (
-            <div className={styles.accordionSection}>
-              {/* Quality Accordion */}
-              <button
-                className={`${styles.accordionHeader} ${expandedCategories.has('quality') ? styles.expanded : ''}`}
-                onClick={() => toggleCategory('quality')}
-              >
-                <span className={styles.accordionArrow}>›</span>
-                <span className={styles.accordionLabel}>КАЧЕСТВО</span>
-                <span className={styles.accordionScore}>{breakdown.quality.total}/{breakdown.quality.max}</span>
-              </button>
-              {expandedCategories.has('quality') && (
-                <div className={styles.accordionBody}>
-                  {breakdown.quality.items && Object.entries(breakdown.quality.items).map(([key, item]) => {
-                    const light = getTrafficLight(item.score, item.max)
-                    return (
-                      <div
-                        key={key}
-                        className={styles.metricRow}
-                        onClick={() => setSelectedMetric(key)}
-                        role="button"
-                        tabIndex={0}
-                      >
-                        <span className={styles.metricLight}>{light.emoji}</span>
-                        <span className={styles.metricLabel}>{item.label}</span>
-                        <span className={styles.metricValue}>{item.score}/{item.max}</span>
-                      </div>
-                    )
-                  })}
+            <div className={styles.metricsGrid}>
+              {/* Quality Block */}
+              <div className={styles.metricsBlock}>
+                <div className={styles.metricsBlockTitle}>
+                  Качество
+                  <span className={styles.metricsBlockScore}>{breakdown.quality.total}/{breakdown.quality.max}</span>
                 </div>
-              )}
+                {breakdown.quality.items && Object.entries(breakdown.quality.items).map(([key, item]) => (
+                  <MetricItem
+                    key={key}
+                    item={item}
+                    onClick={() => setSelectedMetric(key)}
+                  />
+                ))}
+              </div>
 
-              {/* Engagement Accordion */}
-              <button
-                className={`${styles.accordionHeader} ${expandedCategories.has('engagement') ? styles.expanded : ''}`}
-                onClick={() => toggleCategory('engagement')}
-              >
-                <span className={styles.accordionArrow}>›</span>
-                <span className={styles.accordionLabel}>ВОВЛЕЧЁННОСТЬ</span>
-                <span className={styles.accordionScore}>{breakdown.engagement.total}/{breakdown.engagement.max}</span>
-              </button>
-              {expandedCategories.has('engagement') && (
-                <div className={styles.accordionBody}>
-                  {breakdown.engagement.items && Object.entries(breakdown.engagement.items).map(([key, item]) => {
-                    const light = getTrafficLight(item.score, item.max)
-                    return (
-                      <div
-                        key={key}
-                        className={styles.metricRow}
-                        onClick={() => setSelectedMetric(key)}
-                        role="button"
-                        tabIndex={0}
-                      >
-                        <span className={styles.metricLight}>{light.emoji}</span>
-                        <span className={styles.metricLabel}>{item.label}</span>
-                        <span className={styles.metricValue}>{item.score}/{item.max}</span>
-                      </div>
-                    )
-                  })}
+              {/* Engagement Block */}
+              <div className={styles.metricsBlock}>
+                <div className={styles.metricsBlockTitle}>
+                  Вовлечённость
+                  <span className={styles.metricsBlockScore}>{breakdown.engagement.total}/{breakdown.engagement.max}</span>
                 </div>
-              )}
+                {breakdown.engagement.items && Object.entries(breakdown.engagement.items).map(([key, item]) => (
+                  <MetricItem
+                    key={key}
+                    item={item}
+                    onClick={() => setSelectedMetric(key)}
+                  />
+                ))}
+              </div>
 
-              {/* Reputation Accordion */}
-              <button
-                className={`${styles.accordionHeader} ${expandedCategories.has('reputation') ? styles.expanded : ''}`}
-                onClick={() => toggleCategory('reputation')}
-              >
-                <span className={styles.accordionArrow}>›</span>
-                <span className={styles.accordionLabel}>РЕПУТАЦИЯ</span>
-                <span className={styles.accordionScore}>{breakdown.reputation.total}/{breakdown.reputation.max}</span>
-              </button>
-              {expandedCategories.has('reputation') && (
-                <div className={styles.accordionBody}>
-                  {breakdown.reputation.items && Object.entries(breakdown.reputation.items).map(([key, item]) => {
-                    const light = getTrafficLight(item.score, item.max)
-                    return (
-                      <div
-                        key={key}
-                        className={styles.metricRow}
-                        onClick={() => setSelectedMetric(key)}
-                        role="button"
-                        tabIndex={0}
-                      >
-                        <span className={styles.metricLight}>{light.emoji}</span>
-                        <span className={styles.metricLabel}>{item.label}</span>
-                        <span className={styles.metricValue}>{item.score}/{item.max}</span>
-                      </div>
-                    )
-                  })}
+              {/* v12.1: Reputation Block */}
+              <div className={styles.metricsBlock}>
+                <div className={styles.metricsBlockTitle}>
+                  Репутация
+                  <span className={styles.metricsBlockScore}>{breakdown.reputation.total}/{breakdown.reputation.max}</span>
                 </div>
-              )}
+                {breakdown.reputation.items && Object.entries(breakdown.reputation.items).map(([key, item]) => (
+                  <MetricItem
+                    key={key}
+                    item={item}
+                    onClick={() => setSelectedMetric(key)}
+                  />
+                ))}
+              </div>
             </div>
           ) : (
             <div className={styles.noPrice}>Данные загружаются...</div>
           )}
 
-          {/* v10.1: Risks section REMOVED - now shown in Hero */}
-
-          {/* v10.1: Price section REMOVED - now shown in Hero */}
-
-          {/* Section: Recommendations - v10.1 filter out cpm (shown in Hero) */}
-          {selectedChannel.recommendations && selectedChannel.recommendations.filter(r => r.type !== 'cpm').length > 0 && (
-            <div className={styles.recsCompact}>
-              {selectedChannel.recommendations.filter(r => r.type !== 'cpm').slice(0, 2).map((rec, i) => (
-                <div key={i} className={styles.recCompactItem}>
-                  <span>{rec.icon}</span>
-                  <span>{rec.text}</span>
+          {/* v12.1: Recommendations Section */}
+          {selectedChannel.recommendations && selectedChannel.recommendations.length > 0 && (
+            <div className={styles.recommendationsSection}>
+              <div className={styles.recommendationsTitle}>Рекомендации</div>
+              {selectedChannel.recommendations.map((rec, i) => (
+                <div key={i} className={`${styles.recItemNew} ${styles[`rec_${rec.type}`]}`}>
+                  <span className={styles.recIconNew}>{rec.icon}</span>
+                  <span className={styles.recTextNew}>{rec.text}</span>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Meta Info */}
-          <div className={styles.detailMeta}>
-            {selectedChannel.category && (
-              <span>Категория: {getCategoryName(selectedChannel.category)}</span>
-            )}
-            {selectedChannel.scanned_at && (
-              <span>Проверен: {new Date(selectedChannel.scanned_at).toLocaleDateString('ru-RU')}</span>
-            )}
+          {/* v12.0: Footer */}
+          <div className={styles.detailFooter}>
+            <span>{selectedChannel.category ? getCategoryName(selectedChannel.category) : ''}</span>
+            <span>{selectedChannel.scanned_at ? new Date(selectedChannel.scanned_at).toLocaleDateString('ru-RU') : ''}</span>
           </div>
         </div>
 
-        {/* v8.0: Metric Explanation Modal */}
+        {/* Metric Explanation Modal */}
         {selectedMetric && METRIC_DESCRIPTIONS[selectedMetric] && (
           <div className={styles.metricModal} onClick={() => setSelectedMetric(null)}>
             <div className={styles.metricModalContent} onClick={e => e.stopPropagation()}>
@@ -754,13 +743,13 @@ function App() {
           <p className={styles.stubText} style={{ marginTop: '8px', opacity: 0.6 }}>Скоро</p>
         </div>
 
-        {/* v11.0: Bottom Navigation Bar */}
+        {/* v11.0: Bottom Navigation Bar - v12.3: SVG Heroicons */}
         <nav className={styles.bottomNav}>
           {[
-            { id: 'search' as const, icon: '🔍', label: 'Поиск' },
-            { id: 'history' as const, icon: '📋', label: 'История' },
-            { id: 'watchlist' as const, icon: '⭐', label: 'Избранное' },
-            { id: 'profile' as const, icon: '👤', label: 'Профиль' },
+            { id: 'search' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21 21-5.197-5.197M10.5 18a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Z"/></svg>, label: 'Поиск' },
+            { id: 'history' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>, label: 'История' },
+            { id: 'watchlist' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"/></svg>, label: 'Избранное' },
+            { id: 'profile' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"/></svg>, label: 'Профиль' },
           ].map(tab => (
             <button
               key={tab.id}
@@ -987,9 +976,9 @@ function App() {
                         </span>
                         {channel.category && (
                           <span className={styles.categoryBadge}>
-                            <svg className={styles.categoryIcon} viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm2 4v2h2V8H8zm4 0v2h2V8h-2zm4 0v2h2V8h-2zM8 12v2h2v-2H8zm4 0v2h2v-2h-2zm4 0v2h2v-2h-2z"/>
-                            </svg>
+                            <span className={styles.categoryIcon}>
+                              {getCategoryIcon(channel.category)}
+                            </span>
                             {getCategoryName(channel.category)}
                           </span>
                         )}
@@ -1018,13 +1007,13 @@ function App() {
         )}
       </main>
 
-      {/* v11.0: Bottom Navigation Bar */}
+      {/* v11.0: Bottom Navigation Bar - v12.3: SVG Heroicons */}
       <nav className={styles.bottomNav}>
         {[
-          { id: 'search' as const, icon: '🔍', label: 'Поиск' },
-          { id: 'history' as const, icon: '📋', label: 'История' },
-          { id: 'watchlist' as const, icon: '⭐', label: 'Избранное' },
-          { id: 'profile' as const, icon: '👤', label: 'Профиль' },
+          { id: 'search' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21 21-5.197-5.197M10.5 18a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Z"/></svg>, label: 'Поиск' },
+          { id: 'history' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>, label: 'История' },
+          { id: 'watchlist' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"/></svg>, label: 'Избранное' },
+          { id: 'profile' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"/></svg>, label: 'Профиль' },
         ].map(tab => (
           <button
             key={tab.id}
