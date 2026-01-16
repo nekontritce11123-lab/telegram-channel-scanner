@@ -3009,6 +3009,24 @@
   border-radius: 3px;
 }
 
+/* v23.0: Info Metrics (value without progress bar, e.g. ad_load) */
+.metricItemInfo {
+  padding-bottom: 4px;
+}
+
+.metricItemInfoValue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.metricStatusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 /* v12.1: Recommendations Section */
 .recommendationsSection {
   padding: var(--spacing-md);
@@ -3113,4 +3131,51 @@
   color: var(--hint-color);
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   margin-top: var(--spacing-md);
+}
+
+/* ============================================
+   30. Info Metrics (без прогресс-бара, только value + status dot)
+   ============================================ */
+.metricInfoValue {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.metricStatusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.metricStatusDot.good {
+  background: var(--verdict-excellent);
+}
+
+.metricStatusDot.warning {
+  background: var(--verdict-medium);
+}
+
+.metricStatusDot.bad {
+  background: var(--verdict-scam);
+}
+
+.metricValueText {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--hint-color);
+}
+
+.metricValueText.good {
+  color: var(--verdict-excellent);
+}
+
+.metricValueText.warning {
+  color: var(--verdict-medium);
+}
+
+.metricValueText.bad {
+  color: var(--verdict-scam);
 }

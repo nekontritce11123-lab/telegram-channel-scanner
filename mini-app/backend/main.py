@@ -598,13 +598,15 @@ def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
 
 def format_breakdown_for_ui(breakdown_data: dict) -> dict:
     """
-    v21.0: Преобразует реальный breakdown из scorer.py в формат для UI.
+    v23.0: Преобразует реальный breakdown из scorer.py в формат для UI.
 
     scorer.py возвращает:
         {
             'breakdown': {
                 'cv_views': {'value': 45.2, 'points': 12, 'max': 13},
                 'reach': {'value': 8.5, 'points': 8, 'max': 10},
+                'ad_load': {'value': 15.0, 'status': 'normal'},  # INFO METRIC
+                'posting_frequency': {'posts_per_day': 2.5, 'status': 'normal'},  # INFO METRIC
                 ...
             },
             'categories': {
@@ -621,6 +623,10 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
                 'items': {
                     'cv_views': {'score': 12, 'max': 13, 'label': 'CV просмотров'},
                     ...
+                },
+                'info_metrics': {
+                    'ad_load': {'value': '15%', 'label': 'Рекл. нагрузка', 'status': 'good'},
+                    ...
                 }
             },
             ...
@@ -629,9 +635,13 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
     breakdown = breakdown_data.get('breakdown', {})
     categories = breakdown_data.get('categories', {})
 
-    # Маппинг метрик в категории с labels
-    # v22.1: Убраны posting_frequency и private_links — это Trust Penalties,
-    # не метрики с баллами (у них нет points/max в scorer.py)
+    # v23.0: KEY_MAPPING для совместимости со старыми данными
+    KEY_MAPPING = {
+        'stability': 'reaction_stability',
+        'source': 'source_diversity',
+    }
+
+    # v23.0: Маппинг метрик в категории с labels (Score Metrics - имеют points/max)
     METRIC_CONFIG = {
         'quality': {
             'cv_views': 'CV просмотров',
@@ -653,6 +663,93 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
         },
     }
 
+    # v23.0: Info Metrics config с thresholds для определения статуса
+    # Эти метрики влияют на Trust Factor, но показываются информационно
+    INFO_METRICS_CONFIG = {
+        'quality': {
+            'ad_load': {
+                'label': 'Рекл. нагрузка',
+                'value_key': 'value',  # Поле в breakdown
+                'format': 'percent',
+                'thresholds': {
+                    'good': (0, 10),      # 0-10% = хорошо
+                    'warning': (10, 30),  # 10-30% = предупреждение
+                    'bad': (30, 100),     # >30% = плохо
+                },
+                'invert': False,  # Меньше = лучше
+            },
+            'regularity': {
+                'label': 'Регулярность',
+                'value_key': 'value',  # CV постинга
+                'format': 'cv',
+                'thresholds': {
+                    'good': (0, 50),      # CV < 50% = регулярный
+                    'warning': (50, 100), # CV 50-100% = нерегулярный
+                    'bad': (100, 1000),   # CV > 100% = хаотичный
+                },
+                'invert': False,  # Меньше CV = более регулярный
+            },
+        },
+        'reputation': {
+            'posting_frequency': {
+                'label': 'Постинг',
+                'value_key': 'posts_per_day',
+                'format': 'posts_day',
+                'thresholds': {
+                    'good': (0.5, 5),      # 0.5-5 постов/день = нормально
+                    'warning': (5, 15),    # 5-15 постов/день = много
+                    'bad': (15, 1000),     # >15 постов/день = спам
+                },
+                'special': {
+                    'too_low': (0, 0.5),   # <0.5 постов/день = слишком редко
+                },
+            },
+            'private_links': {
+                'label': 'Приватные',
+                'value_key': 'private_ratio',
+                'format': 'ratio_percent',  # v23.0: ratio (0.0-1.0) -> percent
+                'thresholds': {
+                    'good': (0, 0.2),      # 0-20% = нормально
+                    'warning': (0.2, 0.5), # 20-50% = много приватных
+                    'bad': (0.5, 1.0),     # >50% = подозрительно
+                },
+                'invert': False,
+            },
+        },
+    }
+
+    def get_info_metric_status(value: float, config: dict) -> str:
+        """Определяет статус info metric по thresholds."""
+        thresholds = config.get('thresholds', {})
+
+        # Специальные случаи (например, слишком редкий постинг)
+        special = config.get('special', {})
+        for status, (min_val, max_val) in special.items():
+            if min_val <= value < max_val:
+                return status
+
+        for status, (min_val, max_val) in thresholds.items():
+            if min_val <= value < max_val:
+                return status
+
+        return 'warning'  # Default
+
+    def format_info_value(value: float, fmt: str, config: dict = None) -> str:
+        """Форматирует значение info metric для отображения."""
+        if fmt == 'percent':
+            return f"{value:.0f}%"
+        elif fmt == 'ratio_percent':
+            # v23.0: Конвертируем ratio (0.0-1.0) в проценты
+            return f"{value * 100:.0f}%"
+        elif fmt == 'cv':
+            return f"CV {value:.0f}%"
+        elif fmt == 'posts_day':
+            if value < 1:
+                return f"{value:.1f}/день"
+            else:
+                return f"{value:.0f}/день"
+        return str(value)
+
     result = {}
 
     for cat_key, metrics in METRIC_CONFIG.items():
@@ -660,8 +757,16 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
 
         items = {}
         calculated_max = 0  # v22.2: Сумма max всех items (учитывает floating weights)
+
         for metric_key, label in metrics.items():
-            metric_data = breakdown.get(metric_key, {})
+            # v23.0: Применяем KEY_MAPPING для совместимости
+            source_key = metric_key
+            for old_key, new_key in KEY_MAPPING.items():
+                if new_key == metric_key and old_key in breakdown:
+                    source_key = old_key
+                    break
+
+            metric_data = breakdown.get(source_key, breakdown.get(metric_key, {}))
 
             # Получаем значения (scorer.py использует 'points', UI ожидает 'score')
             score_val = metric_data.get('points', metric_data.get('score', 0))
@@ -711,11 +816,49 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
             items[metric_key] = item_data
             calculated_max += max_val  # v22.2: Суммируем max каждого item
 
+        # v23.0: Обрабатываем Info Metrics для этой категории
+        info_metrics = {}
+        cat_info_config = INFO_METRICS_CONFIG.get(cat_key, {})
+
+        for info_key, config in cat_info_config.items():
+            info_data = breakdown.get(info_key, {})
+            if not info_data:
+                continue
+
+            value_key = config.get('value_key', 'value')
+            raw_value = info_data.get(value_key)
+
+            if raw_value is None:
+                continue
+
+            # Конвертируем в float
+            try:
+                float_value = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+
+            # Определяем статус
+            status = get_info_metric_status(float_value, config)
+
+            # Форматируем значение для отображения
+            formatted_value = format_info_value(float_value, config.get('format', 'percent'), config)
+
+            info_metrics[info_key] = {
+                'value': formatted_value,
+                'label': config['label'],
+                'status': status,
+                'raw_value': float_value,  # Для отладки
+            }
+
         result[cat_key] = {
             'total': cat_data.get('score', 0),
             'max': calculated_max,  # v22.2: Используем сумму из items, НЕ fallback
             'items': items,
         }
+
+        # v23.0: Добавляем info_metrics только если есть данные
+        if info_metrics:
+            result[cat_key]['info_metrics'] = info_metrics
 
     return result
 
@@ -1009,17 +1152,30 @@ async def get_channel(username: str):
     Получить детали канала по username.
     Если канала нет в базе - вернуть 404.
 
-    v21.0: Читает реальный breakdown из БД если доступен.
+    v23.0: Читает реальный breakdown_json из БД если доступен,
+    иначе использует estimate_breakdown() как fallback.
+    Поддержка Info Metrics (ad_load, regularity, posting_frequency, private_links).
     """
     username = username.lower().lstrip("@")
 
-    # v15.0: Базовый SELECT без опциональных колонок (совместимость с БД)
-    cursor = db.conn.execute("""
-        SELECT username, score, verdict, trust_factor, members,
-               category, category_secondary, scanned_at, status
-        FROM channels
-        WHERE username = ?
-    """, (username,))
+    # v23.0: Читаем breakdown_json из БД (если колонка существует)
+    # Используем try/except для совместимости с БД без колонки breakdown_json
+    try:
+        cursor = db.conn.execute("""
+            SELECT username, score, verdict, trust_factor, members,
+                   category, category_secondary, scanned_at, status,
+                   photo_url, breakdown_json
+            FROM channels
+            WHERE username = ?
+        """, (username,))
+    except Exception:
+        # Fallback для старых БД без колонки breakdown_json
+        cursor = db.conn.execute("""
+            SELECT username, score, verdict, trust_factor, members,
+                   category, category_secondary, scanned_at, status
+            FROM channels
+            WHERE username = ?
+        """, (username,))
 
     row = cursor.fetchone()
 
@@ -1032,8 +1188,26 @@ async def get_channel(username: str):
     members = safe_int(row[4], 0)
     category = row[5]
 
-    # v15.0: Генерируем breakdown на лету (estimate_breakdown)
-    breakdown = estimate_breakdown(score, trust_factor)
+    # v23.0: Пытаемся получить реальный breakdown из БД
+    breakdown_json_str = row[10] if len(row) > 10 else None
+    photo_url = row[9] if len(row) > 9 else None
+
+    # Парсим breakdown_json или используем fallback
+    real_breakdown_data = None
+    if breakdown_json_str:
+        try:
+            real_breakdown_data = json.loads(breakdown_json_str)
+        except (json.JSONDecodeError, TypeError):
+            real_breakdown_data = None
+
+    # v23.0: Если есть реальный breakdown - форматируем его для UI
+    # Иначе используем estimate_breakdown() как fallback
+    if real_breakdown_data and real_breakdown_data.get('breakdown'):
+        breakdown = format_breakdown_for_ui(real_breakdown_data)
+        breakdown_source = "database"
+    else:
+        breakdown = estimate_breakdown(score, trust_factor)
+        breakdown_source = "estimated"
 
     # v7.0: Trust penalties (риски)
     trust_penalties = estimate_trust_penalties(trust_factor, score)
@@ -1077,13 +1251,14 @@ async def get_channel(username: str):
         "category_percent": 100,  # v15.0: не используем из БД
         "scanned_at": str(row[7]) if len(row) > 7 and row[7] else None,
         "status": row[8] if len(row) > 8 else "GOOD",
-        "photo_url": None,  # v15.0: не храним в БД
+        "photo_url": photo_url,  # v23.0: читаем из БД
         "cpm_min": price_min,
         "cpm_max": price_max,
         "recommendations": [r.dict() for r in recommendations],
         "source": "database",
         # v7.0: Новые поля
         "breakdown": breakdown,
+        "breakdown_source": breakdown_source,  # v23.0: указываем источник данных
         "trust_penalties": trust_penalties,
         "price_estimate": price_estimate,
     }

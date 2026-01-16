@@ -325,6 +325,27 @@ const METRIC_DESCRIPTIONS: Record<string, { title: string; description: string; 
     title: 'Качество связей',
     description: 'Репутация рекламируемых каналов.',
     interpretation: 'Реклама SCAM каналов или много приватных ссылок — признак участия в скам-сети.'
+  },
+  // v23.0: Info Metrics (Trust Penalties отображаемые как информационные метрики)
+  'ad_load': {
+    title: 'Рекламная нагрузка',
+    description: 'Процент постов с рекламой от общего числа.',
+    interpretation: 'До 20% — норма. 20-30% — много. Больше 30% — аудитория устаёт от рекламы.'
+  },
+  'regularity': {
+    title: 'Регулярность постинга',
+    description: 'Насколько равномерно публикуются посты.',
+    interpretation: '0.3-0.7 — нормально. Меньше 0.2 — подозрительно ровно (возможно бот).'
+  },
+  'posting_frequency': {
+    title: 'Частота публикаций',
+    description: 'Сколько постов в день публикует канал.',
+    interpretation: '1-5 постов/день — норма. 6-12 — активно. Больше 12 — спам.'
+  },
+  'private_links': {
+    title: 'Приватные ссылки',
+    description: 'Процент рекламы с приватными invite-ссылками.',
+    interpretation: 'Приватные ссылки нельзя проверить. До 30% — норма. Больше 60% — риск.'
   }
 }
 
@@ -371,14 +392,51 @@ function SkeletonCard() {
 
 // v12.0: MetricItem component with progress bar
 // v22.2: Support for disabled metrics (reactions/comments off)
-function MetricItem({ item, onClick }: { item: { score: number; max: number; label: string; disabled?: boolean; value?: string }; onClick: () => void }) {
+// v23.0: Support for Info Metrics (value without max, e.g. ad_load, regularity)
+function MetricItem({ item, onClick }: { item: { score: number; max: number; label: string; disabled?: boolean; value?: string; status?: 'good' | 'warning' | 'bad' }; onClick: () => void }) {
   // v22.2: If disabled, show "откл." and grey bar
-  if (item.disabled || item.max === 0) {
+  if (item.disabled) {
     return (
       <div className={`${styles.metricItem} ${styles.metricItemDisabled}`} onClick={onClick} role="button" tabIndex={0}>
         <div className={styles.metricItemHeader}>
           <span className={styles.metricItemLabel}>{item.label}</span>
           <span className={styles.metricItemValue}>{item.value || 'откл.'}</span>
+        </div>
+        <div className={styles.metricBar}>
+          <div className={styles.metricBarDisabled} style={{ width: '100%' }} />
+        </div>
+      </div>
+    )
+  }
+
+  // v23.0: Info Metric - has value but no max (e.g. "15%", "3.2 п/д")
+  // Показываем value + цветную точку статуса БЕЗ прогресс-бара
+  if (item.value && item.max === 0) {
+    const statusColor = item.status === 'good' ? 'var(--verdict-excellent)'
+      : item.status === 'warning' ? 'var(--verdict-medium)'
+      : item.status === 'bad' ? 'var(--verdict-high-risk)'
+      : 'var(--hint-color)'
+
+    return (
+      <div className={`${styles.metricItem} ${styles.metricItemInfo}`} onClick={onClick} role="button" tabIndex={0}>
+        <div className={styles.metricItemHeader}>
+          <span className={styles.metricItemLabel}>{item.label}</span>
+          <div className={styles.metricItemInfoValue}>
+            <span className={styles.metricItemValue}>{item.value}</span>
+            <span className={styles.metricStatusDot} style={{ backgroundColor: statusColor }} />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Score Metric with max=0 (floating weights - метрика отключена)
+  if (item.max === 0) {
+    return (
+      <div className={`${styles.metricItem} ${styles.metricItemDisabled}`} onClick={onClick} role="button" tabIndex={0}>
+        <div className={styles.metricItemHeader}>
+          <span className={styles.metricItemLabel}>{item.label}</span>
+          <span className={styles.metricItemValue}>откл.</span>
         </div>
         <div className={styles.metricBar}>
           <div className={styles.metricBarDisabled} style={{ width: '100%' }} />
