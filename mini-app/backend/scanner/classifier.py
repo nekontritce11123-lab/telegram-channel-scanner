@@ -69,11 +69,14 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"  # Updated: old model decommissioned
 API_TIMEOUT = 10  # секунд
 CACHE_TTL_DAYS = 7
-MAX_POSTS_FOR_AI = 10
-MAX_CHARS_PER_POST = 500
+MAX_POSTS_FOR_AI = 20      # v27.0: увеличено с 10 для лучшего контекста
+MAX_CHARS_PER_POST = 800   # v27.0: увеличено с 500
+
+# DEBUG режим - включить для отладки классификации
+DEBUG_CLASSIFIER = True
 
 
-# === СИСТЕМНЫЙ ПРОМПТ v15.0 (ОДНА КАТЕГОРИЯ) ===
+# === СИСТЕМНЫЙ ПРОМПТ v27.0 (с русским сленгом) ===
 
 SYSTEM_PROMPT = """You are a Telegram channel classifier.
 Analyze the channel and return EXACTLY ONE category.
@@ -100,6 +103,18 @@ CATEGORIES (pick ONE):
 - ADULT: 18+ content, dating, escorts
 - OTHER: does not fit any category
 
+RUSSIAN TRADING/CRYPTO SLANG (CRITICAL - many channels are in Russian):
+- "бинанс", "binance", "байбит", "bybit", "окекс", "okx" → crypto EXCHANGE → CRYPTO
+- "позиция", "лонг", "шорт", "стоп-лосс", "тейк-профит" → trading terms → CRYPTO/FINANCE
+- "краснянка", "зеленянка" → loss/profit slang → CRYPTO/FINANCE
+- "скальп", "скальпинг", "scalp" → scalping (short-term trading) → CRYPTO/FINANCE
+- "пампы", "дампы", "памп", "дамп" → pump and dump → CRYPTO
+- "альты", "альткоины", "альта" → altcoins → CRYPTO
+- "ликвидация", "маржа", "плечо", "леверидж" → margin trading → CRYPTO/FINANCE
+- "стакан", "ордера", "заявки" → order book → CRYPTO/FINANCE
+- "сетка", "грид", "grid" → grid trading → CRYPTO
+- "фьючерсы", "фьючи", "спот" → futures/spot → CRYPTO/FINANCE
+
 DECISION RULES (IMPORTANT):
 1. Memes about crypto → ENTERTAINMENT (humor is primary, not topic)
 2. TON games, P2E, play-to-earn → ENTERTAINMENT (it's gaming)
@@ -111,6 +126,7 @@ DECISION RULES (IMPORTANT):
 8. AI tools reviews → AI_ML (tools are primary)
 9. Startup news → BUSINESS (business focus)
 10. Product reviews → RETAIL (commerce focus)
+11. Russian trading slang in posts → CRYPTO or FINANCE (NOT BEAUTY/LIFESTYLE!)
 
 Pick the DOMINANT theme based on content FORMAT, not just topic.
 Return ONE word only."""
@@ -215,7 +231,7 @@ def _prepare_context(title: str, description: str, messages: list) -> str:
                 posts_text.append(f"- {clean}")
 
     if posts_text:
-        parts.append("Recent posts:\n" + "\n".join(posts_text[:10]))
+        parts.append("Recent posts:\n" + "\n".join(posts_text[:MAX_POSTS_FOR_AI]))
 
     return "\n\n".join(parts)
 
@@ -270,6 +286,14 @@ async def _call_groq_api(context: str, api_key: str) -> Optional[str]:
     if not HTTPX_AVAILABLE:
         return None
 
+    # DEBUG: показать что отправляем в LLM
+    if DEBUG_CLASSIFIER:
+        print(f"\n{'='*60}")
+        print(f"CLASSIFIER DEBUG - Context ({len(context)} chars):")
+        print(f"{'='*60}")
+        print(context[:2000] + ("..." if len(context) > 2000 else ""))
+        print(f"{'='*60}\n")
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -290,6 +314,8 @@ async def _call_groq_api(context: str, api_key: str) -> Optional[str]:
             response = await client.post(GROQ_API_URL, headers=headers, json=payload)
 
             if response.status_code == 429:
+                if DEBUG_CLASSIFIER:
+                    print("CLASSIFIER DEBUG: Rate limit (429)")
                 return None  # Rate limit
 
             response.raise_for_status()
@@ -297,13 +323,25 @@ async def _call_groq_api(context: str, api_key: str) -> Optional[str]:
 
             answer = data["choices"][0]["message"]["content"].strip()
 
+            # DEBUG: показать ответ LLM
+            if DEBUG_CLASSIFIER:
+                print(f"CLASSIFIER DEBUG - LLM raw response: '{answer}'")
+
             # v15.0: Одна категория
             category = parse_category_response(answer)
+
+            if DEBUG_CLASSIFIER:
+                print(f"CLASSIFIER DEBUG - Parsed category: {category}")
+
             return category
 
     except httpx.TimeoutException:
+        if DEBUG_CLASSIFIER:
+            print("CLASSIFIER DEBUG: Timeout")
         return None
-    except Exception:
+    except Exception as e:
+        if DEBUG_CLASSIFIER:
+            print(f"CLASSIFIER DEBUG: Error - {e}")
         return None
 
 
@@ -360,23 +398,33 @@ class ChannelClassifier:
             task = self.queue.popleft()
             channel_id = task["channel_id"]
 
-            # Проверяем кэш
-            cached = _get_cached(channel_id, self.cache)
-            if cached:
-                self.results[channel_id] = cached
+            try:
+                # Проверяем кэш
+                cached = _get_cached(channel_id, self.cache)
+                if cached:
+                    self.results[channel_id] = cached
+                    if task.get("callback"):
+                        try:
+                            task["callback"](channel_id, cached)
+                        except Exception as e:
+                            print(f"Classifier callback error (cached): {e}")
+                    continue
+
+                # Классифицируем
+                category = await self._classify_task(task)
+
+                # Сохраняем
+                self.results[channel_id] = category
+                _set_cached(channel_id, category, self.cache)
+
                 if task.get("callback"):
-                    task["callback"](channel_id, cached)
-                continue
+                    try:
+                        task["callback"](channel_id, category)
+                    except Exception as e:
+                        print(f"Classifier callback error: {e}")
 
-            # Классифицируем
-            category = await self._classify_task(task)
-
-            # Сохраняем
-            self.results[channel_id] = category
-            _set_cached(channel_id, category, self.cache)
-
-            if task.get("callback"):
-                task["callback"](channel_id, category)
+            except Exception as e:
+                print(f"Classifier worker error for channel {channel_id}: {e}")
 
             # Небольшая пауза между запросами к API
             if self.api_key:
