@@ -32,7 +32,7 @@ from typing import Optional
 from pyrogram import Client
 
 from .database import CrawlerDB
-from .client import get_client, smart_scan_safe, resolve_invite_link
+from .client import get_client, smart_scan_safe
 from .scorer import calculate_final_score
 from .classifier import get_classifier, ChannelClassifier
 
@@ -482,11 +482,3 @@ class SmartCrawler:
 
             # Закрываем базу
             self.db.close()
-
-    def get_stats(self) -> dict:
-        """Возвращает статистику базы."""
-        return self.db.get_stats()
-
-    def export_good(self, filepath: str) -> int:
-        """Экспортирует GOOD каналы в CSV."""
-        return self.db.export_csv(filepath, 'GOOD')

@@ -50,78 +50,6 @@ def get_client() -> Client:
     )
 
 
-async def get_channel_data(client: Client, channel: str) -> tuple:
-    """
-    Получает данные канала (2 запроса вместо 7).
-
-    Args:
-        client: Pyrogram клиент
-        channel: username или ID канала
-
-    Returns:
-        (chat, messages, comments_data) - информация о канале, 50 сообщений и данные комментариев
-    """
-    # Убираем @ если есть
-    channel = channel.lstrip('@')
-
-    # Запрос 1: информация о канале (высокоуровневый API для удобства)
-    chat = await client.get_chat(channel)
-
-    # Запрос 2: Raw MTProto GetHistory - возвращает replies.replies!
-    peer = await client.resolve_peer(channel)
-    raw_result = await client.invoke(
-        functions.messages.GetHistory(
-            peer=peer,
-            offset_id=0,
-            offset_date=0,
-            add_offset=0,
-            limit=50,
-            max_id=0,
-            min_id=0,
-            hash=0
-        )
-    )
-
-    # v16.0: Создаём маппинг channel_id → username для репостов
-    chats_map = {}
-    if hasattr(raw_result, 'chats') and raw_result.chats:
-        for chat_obj in raw_result.chats:
-            chat_id = getattr(chat_obj, 'id', None)
-            chat_username = getattr(chat_obj, 'username', None)
-            if chat_id and chat_username:
-                chats_map[chat_id] = chat_username.lower()
-
-    # Конвертируем raw messages в удобный формат
-    messages = []
-    comments_counts = []
-
-    for raw_msg in raw_result.messages:
-        # Пропускаем служебные сообщения (MessageService)
-        if not hasattr(raw_msg, 'message'):
-            continue
-
-        # Создаём обёртку для совместимости с существующим кодом
-        msg_wrapper = RawMessageWrapper(raw_msg, chats_map)
-        messages.append(msg_wrapper)
-
-        # Извлекаем количество комментариев
-        if hasattr(raw_msg, 'replies') and raw_msg.replies:
-            comments_counts.append(raw_msg.replies.replies or 0)
-        else:
-            comments_counts.append(0)
-
-    # Формируем данные о комментариях
-    comments_data = {
-        'enabled': chat.linked_chat is not None,
-        'linked_chat': getattr(chat.linked_chat, 'title', None) if chat.linked_chat else None,
-        'comments_counts': comments_counts,
-        'total_comments': sum(comments_counts),
-        'avg_comments': sum(comments_counts) / len(comments_counts) if comments_counts else 0.0
-    }
-
-    return chat, messages, comments_data
-
-
 class RawMessageWrapper:
     """
     Обёртка для raw Message чтобы обеспечить совместимость с существующим кодом metrics.py.
@@ -585,25 +513,3 @@ async def smart_scan_safe(client: Client, channel: str, max_retries: int = 3) ->
         users=[],
         channel_health={'status': 'error', 'reason': 'Max retries exceeded'}
     )
-
-
-async def resolve_invite_link(client: Client, invite_hash: str) -> str | None:
-    """
-    Пробует резолвить t.me/+XXX ссылку в username.
-
-    Некоторые t.me/+XXX ссылки — это публичные каналы с трекингом,
-    их можно проверить без вступления.
-
-    Args:
-        invite_hash: часть после t.me/+ (например ABC123xyz)
-
-    Returns:
-        username если канал публичный, None если приватный
-    """
-    try:
-        chat = await client.get_chat(f"https://t.me/+{invite_hash}")
-        if hasattr(chat, 'username') and chat.username:
-            return chat.username.lower()
-        return None  # Приватный канал
-    except Exception:
-        return None  # Ошибка или нужно вступить

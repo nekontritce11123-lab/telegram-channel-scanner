@@ -324,18 +324,6 @@ def decay_to_points(ratio: float, reaction_rate: float = 0, max_pts: int = None)
     return 4, info
 
 
-def regularity_to_points(cv: float) -> int:
-    """
-    Post regularity CV -> баллы (max 2).
-    v5.0: Снижено с 3 до 2. Профи используют отложенный постинг - это не боты.
-    """
-    if cv < 0.2:
-        return 0  # Бот - слишком ровные интервалы
-    if cv < 0.5:
-        return 1
-    return 2
-
-
 def stability_to_points(data: dict, max_pts: int = None) -> int:
     """
     v13.0: Reaction Stability -> баллы (default max 5).

@@ -261,13 +261,6 @@ def parse_category_response(response: str) -> str:
     return "OTHER"
 
 
-# Legacy функция для обратной совместимости
-def parse_category_response_legacy(response: str) -> tuple:
-    """Legacy: возвращает tuple (cat1, cat2, percent) для старого кода."""
-    cat = parse_category_response(response)
-    return (cat, None, 100)
-
-
 # === FALLBACK КЛАССИФИКАЦИЯ ===
 
 def classify_fallback(title: str, description: str, messages: list) -> str:
@@ -481,10 +474,6 @@ class ChannelClassifier:
             "callback": callback
         })
 
-    def get_result(self, channel_id: int) -> Optional[str]:
-        """Возвращает результат классификации если готов."""
-        return self.results.get(channel_id)
-
     async def classify_sync(
         self,
         channel_id: int,
@@ -519,10 +508,6 @@ class ChannelClassifier:
     def save_cache(self):
         """Сохраняет кэш на диск."""
         _save_cache(self.cache)
-
-    def get_queue_size(self) -> int:
-        """Возвращает размер очереди."""
-        return len(self.queue)
 
 
 # === ГЛОБАЛЬНЫЙ ЭКЗЕМПЛЯР ===

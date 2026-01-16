@@ -192,19 +192,6 @@ class CrawlerDB:
         except sqlite3.Error:
             return False
 
-    def add_channels(self, usernames: list, parent: str = "") -> int:
-        """
-        Добавляет несколько каналов за раз.
-
-        Returns:
-            Количество добавленных новых каналов.
-        """
-        added = 0
-        for username in usernames:
-            if self.add_channel(username, parent):
-                added += 1
-        return added
-
     def get_next(self) -> Optional[str]:
         """
         Возвращает следующий канал для проверки (WAITING).
@@ -307,13 +294,6 @@ class CrawlerDB:
         )
         self.conn.commit()
 
-    def is_known(self, username: str) -> bool:
-        """Проверяет, есть ли канал в базе."""
-        username = username.lower().lstrip('@')
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT 1 FROM channels WHERE username = ?", (username,))
-        return cursor.fetchone() is not None
-
     def get_channel(self, username: str) -> Optional[ChannelRecord]:
         """Возвращает запись о канале."""
         username = username.lower().lstrip('@')
@@ -366,34 +346,6 @@ class CrawlerDB:
                 stats[status] = row['cnt']
 
         return stats
-
-    def get_good_channels(self, min_score: int = 60) -> list:
-        """Возвращает список хороших каналов."""
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT * FROM channels WHERE status = 'GOOD' AND score >= ? ORDER BY score DESC",
-            (min_score,)
-        )
-
-        channels = []
-        for row in cursor.fetchall():
-            channels.append(ChannelRecord(
-                username=row['username'],
-                status=row['status'],
-                score=row['score'],
-                verdict=row['verdict'],
-                trust_factor=row['trust_factor'],
-                members=row['members'],
-                found_via=row['found_via'],
-                ad_links=json.loads(row['ad_links']) if row['ad_links'] else [],
-                category=row['category'] if 'category' in row.keys() else None,
-                category_secondary=row['category_secondary'] if 'category_secondary' in row.keys() else None,
-                photo_url=row['photo_url'] if 'photo_url' in row.keys() else None,
-                scanned_at=row['scanned_at'],
-                created_at=row['created_at']
-            ))
-
-        return channels
 
     def get_uncategorized(self, limit: int = 100) -> list:
         """Возвращает GOOD каналы без категории (для догоняния)."""

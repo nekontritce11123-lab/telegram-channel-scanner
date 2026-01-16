@@ -731,35 +731,6 @@ def calculate_reach(avg_views: float, members_count: int) -> float:
     return (avg_views / members_count) * 100
 
 
-def calculate_comments_score(chat: Any, messages: list) -> tuple[int, str]:
-    """
-    B3: Статус комментариев.
-    Отключённые комментарии = RED FLAG.
-    Возвращает (points, status).
-    """
-    has_linked_chat = getattr(chat, 'linked_chat', None) is not None
-
-    if not has_linked_chat:
-        return 0, "disabled"  # RED FLAG
-
-    # Комментарии включены - проверяем активность
-    total_replies = 0
-    for m in messages:
-        if hasattr(m, 'replies') and m.replies:
-            total_replies += getattr(m.replies, 'replies', 0) or 0
-
-    avg_replies = total_replies / len(messages) if messages else 0
-
-    if avg_replies < 0.5:
-        return 3, f"enabled (avg {avg_replies:.1f})"
-    elif avg_replies < 2:
-        return 8, f"enabled (avg {avg_replies:.1f})"
-    elif avg_replies < 5:
-        return 12, f"enabled (avg {avg_replies:.1f})"
-    else:
-        return 15, f"enabled (avg {avg_replies:.1f})"
-
-
 def calculate_forwards_ratio(messages: list) -> float:
     """
     B4: Соотношение пересылок к просмотрам (%).
@@ -788,17 +759,6 @@ def calculate_reaction_rate(messages: list) -> float:
         return 0.0
 
     return (total_reactions / total_views) * 100
-
-
-def calculate_originality(messages: list) -> float:
-    """
-    B6: Доля оригинального контента (%).
-    """
-    if not messages:
-        return 0.0
-
-    original = sum(1 for m in messages if not getattr(m, 'forward_from_chat', None))
-    return (original / len(messages)) * 100
 
 
 # ============================================================================
@@ -856,29 +816,6 @@ def calculate_views_decay(messages: list) -> float:
         return 1.0
 
     return old_avg_norm / new_avg_norm
-
-
-def calculate_growth_velocity(chat: Any) -> float:
-    """
-    C2: Скорость роста подписчиков (подписчиков в день).
-    """
-    chat_date = getattr(chat, 'date', None)
-    members = getattr(chat, 'members_count', 0) or 0
-
-    if not chat_date:
-        return 0.0
-
-    # Убеждаемся что дата имеет timezone
-    if chat_date.tzinfo is None:
-        chat_date = chat_date.replace(tzinfo=timezone.utc)
-
-    now = datetime.now(timezone.utc)
-    age_days = (now - chat_date).days
-
-    if age_days < 1:
-        age_days = 1
-
-    return members / age_days
 
 
 def get_channel_age_days(chat: Any) -> int:
@@ -1116,20 +1053,6 @@ def calculate_reaction_stability(messages: list) -> dict:
         'unique_types': len(all_emojis),
         'posts_analyzed': len(post_distributions),
         'distribution': total_counts
-    }
-
-
-def calculate_reaction_diversity(messages: list) -> dict:
-    """
-    DEPRECATED: Используйте calculate_reaction_stability().
-    Оставлено для обратной совместимости.
-    """
-    result = calculate_reaction_stability(messages)
-    return {
-        'unique_types': result.get('unique_types', 0),
-        'simple_ratio': 0.5,  # Placeholder
-        'total': sum(result.get('distribution', {}).values()) if result.get('distribution') else 0,
-        'distribution': result.get('distribution', {})
     }
 
 
@@ -1419,95 +1342,6 @@ def calculate_ad_load(messages: list, channel_username: str = None) -> dict:
 
 
 # ============================================================================
-# F16: REACTION FLATNESS (v7.1 Adaptive Paranoia Mode)
-# ============================================================================
-
-def check_f16_reaction_flatness(messages: list) -> dict:
-    """
-    F16: Reaction Flatness - детектор накрутки для каналов без комментов.
-    v7.1: Применяется ТОЛЬКО в Hardcore Mode (когда forensics недоступен).
-
-    Суть: Раз не видим КТО ставил реакции, смотрим КАК они распределены между постами.
-    Паттерн накрутки: Боты ставят ровное количество реакций — 200, 200, 198, 202.
-
-    Алгоритм:
-    - Собираем total реакций на последних 5 постах
-    - Считаем CV (coefficient of variation) этих чисел
-    - CV < 10% = подозрительно ровно = боты
-
-    Returns:
-        {
-            'triggered': bool,
-            'penalty': int (-20 если триггерит, 0 иначе),
-            'cv': float,
-            'totals': list[int],
-            'description': str
-        }
-    """
-    FLATNESS_CV_THRESHOLD = 10  # CV < 10% = подозрительно
-    FLATNESS_PENALTY = -20
-
-    # Собираем total реакций на последних 5 постах
-    totals = []
-    for msg in messages[:5]:
-        if not hasattr(msg, 'reactions') or not msg.reactions:
-            continue
-
-        reactions = msg.reactions
-        if not hasattr(reactions, 'reactions') or not reactions.reactions:
-            continue
-
-        total = 0
-        for r in reactions.reactions:
-            total += getattr(r, 'count', 0) or 0
-
-        if total > 0:
-            totals.append(total)
-
-    # Нужно минимум 3 поста для анализа
-    if len(totals) < 3:
-        return {
-            'triggered': False,
-            'penalty': 0,
-            'cv': 0.0,
-            'totals': totals,
-            'description': 'Недостаточно данных для анализа (< 3 постов с реакциями)'
-        }
-
-    # Считаем CV реакций между постами
-    mean = sum(totals) / len(totals)
-    if mean == 0:
-        return {
-            'triggered': False,
-            'penalty': 0,
-            'cv': 0.0,
-            'totals': totals,
-            'description': 'Нет реакций на постах'
-        }
-
-    variance = sum((x - mean) ** 2 for x in totals) / len(totals)
-    cv = (variance ** 0.5 / mean) * 100
-
-    # CV < 10% = подозрительно ровно = боты
-    if cv < FLATNESS_CV_THRESHOLD:
-        return {
-            'triggered': True,
-            'penalty': FLATNESS_PENALTY,
-            'cv': round(cv, 1),
-            'totals': totals,
-            'description': f'Реакции подозрительно ровные (CV={cv:.1f}% < {FLATNESS_CV_THRESHOLD}%)'
-        }
-
-    return {
-        'triggered': False,
-        'penalty': 0,
-        'cv': round(cv, 1),
-        'totals': totals,
-        'description': f'CV реакций {cv:.1f}% - в норме'
-    }
-
-
-# ============================================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================================
 
@@ -1535,72 +1369,8 @@ def get_raw_stats(messages: list) -> dict:
 
 
 # ============================================================================
-# v15.0: SCAM NETWORK + PRIVATE LINKS DETECTION
+# v15.0: PRIVATE LINKS DETECTION
 # ============================================================================
-
-def check_scam_network(ad_links: list, db) -> dict:
-    """
-    Проверяет статус рекламируемых каналов.
-    НАКОПИТЕЛЬНАЯ система штрафов:
-    - 1 BAD канал = ×0.93 (почти без штрафа)
-    - 1 SCAM канал = ×0.85
-    - Много плохих = накопительный штраф
-    - >50% SCAM = ×0.40 (участник скам-сети)
-    """
-    scam_count = 0
-    bad_count = 0
-    risk_count = 0
-    checked = []
-    scam_channels = []
-
-    for link in ad_links:
-        if not link:
-            continue
-        # Нормализуем username
-        username = link.lower().strip().lstrip('@')
-        channel = db.get_channel(username) if db else None
-
-        if not channel:
-            continue
-        checked.append(username)
-
-        # Проверяем score
-        score = channel.get('score') or channel.get('final_score') or 100
-        if hasattr(channel, 'score'):
-            score = channel.score
-        elif isinstance(channel, dict):
-            score = channel.get('score', channel.get('final_score', 100))
-
-        if score < 25:  # SCAM
-            scam_count += 1
-            scam_channels.append(username)
-        elif score < 40:  # BAD
-            bad_count += 1
-        elif score < 55:  # RISK
-            risk_count += 1
-
-    # Накопительный множитель
-    trust_mult = 1.0
-    trust_mult *= 0.85 ** scam_count   # каждый SCAM = ×0.85
-    trust_mult *= 0.93 ** bad_count    # каждый BAD = ×0.93
-    trust_mult *= 0.97 ** risk_count   # каждый RISK = ×0.97
-
-    # Если >50% рекламы = SCAM — жёсткий штраф
-    total_checked = len(checked)
-    scam_ratio = scam_count / max(total_checked, 1)
-    if scam_ratio > 0.5:
-        trust_mult = min(trust_mult, 0.40)
-
-    return {
-        'scam_count': scam_count,
-        'bad_count': bad_count,
-        'risk_count': risk_count,
-        'total_checked': total_checked,
-        'scam_ratio': round(scam_ratio, 2),
-        'trust_multiplier': round(trust_mult, 3),
-        'scam_channels': scam_channels[:3]
-    }
-
 
 def analyze_private_invites(messages: list, category: str = None, comments_enabled: bool = True) -> dict:
     """

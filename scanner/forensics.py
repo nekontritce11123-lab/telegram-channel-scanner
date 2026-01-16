@@ -468,29 +468,3 @@ class UserForensics:
             users_analyzed=users_count,
             status='complete'
         )
-
-
-# ============================================================================
-# УТИЛИТА: Дедупликация юзеров
-# ============================================================================
-
-def deduplicate_users(users: list) -> list:
-    """
-    Убирает дубликаты юзеров по ID.
-
-    Args:
-        users: Список User объектов
-
-    Returns:
-        Список уникальных User объектов
-    """
-    seen = set()
-    unique = []
-
-    for user in users:
-        user_id = getattr(user, 'id', None)
-        if user_id and user_id not in seen:
-            seen.add(user_id)
-            unique.append(user)
-
-    return unique
