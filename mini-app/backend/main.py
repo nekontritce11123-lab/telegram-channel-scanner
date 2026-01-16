@@ -685,32 +685,23 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
                 },
                 'invert': False,  # Меньше = лучше
             },
-            'regularity': {
-                'label': 'Регулярность',
-                'value_key': 'value',  # CV постинга
-                'format': 'cv',
+            'activity': {
+                'label': 'Активность',
+                'source_key': 'posting_frequency',  # v25.0: берём данные из posting_frequency
+                'value_key': 'posts_per_day',
+                'format': 'posts_day_smart',  # v25.0: умное форматирование
                 'thresholds': {
-                    'good': (0, 50),      # CV < 50% = регулярный
-                    'warning': (50, 100), # CV 50-100% = нерегулярный
-                    'bad': (100, 1000),   # CV > 100% = хаотичный
+                    # v25.0: Двусторонние пороги - редко плохо, много тоже плохо
+                    'bad_low': (0, 0.14),       # < 1/неделя = мёртвый канал
+                    'warning_low': (0.14, 0.5), # 1-3/неделя = редко
+                    'good': (0.5, 8),           # 0.5-8/день = активный
+                    'warning_high': (8, 15),    # 8-15/день = очень активный
+                    'bad_high': (15, 1000),     # >15/день = спам
                 },
-                'invert': False,  # Меньше CV = более регулярный
             },
         },
         'reputation': {
-            'posting_frequency': {
-                'label': 'Постинг',
-                'value_key': 'posts_per_day',
-                'format': 'posts_day',
-                'thresholds': {
-                    'good': (0.5, 5),      # 0.5-5 постов/день = нормально
-                    'warning': (5, 15),    # 5-15 постов/день = много
-                    'bad': (15, 1000),     # >15 постов/день = спам
-                },
-                'special': {
-                    'too_low': (0, 0.5),   # <0.5 постов/день = слишком редко
-                },
-            },
+            # v25.0: posting_frequency перенесён в quality как 'activity'
             'private_links': {
                 'label': 'Приватные',
                 'value_key': 'private_ratio',
@@ -728,6 +719,20 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
     def get_info_metric_status(value: float, config: dict) -> str:
         """Определяет статус info metric по thresholds."""
         thresholds = config.get('thresholds', {})
+
+        # v25.0: Двусторонние пороги (bad_low, warning_low, good, warning_high, bad_high)
+        if 'bad_low' in thresholds:
+            if thresholds['bad_low'][0] <= value < thresholds['bad_low'][1]:
+                return 'bad'
+            if 'warning_low' in thresholds and thresholds['warning_low'][0] <= value < thresholds['warning_low'][1]:
+                return 'warning'
+            if thresholds['good'][0] <= value < thresholds['good'][1]:
+                return 'good'
+            if 'warning_high' in thresholds and thresholds['warning_high'][0] <= value < thresholds['warning_high'][1]:
+                return 'warning'
+            if 'bad_high' in thresholds and value >= thresholds['bad_high'][0]:
+                return 'bad'
+            return 'warning'
 
         # Специальные случаи (например, слишком редкий постинг)
         special = config.get('special', {})
@@ -755,6 +760,18 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
                 return f"{value:.1f}/день"
             else:
                 return f"{value:.0f}/день"
+        elif fmt == 'posts_day_smart':
+            # v25.0: Умное форматирование - показываем в удобных единицах
+            if value < 0.14:  # < 1/неделя
+                posts_per_month = value * 30
+                if posts_per_month < 1:
+                    return "< 1/мес"
+                return f"{posts_per_month:.0f}/мес"
+            elif value < 1:  # < 1/день
+                posts_per_week = value * 7
+                return f"{posts_per_week:.1f}/нед"
+            else:
+                return f"{value:.1f}/день"
         return str(value)
 
     result = {}
@@ -828,7 +845,9 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
         cat_info_config = INFO_METRICS_CONFIG.get(cat_key, {})
 
         for info_key, config in cat_info_config.items():
-            info_data = breakdown.get(info_key, {})
+            # v25.0: source_key позволяет брать данные из другого ключа breakdown
+            source_key = config.get('source_key', info_key)
+            info_data = breakdown.get(source_key, {})
             if not info_data:
                 continue
 
@@ -850,11 +869,17 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
             # Форматируем значение для отображения
             formatted_value = format_info_value(float_value, config.get('format', 'percent'), config)
 
+            # v24.0: bar_percent для прогресс-бара (good=100%, warning=60%, bad=20%)
+            bar_percent = 100 if status == 'good' else 60 if status == 'warning' else 20
+
             info_metrics[info_key] = {
+                'score': 0,
+                'max': 0,
                 'value': formatted_value,
                 'label': config['label'],
                 'status': status,
-                'raw_value': float_value,  # Для отладки
+                'bar_percent': bar_percent,  # v24.0: для прогресс-бара
+                'raw_value': float_value,
             }
 
         result[cat_key] = {

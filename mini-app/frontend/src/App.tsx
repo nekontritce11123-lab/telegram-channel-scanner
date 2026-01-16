@@ -332,15 +332,10 @@ const METRIC_DESCRIPTIONS: Record<string, { title: string; description: string; 
     description: 'Процент постов с рекламой от общего числа.',
     interpretation: 'До 20% — норма. 20-30% — много. Больше 30% — аудитория устаёт от рекламы.'
   },
-  'regularity': {
-    title: 'Регулярность постинга',
-    description: 'Насколько равномерно публикуются посты.',
-    interpretation: '0.3-0.7 — нормально. Меньше 0.2 — подозрительно ровно (возможно бот).'
-  },
-  'posting_frequency': {
-    title: 'Частота публикаций',
-    description: 'Сколько постов в день публикует канал.',
-    interpretation: '1-5 постов/день — норма. 6-12 — активно. Больше 12 — спам.'
+  'activity': {
+    title: 'Активность канала',
+    description: 'Как часто публикуются посты на канале.',
+    interpretation: '1-5 постов/день — активный канал. Меньше 1/неделю — канал еле живой. Больше 15/день — спам.'
   },
   'private_links': {
     title: 'Приватные ссылки',
@@ -392,7 +387,7 @@ function SkeletonCard() {
 
 // v12.0: MetricItem component with progress bar
 // v22.2: Support for disabled metrics (reactions/comments off)
-// v23.0: Support for Info Metrics (value without max, e.g. ad_load, regularity)
+// v25.0: Support for Info Metrics (value without max, e.g. ad_load, activity)
 function MetricItem({ item, onClick }: { item: { score: number; max: number; label: string; disabled?: boolean; value?: string; status?: 'good' | 'warning' | 'bad' }; onClick: () => void }) {
   // v22.2: If disabled, show "откл." and grey bar
   if (item.disabled) {
@@ -409,22 +404,28 @@ function MetricItem({ item, onClick }: { item: { score: number; max: number; lab
     )
   }
 
-  // v23.0: Info Metric - has value but no max (e.g. "15%", "3.2 п/д")
-  // Показываем value + цветную точку статуса БЕЗ прогресс-бара
+  // v24.0: Info Metric - показываем прогресс-бар как Score Metrics
+  // bar_percent: good=100%, warning=60%, bad=20%
   if (item.value && item.max === 0) {
-    const statusColor = item.status === 'good' ? 'var(--verdict-excellent)'
-      : item.status === 'warning' ? 'var(--verdict-medium)'
-      : item.status === 'bad' ? 'var(--verdict-high-risk)'
-      : 'var(--hint-color)'
+    const barPercent = (item as { bar_percent?: number }).bar_percent ?? (
+      item.status === 'good' ? 100 : item.status === 'warning' ? 60 : 20
+    )
+    // Используем те же CSS классы что и для Score Metrics
+    const colorClass = item.status === 'good' ? 'excellent'
+      : item.status === 'warning' ? 'warning'
+      : 'poor'
 
     return (
-      <div className={`${styles.metricItem} ${styles.metricItemInfo}`} onClick={onClick} role="button" tabIndex={0}>
+      <div className={styles.metricItem} onClick={onClick} role="button" tabIndex={0}>
         <div className={styles.metricItemHeader}>
           <span className={styles.metricItemLabel}>{item.label}</span>
-          <div className={styles.metricItemInfoValue}>
-            <span className={styles.metricItemValue}>{item.value}</span>
-            <span className={styles.metricStatusDot} style={{ backgroundColor: statusColor }} />
-          </div>
+          <span className={styles.metricItemValue}>{item.value}</span>
+        </div>
+        <div className={styles.metricBar}>
+          <div
+            className={`${styles.metricBarFill} ${styles[colorClass]}`}
+            style={{ width: `${barPercent}%` }}
+          />
         </div>
       </div>
     )
@@ -768,6 +769,14 @@ function App() {
                     onClick={() => setSelectedMetric(key)}
                   />
                 ))}
+                {/* v25.0: Info Metrics (ad_load, activity) */}
+                {breakdown.quality.info_metrics && Object.entries(breakdown.quality.info_metrics).map(([key, item]) => (
+                  <MetricItem
+                    key={key}
+                    item={item as { score: number; max: number; label: string; disabled?: boolean; value?: string; status?: 'good' | 'warning' | 'bad' }}
+                    onClick={() => setSelectedMetric(key)}
+                  />
+                ))}
               </div>
 
               {/* Engagement Block */}
@@ -795,6 +804,14 @@ function App() {
                   <MetricItem
                     key={key}
                     item={item}
+                    onClick={() => setSelectedMetric(key)}
+                  />
+                ))}
+                {/* v25.0: Info Metrics (private_links) */}
+                {breakdown.reputation.info_metrics && Object.entries(breakdown.reputation.info_metrics).map(([key, item]) => (
+                  <MetricItem
+                    key={key}
+                    item={item as { score: number; max: number; label: string; disabled?: boolean; value?: string; status?: 'good' | 'warning' | 'bad' }}
                     onClick={() => setSelectedMetric(key)}
                   />
                 ))}

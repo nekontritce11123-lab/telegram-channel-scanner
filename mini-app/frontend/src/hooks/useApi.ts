@@ -26,18 +26,31 @@ export interface Channel {
 
 // v7.0: Detailed breakdown structure
 // v22.2: Added disabled flag for reactions/comments off
+// v23.1: Added status for Info Metrics
 export interface MetricItem {
   score: number
   max: number
   label: string
   value?: string    // Optional human-readable value (e.g., "2 года", "откл.")
   disabled?: boolean  // v22.2: True when metric is disabled (floating weights)
+  status?: 'good' | 'warning' | 'bad'  // v23.1: Info Metric status
+}
+
+// v24.0: Info Metric with bar_percent for progress bar
+export interface InfoMetricItem {
+  score: number  // Always 0 for info metrics
+  max: number    // Always 0 for info metrics
+  label: string
+  value: string  // e.g. "15%", "3.2 п/д"
+  status: 'good' | 'warning' | 'bad'
+  bar_percent: number  // 100 for good, 60 for warning, 20 for bad
 }
 
 export interface BreakdownCategory {
   total: number
   max: number
   items: Record<string, MetricItem>
+  info_metrics?: Record<string, InfoMetricItem>  // v23.1: Info Metrics (ad_load, regularity, etc.)
 }
 
 export interface Breakdown {

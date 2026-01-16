@@ -213,6 +213,7 @@ class CrawlerDB:
         ad_links_json = json.dumps(ad_links or [])
 
         cursor = self.conn.cursor()
+        # v24.0: COALESCE чтобы не перезаписывать category если NULL
         cursor.execute('''
             UPDATE channels SET
                 status = ?,
@@ -221,8 +222,8 @@ class CrawlerDB:
                 trust_factor = ?,
                 members = ?,
                 ad_links = ?,
-                category = ?,
-                category_secondary = ?,
+                category = COALESCE(?, category),
+                category_secondary = COALESCE(?, category_secondary),
                 scanned_at = ?
             WHERE username = ?
         ''', (status, score, verdict, trust_factor, members, ad_links_json, category, category_secondary, datetime.now(), username))

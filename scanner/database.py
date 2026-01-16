@@ -270,6 +270,8 @@ class CrawlerDB:
             }, ensure_ascii=False)
 
         cursor = self.conn.cursor()
+        # v24.0: COALESCE чтобы не перезаписывать category/category_secondary если NULL
+        # Это позволяет классификатору работать параллельно с mark_done
         cursor.execute('''
             UPDATE channels SET
                 status = ?,
@@ -278,8 +280,8 @@ class CrawlerDB:
                 trust_factor = ?,
                 members = ?,
                 ad_links = ?,
-                category = ?,
-                category_secondary = ?,
+                category = COALESCE(?, category),
+                category_secondary = COALESCE(?, category_secondary),
                 photo_url = ?,
                 breakdown_json = ?,
                 scanned_at = ?
