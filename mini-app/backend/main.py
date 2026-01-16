@@ -424,9 +424,16 @@ def estimate_avg_views(members: int, breakdown: dict = None, score: int = 50) ->
         quality = breakdown.get('quality', {})
         items = quality.get('items', {})
         reach_item = items.get('reach', {})
-        # reach value обычно 0-20 (процент)
+        # reach value обычно 0-20 (процент) - может быть строкой или числом
         if 'value' in reach_item:
-            reach_percent = max(1, min(50, reach_item['value']))
+            try:
+                val = reach_item['value']
+                # Если строка с % - убираем %
+                if isinstance(val, str):
+                    val = val.replace('%', '').strip()
+                reach_percent = max(1, min(50, float(val)))
+            except (ValueError, TypeError):
+                pass  # Используем default
         elif reach_item.get('score', 0) > 0:
             # Оценка по score: score 10/10 = 20% reach
             reach_percent = (reach_item['score'] / reach_item.get('max', 10)) * 20
