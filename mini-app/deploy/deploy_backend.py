@@ -30,19 +30,35 @@ def deploy():
     dirs_to_create = [
         REMOTE_PATH,
         f"{REMOTE_PATH}/scanner",
-        f"{REMOTE_PATH}/api",
     ]
     for d in dirs_to_create:
         ssh.exec_command(f"mkdir -p {d}")
 
-    print("Загружаю файлы...")
-    for local_file in local_backend.rglob("*"):
+    # v24.0: Копируем основной scanner/ из корня проекта (не дубль из backend/)
+    print("Загружаю scanner/ из корня проекта...")
+    local_scanner = Path(__file__).parent.parent.parent / "scanner"
+    for local_file in local_scanner.rglob("*"):
         if local_file.is_file() and "__pycache__" not in str(local_file):
+            relative = local_file.relative_to(local_scanner)
+            remote_file = f"{REMOTE_PATH}/scanner/{relative}"
+            remote_dir = os.path.dirname(remote_file)
+
+            ssh.exec_command(f"mkdir -p {remote_dir}")
+
+            try:
+                sftp.put(str(local_file), remote_file)
+                print(f"  scanner/{relative}")
+            except Exception as e:
+                print(f"  Ошибка scanner/{relative}: {e}")
+
+    print("Загружаю backend файлы...")
+    for local_file in local_backend.rglob("*"):
+        # v24.0: Пропускаем scanner/ — уже скопирован из корня
+        if local_file.is_file() and "__pycache__" not in str(local_file) and "scanner" not in str(local_file):
             relative = local_file.relative_to(local_backend)
             remote_file = f"{REMOTE_PATH}/{relative}"
             remote_dir = os.path.dirname(remote_file)
 
-            # Создаём директорию
             ssh.exec_command(f"mkdir -p {remote_dir}")
 
             try:
