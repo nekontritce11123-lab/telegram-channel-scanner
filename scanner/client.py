@@ -325,6 +325,9 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
         )
     )
 
+    # v15.2: Пауза между запросами для снижения риска FloodWait
+    await asyncio.sleep(0.5)
+
     # v16.0: Создаём маппинг channel_id → username для репостов
     chats_map = {}
     if hasattr(raw_result, 'chats') and raw_result.chats:
@@ -415,6 +418,9 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
 
     # Дедупликация юзеров
     users_for_forensics = _deduplicate_users(users_for_forensics)
+
+    # v15.2: Пауза перед последним запросом
+    await asyncio.sleep(0.5)
 
     # =========================================================================
     # ЗАПРОС 3: GetFullChannel - Ghost Protocol (online_count)
@@ -533,10 +539,12 @@ async def smart_scan_safe(client: Client, channel: str, max_retries: int = 3) ->
             return await smart_scan(client, channel)
 
         except FloodWait as e:
-            wait_time = e.value + 5  # +5 сек запас
-            hours = e.value // 3600
-            mins = (e.value % 3600) // 60
-            secs = e.value % 60
+            # v15.2: Экспоненциальный backoff - увеличиваем паузу с каждой попыткой
+            backoff = (2 ** attempt) * 2  # 2, 4, 8 сек
+            wait_time = e.value + 5 + backoff
+            hours = wait_time // 3600
+            mins = (wait_time % 3600) // 60
+            secs = wait_time % 60
 
             # Всегда ждём FloodWait — никогда не пропускаем!
             if hours > 0:

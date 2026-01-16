@@ -25,11 +25,13 @@ export interface Channel {
 }
 
 // v7.0: Detailed breakdown structure
+// v22.2: Added disabled flag for reactions/comments off
 export interface MetricItem {
   score: number
   max: number
   label: string
-  value?: string  // Optional human-readable value (e.g., "2 года")
+  value?: string    // Optional human-readable value (e.g., "2 года", "откл.")
+  disabled?: boolean  // v22.2: True when metric is disabled (floating weights)
 }
 
 export interface BreakdownCategory {

@@ -54,6 +54,8 @@ from .metrics import (
     analyze_private_invites,
     # v22.3: Для определения reactions_enabled
     get_message_reactions_count,
+    # v22.4: Правильная проверка включены ли реакции
+    check_reactions_enabled,
 )
 from .forensics import UserForensics
 
@@ -1061,14 +1063,10 @@ def calculate_final_score(
     comments_enabled = comments_data.get('enabled', False)
     is_verified = getattr(chat, 'is_verified', False)
 
-    # v15.2: Определяем включены ли реакции
-    # Если total_reactions = 0 на ВСЕХ постах - реакции отключены
-    # v22.3: Используем get_message_reactions_count() вместо несуществующего поля
-    total_reactions = sum(
-        get_message_reactions_count(m)
-        for m in messages
-    )
-    reactions_enabled = total_reactions > 0
+    # v22.4: Определяем включены ли реакции
+    # ВАЖНО: Если реакций 0, но атрибут reactions есть - реакции ВКЛЮЧЕНЫ
+    # Раньше была ошибка: total_reactions > 0 возвращал False если никто не реагировал
+    reactions_enabled = check_reactions_enabled(messages)
 
     # Floating weights для комментариев И реакций (v15.2)
     weights = calculate_floating_weights(comments_enabled, reactions_enabled)

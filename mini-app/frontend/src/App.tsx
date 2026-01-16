@@ -370,7 +370,23 @@ function SkeletonCard() {
 }
 
 // v12.0: MetricItem component with progress bar
-function MetricItem({ item, onClick }: { item: { score: number; max: number; label: string }; onClick: () => void }) {
+// v22.2: Support for disabled metrics (reactions/comments off)
+function MetricItem({ item, onClick }: { item: { score: number; max: number; label: string; disabled?: boolean; value?: string }; onClick: () => void }) {
+  // v22.2: If disabled, show "откл." and grey bar
+  if (item.disabled || item.max === 0) {
+    return (
+      <div className={`${styles.metricItem} ${styles.metricItemDisabled}`} onClick={onClick} role="button" tabIndex={0}>
+        <div className={styles.metricItemHeader}>
+          <span className={styles.metricItemLabel}>{item.label}</span>
+          <span className={styles.metricItemValue}>{item.value || 'откл.'}</span>
+        </div>
+        <div className={styles.metricBar}>
+          <div className={styles.metricBarDisabled} style={{ width: '100%' }} />
+        </div>
+      </div>
+    )
+  }
+
   const pct = (item.score / item.max) * 100
   const colorClass = getMetricColorClass(item.score, item.max)
 

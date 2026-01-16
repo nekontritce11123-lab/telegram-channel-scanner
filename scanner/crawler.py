@@ -34,7 +34,7 @@ from pyrogram import Client
 from .database import CrawlerDB
 from .client import get_client, smart_scan_safe, resolve_invite_link
 from .scorer import calculate_final_score
-from .classifier import get_classifier, ChannelClassifier, parse_category_response
+from .classifier import get_classifier, ChannelClassifier
 
 
 # Настройки rate limiting
@@ -139,14 +139,13 @@ class SmartCrawler:
     def _on_category_ready(self, channel_id: int, category: str):
         """
         Callback когда категория готова - сохраняем в БД.
-        v20.0: Поддерживает проценты формат: "ENTERTAINMENT:70+CRYPTO:30"
+        v15.0: category - уже готовая строка (CRYPTO, TECH, и т.д.)
         """
         # Находим username по channel_id (храним маппинг)
         username = self._channel_id_to_username.get(channel_id)
         if username:
-            # Парсим категории с процентами
-            primary, secondary, percent = parse_category_response(category)
-            self.db.set_category(username, primary, secondary, percent)
+            # v15.0: category это строка, не нужно парсить
+            self.db.set_category(username, category, None, 100)
             self.classified_count += 1
 
     def add_seeds(self, channels: list):
@@ -292,6 +291,16 @@ class SmartCrawler:
             verdict = score_result.get('verdict', '')
             trust_factor = score_result.get('trust_factor', 1.0)
             members = score_result.get('members', 0)
+
+            # v22.5: Добавляем flags в breakdown для корректного отображения в UI
+            # (reactions_enabled, comments_enabled, floating_weights)
+            breakdown = score_result.get('breakdown', {})
+            flags = score_result.get('flags', {})
+            if breakdown and flags:
+                breakdown['reactions_enabled'] = flags.get('reactions_enabled', True)
+                breakdown['comments_enabled'] = flags.get('comments_enabled', True)
+                breakdown['floating_weights'] = flags.get('floating_weights', False)
+                score_result['breakdown'] = breakdown
 
             result['score'] = score
             result['verdict'] = verdict

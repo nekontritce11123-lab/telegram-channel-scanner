@@ -1005,6 +1005,36 @@ def get_message_reactions_count(message: Any) -> int:
     return 0
 
 
+def check_reactions_enabled(messages: list) -> bool:
+    """
+    v22.4: Проверяет включены ли реакции на канале.
+
+    Логика:
+    - Если реакции ОТКЛЮЧЕНЫ: ни один пост не имеет атрибута reactions
+    - Если реакции ВКЛЮЧЕНЫ (но никто не реагировал): атрибут есть, но пустой/None
+    - Если есть хоть одна реакция: точно включены
+
+    Возвращает True если реакции включены (даже если 0 реакций).
+    """
+    if not messages:
+        return True  # По умолчанию считаем включёнными
+
+    # Проверяем есть ли реакции хоть на одном посте
+    total_reactions = sum(get_message_reactions_count(m) for m in messages)
+    if total_reactions > 0:
+        return True  # Есть реакции = точно включены
+
+    # Проверяем есть ли атрибут reactions хоть у одного поста
+    # Telegram не возвращает reactions если они отключены на канале
+    for m in messages:
+        if hasattr(m, 'reactions') and m.reactions is not None:
+            # Атрибут есть, но реакций нет = включены, просто никто не реагировал
+            return True
+
+    # Ни у одного поста нет атрибута reactions = реакции отключены
+    return False
+
+
 def get_reaction_emoji(reaction: Any) -> str:
     """Безопасно получает emoji реакции."""
     # Pyrogram ReactionCount имеет атрибут reaction

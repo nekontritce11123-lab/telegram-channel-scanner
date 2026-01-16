@@ -18,82 +18,80 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 load_dotenv()
 
-# v13.2: Цена за 1000 подписчиков — ЦЕНТРАЛЬНЫЕ значения
-# Источники: Telega.in, TGStat, биржи рекламы (2025)
-# Формула v13.2: center_price × (1 ± PRICE_RANGE) для ±5% коридора
-BASE_PER_1K = {
-    # Премиум сегмент
-    "CRYPTO": 3500,       # центр 2000-5000
-    "FINANCE": 2250,      # центр 1500-3000
-    "REAL_ESTATE": 2250,  # центр 1500-3000
-    "BUSINESS": 1850,     # центр 1200-2500
+# v15.0: CPM-based ценообразование (рублей за 1000 ПРОСМОТРОВ)
+# Калиброваны по реальным сделкам:
+# - Крипто 800 views, score 82 = $30 = 2700₽
+# - TECH 2900 views, score 80 = ~$32 = 2900₽
+# - AI_ML 2900 views, score 80 = ~$27 = 2465₽
+CPM_RATES = {
+    # Премиум (крипто самая дорогая!)
+    "CRYPTO":       {"low": 800,  "avg": 1500, "high": 3000},
+    "FINANCE":      {"low": 650,  "avg": 1000, "high": 1700},
+    "REAL_ESTATE":  {"low": 500,  "avg": 850,  "high": 1500},
+    "BUSINESS":     {"low": 400,  "avg": 650,  "high": 1200},
 
-    # Технологии
-    "TECH": 750,          # центр 500-1000
-    "AI_ML": 1150,        # центр 800-1500
+    # Технологии (~3x дешевле крипты)
+    "TECH":         {"low": 350,  "avg": 600,  "high": 1000},
+    "AI_ML":        {"low": 300,  "avg": 500,  "high": 850},
 
     # Образование/Лайфстайл
-    "EDUCATION": 900,     # центр 600-1200
-    "BEAUTY": 700,        # центр 500-900
-    "HEALTH": 700,        # центр 500-900
-    "TRAVEL": 800,        # центр 600-1000
+    "EDUCATION":    {"low": 200,  "avg": 350,  "high": 600},
+    "BEAUTY":       {"low": 130,  "avg": 230,  "high": 400},
+    "HEALTH":       {"low": 130,  "avg": 230,  "high": 400},
+    "TRAVEL":       {"low": 170,  "avg": 300,  "high": 500},
 
-    # Контент
-    "LIFESTYLE": 550,     # центр 400-700
-    "RETAIL": 450,        # центр 300-600
-    "NEWS": 300,          # центр 200-400
-    "ENTERTAINMENT": 225, # центр 150-300
+    # Контент (самые дешёвые)
+    "RETAIL":       {"low": 85,   "avg": 150,  "high": 300},
+    "NEWS":         {"low": 65,   "avg": 170,  "high": 400},
+    "ENTERTAINMENT":{"low": 35,   "avg": 85,   "high": 170},
+    "LIFESTYLE":    {"low": 100,  "avg": 200,  "high": 400},
 
-    # Риск сегмент
-    "GAMBLING": 1150,     # центр 800-1500
-    "ADULT": 750,         # центр 500-1000
-    "OTHER": 225,         # центр 150-300
+    # Риск (высокий CPM но сложно продать)
+    "GAMBLING":     {"low": 650,  "avg": 1150, "high": 1700},
+    "ADULT":        {"low": 65,   "avg": 130,  "high": 200},
+    "OTHER":        {"low": 65,   "avg": 130,  "high": 270},
 }
 
-# v13.2: Коридор цен ±5% от центральной цены (10% всего)
-PRICE_RANGE = 0.05
+# v15.0: Коридор цен ±10% от расчётной цены
+PRICE_RANGE = 0.10
 
-# v13.0: Коэффициент спроса на категорию (тренды 2025)
-CATEGORY_DEMAND = {
-    "CRYPTO": 1.0,       # Волатильность рынка
-    "FINANCE": 1.0,      # Стабильный спрос
-    "REAL_ESTATE": 0.9,  # Небольшой спад
-    "BUSINESS": 1.1,     # Рост B2B
-    "TECH": 1.1,         # Стабильный спрос
-    "AI_ML": 1.3,        # Хайп AI = +30%
-    "EDUCATION": 1.2,    # Рост EdTech
-    "BEAUTY": 1.0,       # Стабильный
-    "HEALTH": 1.1,       # Рост ЗОЖ
-    "TRAVEL": 1.15,      # Восстановление туризма
-    "LIFESTYLE": 1.0,    # Стабильный
-    "RETAIL": 1.0,       # Стабильный
-    "NEWS": 0.9,         # Небольшой спад
-    "ENTERTAINMENT": 1.0, # Стабильный
-    "GAMBLING": 1.0,     # Стабильный
-    "ADULT": 0.9,        # Ограничения
-    "OTHER": 1.0,        # Базовый
-}
 
-# Legacy POST_PRICES для обратной совместимости (get_cpm_range)
-POST_PRICES = {
-    "CRYPTO": {"min": 5000, "max": 12000},
-    "FINANCE": {"min": 3000, "max": 8000},
-    "REAL_ESTATE": {"min": 4000, "max": 7000},
-    "BUSINESS": {"min": 3000, "max": 8000},
-    "TECH": {"min": 10000, "max": 16200},
-    "AI_ML": {"min": 8000, "max": 15000},
-    "EDUCATION": {"min": 1500, "max": 3000},
-    "BEAUTY": {"min": 1500, "max": 2500},
-    "HEALTH": {"min": 1000, "max": 2000},
-    "TRAVEL": {"min": 800, "max": 1500},
-    "RETAIL": {"min": 500, "max": 1200},
-    "ENTERTAINMENT": {"min": 100, "max": 300},
-    "NEWS": {"min": 200, "max": 400},
-    "LIFESTYLE": {"min": 500, "max": 1500},
-    "GAMBLING": {"min": 3000, "max": 10000},
-    "ADULT": {"min": 2000, "max": 5000},
-    "OTHER": {"min": 300, "max": 1000},
-}
+def normalize_category(category: str) -> str:
+    """Нормализует категорию: uppercase + fallback на OTHER."""
+    if not category:
+        return "OTHER"
+    cat = category.upper().replace("/", "_").replace(" ", "_")
+    if cat not in CPM_RATES:
+        return "OTHER"
+    return cat
+
+
+def get_cpm_by_score(category: str, score: int, trust_factor: float = 1.0) -> int:
+    """
+    v15.0: Выбирает CPM по score (экспоненциальная зависимость).
+    Score 80 vs 60 = разница в 2-3 раза!
+    """
+    category = normalize_category(category)
+    rates = CPM_RATES[category]
+    effective_score = score * trust_factor
+
+    if effective_score >= 80:
+        return rates["high"]
+    elif effective_score >= 70:
+        # 70-80: близко к high
+        ratio = (effective_score - 70) / 10
+        return int(rates["avg"] + (rates["high"] - rates["avg"]) * (0.5 + ratio * 0.5))
+    elif effective_score >= 55:
+        # 55-70: avg зона
+        ratio = (effective_score - 55) / 15
+        return int(rates["avg"] * (0.8 + ratio * 0.2))
+    elif effective_score >= 40:
+        # 40-55: low-avg
+        ratio = (effective_score - 40) / 15
+        return int(rates["low"] + (rates["avg"] - rates["low"]) * ratio * 0.5)
+    else:
+        # <40: ниже low
+        return int(rates["low"] * max(0.3, effective_score / 40))
 
 
 # Pydantic models
@@ -411,6 +409,35 @@ def calculate_trust_mult(trust_factor: float, trust_penalties: list = None) -> f
     return max(0.1, round(trust_mult, 3))  # Минимум 10%
 
 
+def estimate_avg_views(members: int, breakdown: dict = None, score: int = 50) -> int:
+    """
+    v15.0: Оценка средних просмотров поста.
+    Использует reach% из breakdown или оценивает по score.
+    """
+    if members <= 0:
+        return 100  # Минимум
+
+    # Пытаемся получить reach из breakdown
+    reach_percent = 10.0  # Default 10%
+
+    if breakdown:
+        quality = breakdown.get('quality', {})
+        items = quality.get('items', {})
+        reach_item = items.get('reach', {})
+        # reach value обычно 0-20 (процент)
+        if 'value' in reach_item:
+            reach_percent = max(1, min(50, reach_item['value']))
+        elif reach_item.get('score', 0) > 0:
+            # Оценка по score: score 10/10 = 20% reach
+            reach_percent = (reach_item['score'] / reach_item.get('max', 10)) * 20
+
+    # Корректировка по score (хороший канал = лучший reach)
+    score_factor = 0.7 + (score / 100) * 0.6  # 0.7 - 1.3
+
+    avg_views = int(members * (reach_percent / 100) * score_factor)
+    return max(100, avg_views)  # Минимум 100 просмотров
+
+
 def calculate_post_price(
     category: Optional[str],
     members: int,
@@ -420,66 +447,30 @@ def calculate_post_price(
     trust_penalties: list = None
 ) -> tuple:
     """
-    v13.2: Многоуровневая формула ценообразования с ±5% коридором.
-    Использует ВСЕ метрики из breakdown для точного расчёта.
+    v15.0: CPM-based ценообразование.
 
-    Формула v13.2:
-        price_center = BASE × size_k × size_mult × quality_mult × engagement_mult ×
-                       reputation_mult × trust_mult × demand_mult
-        price_min = price_center × (1 - PRICE_RANGE)
-        price_max = price_center × (1 + PRICE_RANGE)
+    Формула:
+        price = (avg_views / 1000) × CPM
+        CPM зависит от категории и score (экспоненциально)
 
     Returns:
-        (price_min, price_max): Диапазон цен за пост в рублях (±5%)
+        (price_min, price_max): Диапазон цен за пост в рублях (±10%)
     """
-    if not category or category not in BASE_PER_1K:
-        return None, None
+    # Нормализуем категорию (НИКОГДА не возвращаем None!)
+    category = normalize_category(category)
 
-    base_center = BASE_PER_1K[category]  # v13.2: одно число, не dict
+    # Оцениваем средние просмотры
+    avg_views = estimate_avg_views(members, breakdown, score)
 
-    # Размер канала в тысячах
-    size_k = members / 1000
+    # Получаем CPM по категории и score
+    cpm = get_cpm_by_score(category, score, trust_factor)
 
-    # 1. Size multiplier (нелинейный)
-    size_mult = get_size_mult(size_k)
+    # v15.0: Простая формула CPM
+    price_center = int((avg_views / 1000) * cpm)
 
-    # Если есть breakdown - используем детальные мультипликаторы
-    if breakdown:
-        # 2. Quality multiplier (из breakdown.quality)
-        quality_mult = calculate_quality_mult(breakdown)
-
-        # 3. Engagement multiplier (из breakdown.engagement)
-        engagement_mult = calculate_engagement_mult(breakdown)
-
-        # 4. Reputation multiplier (из breakdown.reputation)
-        reputation_mult = calculate_reputation_mult(breakdown)
-    else:
-        # Fallback: используем score как приближение
-        score_normalized = score / 100
-        quality_mult = 0.5 + (score_normalized ** 1.5) * 2.5
-        engagement_mult = 1.0
-        reputation_mult = 1.0
-
-    # 5. Trust multiplier (детализированный)
-    trust_mult = calculate_trust_mult(trust_factor, trust_penalties)
-
-    # 6. Category demand multiplier (тренды 2025)
-    demand_mult = CATEGORY_DEMAND.get(category, 1.0)
-
-    # ИТОГОВЫЙ РАСЧЁТ
-    total_mult = (
-        size_mult *
-        quality_mult *
-        engagement_mult *
-        reputation_mult *
-        trust_mult *
-        demand_mult
-    )
-
-    # v13.2: Центральная цена с ±5% коридором
-    price_center = int(base_center * size_k * total_mult)
-    price_min = max(500, int(price_center * (1 - PRICE_RANGE)))
-    price_max = max(800, int(price_center * (1 + PRICE_RANGE)))
+    # Коридор ±10%
+    price_min = max(100, int(price_center * (1 - PRICE_RANGE)))
+    price_max = max(200, int(price_center * (1 + PRICE_RANGE)))
 
     return price_min, price_max
 
@@ -493,58 +484,42 @@ def calculate_post_price_details(
     trust_penalties: list = None
 ) -> dict:
     """
-    v13.2: Расширенная версия calculate_post_price с деталями расчёта.
-    Возвращает все мультипликаторы для отображения в UI.
+    v15.0: CPM-based расчёт с деталями для UI.
+    ВСЕГДА возвращает dict (никогда None).
     """
-    if not category or category not in BASE_PER_1K:
-        return None
+    # Нормализуем категорию
+    category = normalize_category(category)
+    rates = CPM_RATES[category]
 
-    base_center = BASE_PER_1K[category]  # v13.2: одно число
-    size_k = members / 1000
+    # Оцениваем средние просмотры
+    avg_views = estimate_avg_views(members, breakdown, score)
 
-    # Все мультипликаторы
-    size_mult = get_size_mult(size_k)
+    # Получаем CPM по score
+    cpm = get_cpm_by_score(category, score, trust_factor)
 
-    if breakdown:
-        quality_mult = calculate_quality_mult(breakdown)
-        engagement_mult = calculate_engagement_mult(breakdown)
-        reputation_mult = calculate_reputation_mult(breakdown)
-    else:
-        score_normalized = score / 100
-        quality_mult = 0.5 + (score_normalized ** 1.5) * 2.5
-        engagement_mult = 1.0
-        reputation_mult = 1.0
-
-    trust_mult = calculate_trust_mult(trust_factor, trust_penalties)
-    demand_mult = CATEGORY_DEMAND.get(category, 1.0)
-
-    total_mult = size_mult * quality_mult * engagement_mult * reputation_mult * trust_mult * demand_mult
-
-    # v13.2: Центральная цена с ±5% коридором
-    price_center = int(base_center * size_k * total_mult)
-    price_min = max(500, int(price_center * (1 - PRICE_RANGE)))
-    price_max = max(800, int(price_center * (1 + PRICE_RANGE)))
+    # v15.0: Простая формула
+    price_center = int((avg_views / 1000) * cpm)
+    price_min = max(100, int(price_center * (1 - PRICE_RANGE)))
+    price_max = max(200, int(price_center * (1 + PRICE_RANGE)))
 
     return {
         "min": price_min,
         "max": price_max,
-        "base_price": base_center,
-        "size_mult": round(size_mult, 2),
-        "quality_mult": round(quality_mult, 2),
-        "engagement_mult": round(engagement_mult, 2),
-        "reputation_mult": round(reputation_mult, 2),
-        "trust_mult": round(trust_mult, 2),
-        "demand_mult": round(demand_mult, 2),
-        "total_mult": round(total_mult, 2),
+        "cpm": cpm,
+        "cpm_low": rates["low"],
+        "cpm_high": rates["high"],
+        "avg_views": avg_views,
+        "category": category,
+        "score": score,
+        "trust_factor": round(trust_factor, 2),
     }
 
 
 def get_cpm_range(category: Optional[str]) -> tuple:
-    """Возвращает базовый диапазон цен для категории (для обратной совместимости)."""
-    if not category or category not in POST_PRICES:
-        return None, None
-    r = POST_PRICES[category]
-    return r["min"], r["max"]
+    """Возвращает CPM диапазон для категории."""
+    category = normalize_category(category)
+    rates = CPM_RATES[category]
+    return rates["low"], rates["high"]
 
 
 def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
@@ -1038,11 +1013,10 @@ async def get_channel(username: str):
     """
     username = username.lower().lstrip("@")
 
-    # v21.0: Добавляем breakdown_json в SELECT
+    # v15.0: Базовый SELECT без опциональных колонок (совместимость с БД)
     cursor = db.conn.execute("""
         SELECT username, score, verdict, trust_factor, members,
-               category, category_secondary, scanned_at, status, photo_url, category_percent,
-               breakdown_json
+               category, category_secondary, scanned_at, status
         FROM channels
         WHERE username = ?
     """, (username,))
@@ -1057,19 +1031,9 @@ async def get_channel(username: str):
     trust_factor = safe_float(row[3], 1.0)
     members = safe_int(row[4], 0)
     category = row[5]
-    breakdown_json_raw = row[11] if len(row) > 11 else None
 
-    # v21.0: Используем РЕАЛЬНЫЙ breakdown если доступен
-    if breakdown_json_raw:
-        try:
-            breakdown_data = json.loads(breakdown_json_raw)
-            breakdown = format_breakdown_for_ui(breakdown_data)
-        except (json.JSONDecodeError, TypeError):
-            # Fallback при ошибке парсинга
-            breakdown = estimate_breakdown(score, trust_factor)
-    else:
-        # Fallback для старых записей без breakdown_json
-        breakdown = estimate_breakdown(score, trust_factor)
+    # v15.0: Генерируем breakdown на лету (estimate_breakdown)
+    breakdown = estimate_breakdown(score, trust_factor)
 
     # v7.0: Trust penalties (риски)
     trust_penalties = estimate_trust_penalties(trust_factor, score)
@@ -1088,20 +1052,7 @@ async def get_channel(username: str):
         trust_penalties=trust_penalties
     )
 
-    # Fallback если категория не найдена
-    if price_estimate is None:
-        price_estimate = {
-            "min": price_min or 500,
-            "max": price_max or 800,
-            "base_price": 100,
-            "size_mult": 1.0,
-            "quality_mult": 1.0,
-            "engagement_mult": 1.0,
-            "reputation_mult": 1.0,
-            "trust_mult": round(trust_factor, 2),
-            "demand_mult": 1.0,
-            "total_mult": 1.0,
-        }
+    # v15.0: calculate_post_price_details всегда возвращает dict (fallback не нужен)
 
     # Генерируем рекомендации (v8.0: с breakdown)
     recommendations = generate_recommendations(
@@ -1122,11 +1073,11 @@ async def get_channel(username: str):
         "trust_factor": trust_factor,
         "members": members,
         "category": category,
-        "category_secondary": row[6],
-        "category_percent": safe_int(row[10], 100) if row[10] else 100,  # v20.0
-        "scanned_at": str(row[7]) if row[7] else None,
-        "status": row[8],
-        "photo_url": str(row[9]) if row[9] else None,
+        "category_secondary": row[6] if len(row) > 6 else None,
+        "category_percent": 100,  # v15.0: не используем из БД
+        "scanned_at": str(row[7]) if len(row) > 7 and row[7] else None,
+        "status": row[8] if len(row) > 8 else "GOOD",
+        "photo_url": None,  # v15.0: не храним в БД
         "cpm_min": price_min,
         "cpm_max": price_max,
         "recommendations": [r.dict() for r in recommendations],
@@ -1217,12 +1168,13 @@ async def get_category_stats():
     for cat, count in sorted(cat_stats.items(), key=lambda x: x[1], reverse=True):
         if cat == "UNCATEGORIZED":
             continue
-        cpm = POST_PRICES.get(cat, {"min": 0, "max": 0})
+        cat_normalized = normalize_category(cat)
+        rates = CPM_RATES.get(cat_normalized, {"low": 65, "avg": 130, "high": 270})
         categories.append(CategoryStat(
             category=cat,
             count=count,
-            cpm_min=cpm["min"],
-            cpm_max=cpm["max"],
+            cpm_min=rates["low"],
+            cpm_max=rates["high"],
         ))
         total_categorized += count
 

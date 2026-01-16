@@ -2993,6 +2993,22 @@
   background: var(--verdict-scam);
 }
 
+/* v22.2: Disabled metrics (reactions/comments off) */
+.metricItemDisabled {
+  opacity: 0.6;
+}
+
+.metricItemDisabled .metricItemValue {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.metricBarDisabled {
+  height: 100%;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
 /* v12.1: Recommendations Section */
 .recommendationsSection {
   padding: var(--spacing-md);
