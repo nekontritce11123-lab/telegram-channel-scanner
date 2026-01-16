@@ -145,30 +145,14 @@ class CategoryStatsResponse(BaseModel):
     uncategorized: int
 
 
-class ScanRequest(BaseModel):
-    channel: str
-
-
-class ScanResponse(BaseModel):
-    channel: str
-    score: int
-    verdict: str
-    trust_factor: float
-    members: int
-    category: Optional[str] = None
-    categories: dict
-    breakdown: dict
-
-
 # Глобальные переменные
 db = None
-pyrogram_client = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Запуск и остановка приложения."""
-    global db, pyrogram_client
+    global db
 
     # Импортируем scanner модули
     from scanner.database import CrawlerDB
@@ -177,20 +161,6 @@ async def lifespan(app: FastAPI):
     db_path = os.getenv("DATABASE_PATH", "crawler.db")
     db = CrawlerDB(db_path)
     print(f"База данных подключена: {db_path}")
-
-    # Pyrogram клиент - только если есть credentials
-    api_id = os.getenv("API_ID", "")
-    if api_id and api_id != "your_api_id":
-        try:
-            from scanner.client import get_client
-            pyrogram_client = get_client()
-            print("Pyrogram клиент инициализирован (live scan доступен)")
-        except Exception as e:
-            print(f"Pyrogram клиент не доступен: {e}")
-            pyrogram_client = None
-    else:
-        print("Pyrogram клиент не настроен (только чтение из базы)")
-        pyrogram_client = None
 
     yield
 
@@ -215,198 +185,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# =============================================================================
-# v13.0: Многоуровневые мультипликаторы на основе ВСЕХ метрик
-# =============================================================================
-
-def get_size_mult(size_k: float) -> float:
-    """Нелинейный коэффициент размера канала."""
-    if size_k <= 1:
-        return 1.2   # Микро-каналы: премиум за эксклюзивность
-    elif size_k <= 5:
-        return 1.0   # Малые: стандарт
-    elif size_k <= 20:
-        return 0.85  # Средние: небольшая скидка
-    elif size_k <= 50:
-        return 0.7   # Большие: скидка за объём
-    elif size_k <= 100:
-        return 0.55  # Крупные: значительная скидка
-    else:
-        return 0.4   # Огромные: максимальная скидка
-
-
-def calculate_quality_mult(breakdown: dict) -> float:
-    """
-    v13.0: Мультипликатор качества на основе breakdown.quality.
-    Использует реальные метрики вместо просто score.
-
-    Калибровка v13.1: уменьшены коэффициенты для реалистичных цен.
-    Returns:
-        float: 0.7 - 1.5+ (с бонусами до ~1.8)
-    """
-    if not breakdown:
-        return 1.0
-
-    quality = breakdown.get('quality', {})
-    q_total = quality.get('total', 20)
-    q_max = quality.get('max', 40)
-
-    if q_max == 0:
-        return 1.0
-
-    q_pct = q_total / q_max  # 0.0 - 1.0
-
-    # Базовый множитель: 0.7x - 1.5x (откалибровано)
-    quality_mult = 0.7 + q_pct * 0.8
-
-    # БОНУСЫ за отдельные метрики (уменьшены)
-    items = quality.get('items', {})
-
-    # CV Views: стабильные просмотры = +5%
-    cv = items.get('cv_views', {})
-    if cv.get('max', 0) > 0 and cv.get('score', 0) >= cv.get('max', 15) * 0.8:
-        quality_mult *= 1.05
-
-    # Reach: высокий охват = +7%
-    reach = items.get('reach', {})
-    if reach.get('max', 0) > 0 and reach.get('score', 0) >= reach.get('max', 10) * 0.8:
-        quality_mult *= 1.07
-
-    # Forward Rate: виральность = +8%
-    forward = items.get('forward_rate', {})
-    if forward.get('max', 0) > 0 and forward.get('score', 0) >= forward.get('max', 5) * 0.8:
-        quality_mult *= 1.08
-
-    # v20.0: Posting: хорошая частота постинга = +5%
-    posting = items.get('posting', {})
-    if posting.get('max', 0) > 0 and posting.get('score', 0) >= posting.get('max', 5) * 0.8:
-        quality_mult *= 1.05
-
-    return round(quality_mult, 3)
-
-
-def calculate_engagement_mult(breakdown: dict) -> float:
-    """
-    v13.0: Мультипликатор вовлечённости на основе breakdown.engagement.
-    Вовлечённость = главный показатель для рекламодателей.
-
-    Калибровка v13.1: уменьшены коэффициенты для реалистичных цен.
-    Returns:
-        float: 0.7 - 1.5+ (с бонусами до ~1.8)
-    """
-    if not breakdown:
-        return 1.0
-
-    engagement = breakdown.get('engagement', {})
-    e_total = engagement.get('total', 20)
-    e_max = engagement.get('max', 40)
-
-    if e_max == 0:
-        return 1.0
-
-    e_pct = e_total / e_max  # 0.0 - 1.0
-
-    # Базовый множитель: 0.7x - 1.5x (откалибровано)
-    engagement_mult = 0.7 + e_pct * 0.8
-
-    items = engagement.get('items', {})
-
-    # Комментарии активны = +10%
-    comments = items.get('comments', {})
-    if comments.get('max', 0) > 0 and comments.get('score', 0) >= comments.get('max', 15) * 0.6:
-        engagement_mult *= 1.10
-
-    # Высокий reaction rate = +7%
-    reactions = items.get('reaction_rate', {})
-    if reactions.get('max', 0) > 0 and reactions.get('score', 0) >= reactions.get('max', 15) * 0.7:
-        engagement_mult *= 1.07
-
-    # Разнообразие ER (не ботовый паттерн) = +5%
-    variation = items.get('er_variation', {})
-    if variation.get('max', 0) > 0 and variation.get('score', 0) >= variation.get('max', 5) * 0.8:
-        engagement_mult *= 1.05
-
-    return round(engagement_mult, 3)
-
-
-def calculate_reputation_mult(breakdown: dict) -> float:
-    """
-    v13.0: Мультипликатор репутации на основе breakdown.reputation.
-    Верификация, возраст, премиумы = доверие рекламодателей.
-
-    Калибровка v13.1: уменьшены коэффициенты для реалистичных цен.
-    Returns:
-        float: 0.9 - 1.3+ (с бонусами до ~1.6)
-    """
-    if not breakdown:
-        return 1.0
-
-    reputation = breakdown.get('reputation', {})
-    r_total = reputation.get('total', 10)
-    r_max = reputation.get('max', 20)
-
-    if r_max == 0:
-        return 1.0
-
-    r_pct = r_total / r_max  # 0.0 - 1.0
-
-    # Базовый множитель: 0.9x - 1.3x (откалибровано)
-    reputation_mult = 0.9 + r_pct * 0.4
-
-    items = reputation.get('items', {})
-
-    # ВЕРИФИКАЦИЯ = +20% премиум (откалибровано с +50%)
-    verified = items.get('verified', {})
-    if verified.get('max', 0) > 0 and verified.get('score', 0) == verified.get('max', 4):
-        reputation_mult *= 1.20
-
-    # Возраст >2 лет = +8%
-    age = items.get('age', {})
-    if age.get('score', 0) >= 4:  # established/veteran
-        reputation_mult *= 1.08
-
-    # Premium users >5% = +5%
-    premium = items.get('premium', {})
-    if premium.get('score', 0) >= 4:
-        reputation_mult *= 1.05
-
-    # Оригинальный контент = +5%
-    source = items.get('source', {})
-    if source.get('max', 0) > 0 and source.get('score', 0) >= source.get('max', 4) * 0.8:
-        reputation_mult *= 1.05
-
-    # v20.0: Чистые связи (нет SCAM, мало приватных) = +5%
-    links = items.get('links', {})
-    if links.get('max', 0) > 0 and links.get('score', 0) >= links.get('max', 4) * 0.8:
-        reputation_mult *= 1.05
-
-    return round(reputation_mult, 3)
-
-
-def calculate_trust_mult(trust_factor: float, trust_penalties: list = None) -> float:
-    """
-    v13.0: Детализированный мультипликатор доверия.
-    Некоторые нарушения критичнее для цены чем другие.
-
-    Returns:
-        float: 0.1 - 1.0
-    """
-    trust_mult = trust_factor  # Базовый 0.0-1.0
-
-    # Дополнительные штрафы по типу нарушения
-    if trust_penalties:
-        for penalty in trust_penalties:
-            name = penalty.get('name', '').lower()
-
-            # Критические нарушения - дополнительный штраф
-            if 'накрутка' in name or 'боты' in name or 'критический' in name:
-                trust_mult *= 0.7  # Дополнительно -30%
-            elif 'спам' in name or 'реклама' in name:
-                trust_mult *= 0.8  # Дополнительно -20%
-
-    return max(0.1, round(trust_mult, 3))  # Минимум 10%
 
 
 def estimate_avg_views(members: int, breakdown: dict = None, score: int = 50) -> int:
@@ -1294,61 +1072,6 @@ async def get_channel(username: str):
         "trust_penalties": trust_penalties,
         "price_estimate": price_estimate,
     }
-
-
-@app.post("/api/channels/{username}/scan", response_model=ScanResponse)
-async def scan_channel(username: str):
-    """
-    Сканировать канал на лету.
-    Использует Pyrogram для получения данных и scorer для анализа.
-    """
-    if pyrogram_client is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Live scan недоступен. Telegram API не настроен."
-        )
-
-    username = username.lower().lstrip("@")
-
-    try:
-        from scanner.client import smart_scan_safe
-        from scanner.scorer import calculate_final_score
-
-        # Запускаем клиент если не запущен
-        if not pyrogram_client.is_connected:
-            await pyrogram_client.start()
-
-        # Сканируем
-        scan_result = await smart_scan_safe(pyrogram_client, username)
-
-        if scan_result.chat is None:
-            error_reason = scan_result.channel_health.get("reason", "Канал не найден")
-            raise HTTPException(status_code=400, detail=error_reason)
-
-        # Считаем score
-        result = calculate_final_score(
-            scan_result.chat,
-            scan_result.messages,
-            scan_result.comments_data,
-            scan_result.users,
-            scan_result.channel_health
-        )
-
-        return ScanResponse(
-            channel=username,
-            score=result.get("score", 0),
-            verdict=result.get("verdict", ""),
-            trust_factor=result.get("trust_factor", 1.0),
-            members=result.get("members", 0),
-            category=result.get("category"),
-            categories=result.get("categories", {}),
-            breakdown=result.get("breakdown", {}),
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/stats", response_model=StatsResponse)
