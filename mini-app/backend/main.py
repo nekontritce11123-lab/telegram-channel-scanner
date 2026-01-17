@@ -177,12 +177,22 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS для Mini App (allow all origins for Telegram WebView)
+# CORS для Mini App
+# Разрешаем конкретные домены + Telegram WebView
+ALLOWED_ORIGINS = [
+    "https://ads.factchain-traker.online",  # Production frontend
+    "http://localhost:5173",                 # Vite dev server
+    "http://localhost:3000",                 # Alternative dev
+    "https://web.telegram.org",              # Telegram Web
+    "https://weba.telegram.org",             # Telegram Web A
+    "https://webk.telegram.org",             # Telegram Web K
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -856,8 +866,24 @@ def safe_float(value, default=1.0) -> float:
 
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "ok", "version": "1.0.0"}
+    """Health check endpoint с проверкой БД."""
+    try:
+        # Проверяем подключение к БД
+        if db is None:
+            return {"status": "error", "error": "Database not initialized", "version": "1.0.0"}
+
+        stats = db.get_stats()
+        return {
+            "status": "ok",
+            "version": "1.0.0",
+            "db": {
+                "connected": True,
+                "total_channels": stats.get("total", 0),
+                "good_channels": stats.get("good", 0)
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e), "version": "1.0.0"}
 
 
 @app.get("/api/channels", response_model=ChannelListResponse)

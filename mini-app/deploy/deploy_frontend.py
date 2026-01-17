@@ -3,17 +3,31 @@
 Использование:
   1. cd frontend && npm run build
   2. python deploy_frontend.py
+
+ВАЖНО: Создайте файл .env в папке deploy/ на основе .env.example
 """
 
 import paramiko
 import os
+import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Конфигурация
-FRONTEND_HOST = "37.140.192.181"
-FRONTEND_USER = "u3372484"
-FRONTEND_PASS = "j758aqXHELv2l2AM"
+# Загружаем .env из папки deploy
+env_path = Path(__file__).parent / ".env"
+load_dotenv(env_path)
+
+# Конфигурация из .env
+FRONTEND_HOST = os.getenv("FRONTEND_HOST", "37.140.192.181")
+FRONTEND_USER = os.getenv("FRONTEND_USER", "u3372484")
+FRONTEND_PASS = os.getenv("FRONTEND_PASS")
 REMOTE_PATH = "/var/www/u3372484/data/www/ads.factchain-traker.online"
+
+# Проверяем что пароль задан
+if not FRONTEND_PASS:
+    print("ОШИБКА: FRONTEND_PASS не задан!")
+    print("Создайте файл .env в папке deploy/ на основе .env.example")
+    sys.exit(1)
 
 
 def deploy():

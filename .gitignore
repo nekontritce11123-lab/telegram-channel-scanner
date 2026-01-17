@@ -15,6 +15,12 @@ output/
 # Temp files
 tmpclaude-*
 *.tmp
+temp_*.json
+*_test.json
+all_channels.json
+
+# Windows artifacts
+nul
 
 # IDE
 .vscode/

@@ -19,7 +19,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8593932626:AAH-Eclc7b1FHxs-EDSyAxO33W2wIop8DPI")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не задан! Добавьте в .env файл")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://ads.factchain-traker.online")
 
 bot = Bot(token=BOT_TOKEN)

@@ -77,11 +77,10 @@ def parse_category_result(result: str) -> tuple:
 async def classify_existing(db: CrawlerDB, limit: int = 100):
     """
     Классифицирует существующие GOOD каналы без категории.
-    Сканирует каналы для получения реальных данных (title, description, посты).
-    Поддерживает multi-label: CAT+CAT2 → category + category_secondary
+    v28.0: ТОЛЬКО AI классификация - без fallback!
+    Если AI не ответил после retry - канал остаётся без категории.
     """
     from scanner.client import get_client, smart_scan_safe
-    from scanner.classifier import classify_fallback
 
     classifier = get_classifier()
 
@@ -121,14 +120,24 @@ async def classify_existing(db: CrawlerDB, limit: int = 100):
                 description = getattr(scan_result.chat, 'description', '') or ''
                 messages = scan_result.messages
 
-                # Классифицируем (сначала пробуем AI, потом fallback)
+                # v28.0: ТОЛЬКО AI классификация - без fallback!
                 channel_id = getattr(scan_result.chat, 'id', None)
-                if channel_id and classifier.api_key:
-                    result = await classifier.classify_sync(
-                        channel_id, title, description, messages
-                    )
-                else:
-                    result = classify_fallback(title, description, messages)
+                if not channel_id or not classifier.api_key:
+                    print(f"[{i}/{len(uncategorized)}] @{username} → SKIP (no API key)")
+                    errors += 1
+                    await asyncio.sleep(1)
+                    continue
+
+                result = await classifier.classify_sync(
+                    channel_id, title, description, messages
+                )
+
+                # v28.0: Если AI не ответил после retry - пропускаем
+                if result is None:
+                    print(f"[{i}/{len(uncategorized)}] @{username} → SKIP (AI не ответил)")
+                    errors += 1
+                    await asyncio.sleep(1)
+                    continue
 
                 # Парсим multi-label формат
                 category, category_secondary = parse_category_result(result)

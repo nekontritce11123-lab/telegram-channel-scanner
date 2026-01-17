@@ -1,17 +1,31 @@
 """
 Деплой backend на 217.60.3.122 через Paramiko.
 Использование: python deploy_backend.py
+
+ВАЖНО: Создайте файл .env в папке deploy/ на основе .env.example
 """
 
 import paramiko
 import os
+import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Конфигурация
-BACKEND_HOST = "217.60.3.122"
-BACKEND_USER = "root"
-BACKEND_PASS = "ZiW_1qjEippLtS2xrV"
+# Загружаем .env из папки deploy
+env_path = Path(__file__).parent / ".env"
+load_dotenv(env_path)
+
+# Конфигурация из .env
+BACKEND_HOST = os.getenv("BACKEND_HOST", "217.60.3.122")
+BACKEND_USER = os.getenv("BACKEND_USER", "root")
+BACKEND_PASS = os.getenv("BACKEND_PASS")
 REMOTE_PATH = "/root/reklamshik"
+
+# Проверяем что пароль задан
+if not BACKEND_PASS:
+    print("ОШИБКА: BACKEND_PASS не задан!")
+    print("Создайте файл .env в папке deploy/ на основе .env.example")
+    sys.exit(1)
 
 
 def deploy():

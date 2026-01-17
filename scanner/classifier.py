@@ -1,6 +1,6 @@
 """
 AI Классификатор тем Telegram каналов.
-v15.0: ОДНА категория (без multi-label)
+v28.0: СТРОГАЯ КЛАССИФИКАЦИЯ - только нейросеть!
 
 Архитектура:
   - 17 категорий на основе анализа рынка рекламы
@@ -8,6 +8,8 @@ v15.0: ОДНА категория (без multi-label)
   - Формат ответа: просто "CATEGORY"
   - Groq API + Llama 3.3 70B
   - Кэширование результатов на 7 дней
+  - RETRY механизм: 3 попытки с задержками 5/15/30 сек
+  - БЕЗ FALLBACK: если AI не ответил - категория не определяется
 """
 
 import os
@@ -72,8 +74,8 @@ CACHE_TTL_DAYS = 7
 MAX_POSTS_FOR_AI = 20      # v27.0: увеличено с 10 для лучшего контекста
 MAX_CHARS_PER_POST = 800   # v27.0: увеличено с 500
 
-# DEBUG режим - включить для отладки классификации
-DEBUG_CLASSIFIER = True
+# DEBUG режим - включить для отладки классификации (False в production!)
+DEBUG_CLASSIFIER = False
 
 
 # === СИСТЕМНЫЙ ПРОМПТ v27.0 (с русским сленгом) ===
@@ -261,31 +263,24 @@ def parse_category_response(response: str) -> str:
     return "OTHER"
 
 
-# === FALLBACK КЛАССИФИКАЦИЯ ===
+# === RETRY КОНФИГУРАЦИЯ (v28.0) ===
 
-def classify_fallback(title: str, description: str, messages: list) -> str:
-    """
-    v14.0: Fallback без ключевых слов.
-    Если API недоступен - просто возвращаем OTHER.
-    LLM достаточно умный, ключевые слова создают false positives.
-    """
-    return "OTHER"
+MAX_RETRIES = 3
+RETRY_DELAYS = [5, 15, 30]  # Задержки между попытками в секундах
 
 
 # === GROQ API ===
 
-async def _call_groq_api(context: str, api_key: str) -> Optional[str]:
-    """Отправляет запрос к Groq API. Возвращает ОДНУ категорию."""
+async def _call_groq_api_once(context: str, api_key: str) -> tuple[Optional[str], bool]:
+    """
+    Один запрос к Groq API.
+    Возвращает (category, should_retry):
+    - (category, False) - успех
+    - (None, True) - retry (rate limit, timeout)
+    - (None, False) - фатальная ошибка (не retry)
+    """
     if not HTTPX_AVAILABLE:
-        return None
-
-    # DEBUG: показать что отправляем в LLM
-    if DEBUG_CLASSIFIER:
-        print(f"\n{'='*60}")
-        print(f"CLASSIFIER DEBUG - Context ({len(context)} chars):")
-        print(f"{'='*60}")
-        print(context[:2000] + ("..." if len(context) > 2000 else ""))
-        print(f"{'='*60}\n")
+        return None, False
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -308,34 +303,67 @@ async def _call_groq_api(context: str, api_key: str) -> Optional[str]:
 
             if response.status_code == 429:
                 if DEBUG_CLASSIFIER:
-                    print("CLASSIFIER DEBUG: Rate limit (429)")
-                return None  # Rate limit
+                    print("CLASSIFIER DEBUG: Rate limit (429) - will retry")
+                return None, True  # Retry
 
             response.raise_for_status()
             data = response.json()
 
             answer = data["choices"][0]["message"]["content"].strip()
 
-            # DEBUG: показать ответ LLM
             if DEBUG_CLASSIFIER:
                 print(f"CLASSIFIER DEBUG - LLM raw response: '{answer}'")
 
-            # v15.0: Одна категория
             category = parse_category_response(answer)
 
             if DEBUG_CLASSIFIER:
                 print(f"CLASSIFIER DEBUG - Parsed category: {category}")
 
-            return category
+            return category, False
 
     except httpx.TimeoutException:
         if DEBUG_CLASSIFIER:
-            print("CLASSIFIER DEBUG: Timeout")
-        return None
+            print("CLASSIFIER DEBUG: Timeout - will retry")
+        return None, True  # Retry
     except Exception as e:
         if DEBUG_CLASSIFIER:
             print(f"CLASSIFIER DEBUG: Error - {e}")
+        return None, True  # Retry на любую ошибку
+
+
+async def _call_groq_api(context: str, api_key: str) -> Optional[str]:
+    """
+    v28.0: Запрос к Groq API с retry.
+    ТОЛЬКО нейросеть определяет категорию. Без fallback на OTHER.
+    """
+    if not HTTPX_AVAILABLE:
+        print("CLASSIFIER: httpx не установлен, классификация невозможна")
         return None
+
+    # DEBUG: показать что отправляем в LLM
+    if DEBUG_CLASSIFIER:
+        print(f"\n{'='*60}")
+        print(f"CLASSIFIER DEBUG - Context ({len(context)} chars):")
+        print(f"{'='*60}")
+        print(context[:2000] + ("..." if len(context) > 2000 else ""))
+        print(f"{'='*60}\n")
+
+    for attempt in range(MAX_RETRIES):
+        category, should_retry = await _call_groq_api_once(context, api_key)
+
+        if category is not None:
+            return category
+
+        if not should_retry:
+            break
+
+        if attempt < MAX_RETRIES - 1:
+            delay = RETRY_DELAYS[attempt]
+            print(f"CLASSIFIER: Попытка {attempt + 1}/{MAX_RETRIES} не удалась, жду {delay} сек...")
+            await asyncio.sleep(delay)
+
+    print(f"CLASSIFIER: Все {MAX_RETRIES} попыток исчерпаны, категория не определена")
+    return None  # НЕ возвращаем OTHER - нейросеть не ответила
 
 
 # === ОСНОВНОЙ КЛАССИФИКАТОР ===
@@ -406,7 +434,12 @@ class ChannelClassifier:
                 # Классифицируем
                 category = await self._classify_task(task)
 
-                # Сохраняем
+                # v28.0: Если AI не смог определить категорию - НЕ сохраняем
+                if category is None:
+                    print(f"CLASSIFIER: Канал {channel_id} не классифицирован (AI не ответил)")
+                    continue
+
+                # Сохраняем ТОЛЬКО если категория определена
                 self.results[channel_id] = category
                 _set_cached(channel_id, category, self.cache)
 
@@ -423,26 +456,25 @@ class ChannelClassifier:
             if self.api_key:
                 await asyncio.sleep(2)  # 30 req/min = 1 req/2sec
 
-    async def _classify_task(self, task: dict) -> str:
-        """Классифицирует один канал."""
+    async def _classify_task(self, task: dict) -> Optional[str]:
+        """
+        Классифицирует один канал.
+        v28.0: Возвращает None если AI не смог классифицировать.
+        ТОЛЬКО нейросеть определяет категорию - без fallback!
+        """
+        if not self.api_key:
+            print("CLASSIFIER: GROQ_API_KEY не установлен, классификация невозможна")
+            return None
+
         context = _prepare_context(
             task.get("title", ""),
             task.get("description", ""),
             task.get("messages", [])
         )
 
-        # Пробуем AI
-        if self.api_key:
-            result = await _call_groq_api(context, self.api_key)
-            if result:
-                return result
-
-        # Fallback
-        return classify_fallback(
-            task.get("title", ""),
-            task.get("description", ""),
-            task.get("messages", [])
-        )
+        # ТОЛЬКО AI - никакого fallback
+        result = await _call_groq_api(context, self.api_key)
+        return result  # None если AI не ответил
 
     def add_to_queue(
         self,
@@ -480,10 +512,11 @@ class ChannelClassifier:
         title: str,
         description: str,
         messages: list
-    ) -> str:
+    ) -> Optional[str]:
         """
         Синхронная классификация (ждёт результат).
-        Используется для режима догоняния.
+        v28.0: Возвращает None если AI не смог классифицировать.
+        ТОЛЬКО нейросеть определяет категорию - без fallback!
         """
         # Проверяем кэш
         cached = _get_cached(channel_id, self.cache)
@@ -499,11 +532,12 @@ class ChannelClassifier:
         }
         category = await self._classify_task(task)
 
-        # Сохраняем в кэш
-        _set_cached(channel_id, category, self.cache)
-        self.results[channel_id] = category
+        # v28.0: Сохраняем в кэш ТОЛЬКО если категория определена
+        if category is not None:
+            _set_cached(channel_id, category, self.cache)
+            self.results[channel_id] = category
 
-        return category
+        return category  # None если AI не ответил
 
     def save_cache(self):
         """Сохраняет кэш на диск."""
