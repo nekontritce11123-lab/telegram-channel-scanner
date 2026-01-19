@@ -1,13 +1,13 @@
 """
 AI Классификатор тем Telegram каналов.
-v33.0: Полный редизайн промптов
+V2.0: Chain-of-Thought + Extended Priority Rules
 
 Архитектура:
   - 16 категорий (без OTHER — LLM обязан выбрать)
   - Ollama + Qwen3-8B (think=False для детерминированности)
-  - XML теги для парсинга: <category>
-  - temperature=0.3
-  - ВСЕ 16 категорий в user_message с priority rules
+  - V2.0: Chain-of-Thought — Reasoning: ... перед <category>
+  - 30+ Priority Rules для edge cases
+  - temperature=0.3, num_predict=300 (для reasoning)
   - Кэширование результатов на 7 дней
 """
 
@@ -76,7 +76,7 @@ SYSTEM_PROMPT = """Classify Telegram channel. Pick ONE category from the list.
 CATEGORIES:
 1. AI_ML - нейросети, ChatGPT, GPT, Claude, Gemini, AI новости, Midjourney
 2. CRYPTO - трейдинг, скальпинг, фьючерсы, Binance, Bybit, криптовалюты
-3. TECH - программирование, DevOps, разработка ПО
+3. TECH - программирование, DevOps, VPN, антивирус, cybersecurity, приватность
 4. FINANCE - акции, форекс, банки
 5. BUSINESS - B2B, маркетинг, бизнес
 6. NEWS - новости, политика
@@ -95,6 +95,7 @@ EXAMPLES:
 - Channel about ChatGPT, нейросети, GPT models → AI_ML
 - Channel about Binance, трейдинг, фьючерсы → CRYPTO
 - Channel about Python, DevOps → TECH
+- Channel about VPN, proxy, security, privacy → TECH
 
 Output: <category>EXACT_NAME</category>
 IMPORTANT: Use EXACT name like AI_ML, CRYPTO, TECH - not "Technology" or "Artificial Intelligence"."""
@@ -251,39 +252,80 @@ def _call_ollama_sync(context: str) -> Optional[str]:
     Синхронный запрос к Ollama v33.0.
     think=False, temperature=0.3 для детерминированности.
     """
-    # v33.0: ВСЕ 16 категорий + priority rules
+    # V2.0: Chain-of-Thought + Extended Priority Rules (30+)
     user_message = f"""CHANNEL CONTENT:
 {context[:8000]}
 
 ---
-TASK: Classify this channel using EXACT category name.
+TASK: Classify this channel. First explain your reasoning, then give the category.
 
-CATEGORIES:
-1. AI_ML - нейросети, ChatGPT, GPT, Claude, Gemini, AI новости, Midjourney
-2. CRYPTO - трейдинг, скальпинг, фьючерсы, Binance, Bybit, криптовалюты
-3. TECH - программирование, DevOps, разработка ПО
-4. FINANCE - акции, форекс, банки (НЕ крипто)
-5. BUSINESS - B2B, маркетинг, консалтинг, стартапы
-6. NEWS - новости, политика
-7. ENTERTAINMENT - игры, мемы, кино
-8. EDUCATION - курсы, обучение (НЕ трейдинг)
-9. LIFESTYLE - личный блог, CEO блоги
-10. HEALTH - фитнес, медицина
-11. BEAUTY - косметика, мода
-12. TRAVEL - туризм
-13. RETAIL - магазины, обзоры товаров
-14. REAL_ESTATE - недвижимость
-15. GAMBLING - ставки, казино
-16. ADULT - 18+
+CATEGORIES (pick ONE):
+1. AI_ML - нейросети, ChatGPT, GPT, Claude, Gemini, Midjourney, Stable Diffusion
+2. CRYPTO - криптовалюты, трейдинг, скальпинг, фьючерсы, Binance, Bybit, DeFi, NFT
+3. TECH - программирование, DevOps, VPN, proxy, security, Python, JavaScript, IT
+4. FINANCE - акции, форекс, банки, инвестиции (БЕЗ криптовалют!)
+5. BUSINESS - B2B, маркетинг, консалтинг, стартапы, предпринимательство
+6. NEWS - новости, политика, события, журналистика
+7. ENTERTAINMENT - игры, мемы, кино, музыка, юмор, развлечения
+8. EDUCATION - курсы, обучение, онлайн-школы (общие темы)
+9. LIFESTYLE - личные блоги, CEO дневники, лайфстайл, мотивация
+10. HEALTH - фитнес, медицина, ЗОЖ, диеты, психология
+11. BEAUTY - косметика, мода, стиль, парфюмерия
+12. TRAVEL - туризм, путешествия, авиа, отели
+13. RETAIL - магазины, e-commerce, обзоры товаров, скидки
+14. REAL_ESTATE - недвижимость, ипотека, риэлторы
+15. GAMBLING - ставки, казино, букмекеры
+16. ADULT - 18+ контент
 
-PRIORITY RULES:
-- нейросети/ChatGPT/AI → AI_ML
-- трейдинг/фьючерсы/crypto → CRYPTO
-- CEO блог/founder → LIFESTYLE (не TECH/BUSINESS)
-- обзоры товаров → RETAIL (не TECH)
-- курсы трейдинга → CRYPTO (аудитория = трейдеры)
+PRIORITY RULES (V2.0 — 30+ rules):
 
-Answer: <category>"""
+CRYPTO vs FINANCE:
+- Binance, Bybit, OKX, криптобиржи → CRYPTO
+- BTC, ETH, альткоины, токены → CRYPTO
+- Фьючерсы крипты, perpetual → CRYPTO
+- Акции, фондовый рынок, MOEX → FINANCE
+- Форекс, валютные пары → FINANCE
+- Банки, вклады, кредиты → FINANCE
+
+AI_ML vs TECH:
+- ChatGPT, Claude, Gemini, LLM → AI_ML
+- Midjourney, DALL-E, генерация → AI_ML
+- Нейросети, машинное обучение → AI_ML
+- Python/JavaScript код (общий) → TECH
+- DevOps, Docker, Kubernetes → TECH
+- VPN, proxy, privacy tools → TECH
+- Cybersecurity, хакинг → TECH
+
+LIFESTYLE (личные блоги):
+- CEO блог, founder дневник → LIFESTYLE (НЕ BUSINESS!)
+- Личные размышления автора → LIFESTYLE
+- Мотивация, продуктивность → LIFESTYLE
+
+RETAIL (товары):
+- Обзоры гаджетов для покупки → RETAIL (НЕ TECH!)
+- Скидки, промокоды → RETAIL
+- AliExpress находки → RETAIL
+
+EDUCATION (общее обучение):
+- Английский язык, языки → EDUCATION
+- Школьные предметы → EDUCATION
+- Курсы трейдинга крипты → CRYPTO (аудитория = трейдеры!)
+- Курсы программирования → TECH (аудитория = разработчики!)
+
+NEWS (новости):
+- Политические новости → NEWS
+- Криптоновости, Bitcoin news → CRYPTO (НЕ NEWS!)
+- AI новости про модели → AI_ML (НЕ NEWS!)
+
+ENTERTAINMENT:
+- Мемы, юмор → ENTERTAINMENT
+- Обзоры игр → ENTERTAINMENT
+- Кино, сериалы → ENTERTAINMENT
+
+---
+FORMAT: First write "Reasoning: [your analysis]", then "<category>EXACT_NAME</category>"
+
+Reasoning:"""
 
     payload = {
         "model": OLLAMA_MODEL,
@@ -295,7 +337,7 @@ Answer: <category>"""
         "think": False,  # Отключаем thinking - модель должна думать в ответе
         "options": {
             "temperature": 0.3,  # Низкая для детерминированности
-            "num_predict": 100   # Короткий ответ
+            "num_predict": 300   # V2.0: увеличено для Chain-of-Thought reasoning
         }
     }
 
@@ -360,7 +402,7 @@ class ChannelClassifier:
     def __init__(self):
         self.cache = _load_cache()
         self.results = {}
-        print(f"CLASSIFIER v33.0: Ollama ({OLLAMA_MODEL}) + 16 categories")
+        print(f"CLASSIFIER V2.0: Ollama ({OLLAMA_MODEL}) + Chain-of-Thought + 30+ rules")
 
     async def classify_sync(
         self,
