@@ -1051,6 +1051,110 @@ def calculate_er_variation(messages: list) -> float:
     return (std_er / mean_er) * 100
 
 
+def calculate_er_trend(messages: list) -> dict:
+    """
+    v45.0: Сравнивает ER новых постов с ER старых постов.
+    Детектирует "зомби-каналы" где вовлеченность падает.
+
+    ER = reactions / views * 100
+    Trend = er_new / er_old
+
+    Args:
+        messages: Список сообщений с date, views, reactions
+
+    Returns:
+        {
+            'er_new': float,      # Средний ER новых постов (первый квартиль)
+            'er_old': float,      # Средний ER старых постов (последний квартиль)
+            'er_trend': float,    # er_new / er_old (1.0 = стабильно)
+            'status': str,        # 'growing'|'stable'|'declining'|'dying'|'always_dead'
+            'posts_new': int,     # Кол-во постов в новой группе
+            'posts_old': int,     # Кол-во постов в старой группе
+        }
+
+    Статусы:
+        - growing: trend >= 1.1 (ER растёт, канал развивается)
+        - stable: 0.9 <= trend < 1.1 (норма)
+        - declining: 0.7 <= trend < 0.9 (предупреждение)
+        - dying: trend < 0.7 (канал "стух", Trust Penalty)
+        - always_dead: er_old < 0.1% (канал изначально без вовлечения)
+        - insufficient_data: мало постов для анализа
+    """
+    # Фильтруем посты с датой и просмотрами
+    valid_msgs = [
+        m for m in messages
+        if hasattr(m, 'date') and m.date
+        and hasattr(m, 'views') and m.views and m.views > 0
+    ]
+
+    if len(valid_msgs) < 12:
+        return {
+            'er_new': 0.0,
+            'er_old': 0.0,
+            'er_trend': 1.0,
+            'status': 'insufficient_data',
+            'posts_new': 0,
+            'posts_old': 0
+        }
+
+    # Сортируем по дате (новые первые)
+    sorted_msgs = sorted(valid_msgs, key=lambda m: m.date, reverse=True)
+
+    # Делим на квартили
+    quarter = len(sorted_msgs) // 4
+    if quarter < 3:
+        quarter = 3  # Минимум 3 поста в группе
+
+    new_msgs = sorted_msgs[:quarter]
+    old_msgs = sorted_msgs[-quarter:]
+
+    # Вычисляем ER для каждой группы
+    def calc_group_er(msgs):
+        ers = []
+        for m in msgs:
+            reactions = get_message_reactions_count(m)
+            if m.views > 0:
+                er = (reactions / m.views) * 100
+                ers.append(er)
+        return sum(ers) / len(ers) if ers else 0.0
+
+    er_new = calc_group_er(new_msgs)
+    er_old = calc_group_er(old_msgs)
+
+    # Edge case: канал изначально мёртвый
+    if er_old < 0.1:
+        return {
+            'er_new': round(er_new, 3),
+            'er_old': round(er_old, 3),
+            'er_trend': None,
+            'status': 'always_dead',
+            'posts_new': len(new_msgs),
+            'posts_old': len(old_msgs)
+        }
+
+    # Вычисляем тренд
+    er_trend = er_new / er_old if er_old > 0 else 1.0
+
+    # Определяем статус
+    if er_trend >= 1.1:
+        status = 'growing'
+    elif er_trend >= 0.9:
+        status = 'stable'
+    elif er_trend >= 0.7:
+        status = 'declining'
+    else:
+        status = 'dying'
+
+    return {
+        'er_new': round(er_new, 3),
+        'er_old': round(er_old, 3),
+        'er_trend': round(er_trend, 3),
+        'status': status,
+        'posts_new': len(new_msgs),
+        'posts_old': len(old_msgs)
+    }
+
+
 # ============================================================================
 # КАТЕГОРИЯ E: ДОПОЛНИТЕЛЬНЫЕ ПРОВЕРКИ (5 баллов + бонусы)
 # ============================================================================

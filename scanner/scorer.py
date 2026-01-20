@@ -55,6 +55,8 @@ from .metrics import (
     get_message_reactions_count,
     # v22.4: Правильная проверка включены ли реакции
     check_reactions_enabled,
+    # v45.0: ER Trend для детекции зомби-каналов
+    calculate_er_trend,
 )
 from .forensics import UserForensics
 from .config import SIZE_THRESHOLDS
@@ -66,11 +68,12 @@ from .config import SIZE_THRESHOLDS
 
 RAW_WEIGHTS = {
     # КАЧЕСТВО КОНТЕНТА (40 баллов)
+    # v45.0: Forward Rate +6 (виральность = "Святой Грааль" для рекламодателя)
     'quality': {
         'cv_views': 15,      # Естественность просмотров
-        'reach': 10,         # Охват аудитории
-        'views_decay': 8,    # Стабильность просмотров
-        'forward_rate': 7,   # Виральность контента
+        'reach': 7,          # v45.0: -3 (reach без forward = пустые просмотры)
+        'views_decay': 5,    # v45.0: -3 (важно для системы, не для рекламодателя)
+        'forward_rate': 13,  # v45.0: +6 (репосты = бесплатный охват)
     },
     # ENGAGEMENT (40 баллов)
     'engagement': {
@@ -455,19 +458,19 @@ def age_to_points(age_days: int, max_pts: int = None) -> int:
 
 def calculate_floating_weights(comments_enabled: bool, reactions_enabled: bool = True) -> dict:
     """
-    v15.2: Плавающие веса для комментов И реакций.
+    v45.0: Плавающие веса для комментов И реакций.
 
-    Базовые веса: 15 comments + 15 reactions + 7 forward = 37
+    Базовые веса: 15 comments + 15 reactions + 13 forward = 43
 
     Сценарии:
-    - Всё включено:           15 comments + 15 reactions + 7 forward = 37
-    - Без комментов:          0 comments + 22 reactions + 15 forward = 37
-    - Без реакций:            22 comments + 0 reactions + 15 forward = 37
-    - Без обоих:              0 comments + 0 reactions + 37 forward = 37
+    - Всё включено:           15 comments + 15 reactions + 13 forward = 43
+    - Без комментов:          0 comments + 22 reactions + 21 forward = 43
+    - Без реакций:            22 comments + 0 reactions + 21 forward = 43
+    - Без обоих:              0 comments + 0 reactions + 43 forward = 43
     """
-    base_comments = RAW_WEIGHTS['engagement']['comments']      # 15
+    base_comments = RAW_WEIGHTS['engagement']['comments']        # 15
     base_reactions = RAW_WEIGHTS['engagement']['reaction_rate']  # 15
-    base_forward = RAW_WEIGHTS['quality']['forward_rate']        # 7
+    base_forward = RAW_WEIGHTS['quality']['forward_rate']        # 13 (v45.0)
 
     if comments_enabled and reactions_enabled:
         # Всё включено - стандартные веса
@@ -481,21 +484,21 @@ def calculate_floating_weights(comments_enabled: bool, reactions_enabled: bool =
         return {
             'comments_max': 22,        # 15 + 7 от реакций
             'reaction_rate_max': 0,
-            'forward_rate_max': 15     # 7 + 8 от реакций
+            'forward_rate_max': 21     # v45.0: 13 + 8 от реакций
         }
     elif not comments_enabled and reactions_enabled:
         # Комменты отключены - их баллы идут в реакции и forward
         return {
             'comments_max': 0,
             'reaction_rate_max': 22,   # 15 + 7 от комментов
-            'forward_rate_max': 15     # 7 + 8 от комментов
+            'forward_rate_max': 21     # v45.0: 13 + 8 от комментов
         }
     else:
         # Оба отключены - всё в forward
         return {
             'comments_max': 0,
             'reaction_rate_max': 0,
-            'forward_rate_max': 37     # Все 37 баллов
+            'forward_rate_max': 43     # v45.0: Все 43 баллов
         }
 
 
@@ -545,7 +548,9 @@ def calculate_trust_factor(
     posting_data: dict = None,
     network_data: dict = None,
     private_data: dict = None,
-    category: str = None
+    category: str = None,
+    # v45.0: ER Trend для детекции зомби-каналов
+    er_trend_data: dict = None
 ) -> tuple[float, dict]:
     """
     v41.0: Вычисляет мультипликатор доверия.
@@ -824,6 +829,38 @@ def calculate_trust_factor(
             'private_posts': private_data.get('private_posts', 0),
             'total_ad_posts': private_data.get('total_ad_posts', 0)
         }
+
+    # =========================================================================
+    # v45.0: ER TREND PENALTY (Dying Engagement)
+    # Детекция "зомби-каналов" где вовлечённость падает, а просмотры держатся
+    # =========================================================================
+
+    if er_trend_data and er_trend_data.get('status') == 'dying':
+        er_trend = er_trend_data.get('er_trend', 1.0)
+
+        # Комбо-детекция: dying ER + стабильные views = "зомби-канал"
+        # decay_ratio близок к 1.0 значит просмотры не падают
+        is_zombie_combo = (0.7 <= decay_ratio <= 1.3)
+
+        if is_zombie_combo:
+            # Жёсткий штраф: ER падает, views держатся = накрутка views
+            multipliers.append(0.6)
+            details['dying_engagement'] = {
+                'multiplier': 0.6,
+                'reason': f'ER упал на {(1-er_trend)*100:.0f}%, views стабильны (зомби-канал)',
+                'er_trend': er_trend,
+                'decay_ratio': decay_ratio,
+                'combo': True
+            }
+        else:
+            # Мягкий штраф: просто падение ER без комбо
+            multipliers.append(0.75)
+            details['dying_engagement'] = {
+                'multiplier': 0.75,
+                'reason': f'ER упал на {(1-er_trend)*100:.0f}% (умирающий канал)',
+                'er_trend': er_trend,
+                'combo': False
+            }
 
     # Выбираем ХУДШИЙ (минимальный) множитель
     trust_factor = min(multipliers) if multipliers else 1.0
@@ -1205,6 +1242,10 @@ def calculate_final_score(
         'max': WEIGHTS['engagement']['er_variation']
     }
 
+    # 2.3.1 ER Trend (v45.0: информативная метрика для детекции зомби-каналов)
+    er_trend_data = calculate_er_trend(messages)
+    breakdown['er_trend'] = er_trend_data
+
     # 2.4 Reaction Stability (max 5)
     stability = calculate_reaction_stability(messages)
     stability_pts = stability_to_points(stability)
@@ -1376,7 +1417,9 @@ def calculate_final_score(
         posting_data=posting_data,
         network_data=network_data,
         private_data=private_data,
-        category=channel_category
+        category=channel_category,
+        # v45.0: ER Trend для детекции зомби-каналов
+        er_trend_data=er_trend_data
     )
 
     # F16: Reaction Flatness в Hardcore mode (дополнительный сигнал для Trust)

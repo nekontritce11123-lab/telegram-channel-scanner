@@ -253,18 +253,26 @@ class LLMAnalysisResult:
         self.exclusion_reason = None
         self.llm_bonus = 5.0  # Фиксированный бонус
 
-        # --- Ad Multiplier (v41.0) ---
+        # --- Ad Multiplier (v45.0) ---
+        # Ужесточённые пороги для защиты бюджета рекламодателя
+        # При 40% рекламы аудитория уже "выжжена"
         ad_mult = 1.0
         if self.posts and self.posts.ad_percentage is not None:
             ad_pct = self.posts.ad_percentage
-            if ad_pct <= 20:
-                ad_mult = 1.0      # Норма
-            elif ad_pct <= 35:
-                ad_mult = 0.85     # Много рекламы
+            if ad_pct <= 15:
+                ad_mult = 1.0      # Премиум канал
+            elif ad_pct <= 20:
+                ad_mult = 0.95     # Норма
+            elif ad_pct <= 25:
+                ad_mult = 0.85     # Начало штрафа
+            elif ad_pct <= 30:
+                ad_mult = 0.70     # Много рекламы
+            elif ad_pct <= 40:
+                ad_mult = 0.50     # Выжженная аудитория
             elif ad_pct <= 50:
-                ad_mult = 0.65     # Очень много
+                ad_mult = 0.35     # Очень много
             else:
-                ad_mult = 0.40     # Спам
+                ad_mult = 0.20     # Спам
         self._ad_mult = ad_mult
 
         # --- Bot Multiplier (v40.3) ---
