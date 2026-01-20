@@ -1,10 +1,17 @@
 """
-LLM Анализатор каналов v46.0
+LLM Анализатор каналов v47.0 (Grandmaster Edition)
 
 Три модуля:
 1. AdAnalyzer — % рекламных постов (контекстный анализ через LLM)
 2. CommentAnalyzer — Bot Detection + Trust Score
-3. BrandSafetyAnalyzer — детекция токсичного контента (v46.0)
+3. BrandSafetyAnalyzer — детекция токсичного контента (v47.0)
+
+v47.0 изменения (Brand Safety Grandmaster Edition):
+- Chain-of-Thought (reasoning field) для повышения точности
+- Semantic severity — "Dominant theme" вместо процентов (8B модели плохо считают)
+- Context Traps — явные примеры SAFE случаев для снижения false positives
+- De-obfuscation как Core Principle (k@zin0 → casino)
+- Python считает точный toxic_ratio, не LLM
 
 v46.0 изменения:
 - Добавлен LLM Brand Safety анализатор (GAMBLING, ADULT, SCAM)
@@ -291,13 +298,13 @@ class LLMAnalysisResult:
                 bot_mult = max(0.3, 1.0 - penalty)
         self._comment_mult = bot_mult
 
-        # --- Brand Safety Multiplier (v46.0) ---
+        # --- Brand Safety Multiplier (v47.0) ---
+        # SAFE/LOW = 1.0, MEDIUM = 0.7, HIGH = 0.3, CRITICAL = 0.0 (EXCLUDED)
         safety_mult = 1.0
         if self.safety and self.safety.get('is_toxic'):
-            severity = self.safety.get('severity', 'LOW')
-            confidence = self.safety.get('confidence', 0)
+            severity = self.safety.get('severity', 'SAFE')
 
-            # Множители по severity
+            # Множители по severity_label (v47.0)
             if severity == 'CRITICAL':
                 safety_mult = 0.0  # EXCLUDED
                 self.tier = "EXCLUDED"
@@ -309,15 +316,14 @@ class LLMAnalysisResult:
                 self.tier_cap = 30
             elif severity == 'MEDIUM':
                 safety_mult = 0.7
-            # LOW не штрафуем
+            # LOW/SAFE не штрафуем
         self._safety_mult = safety_mult
 
-        # --- Combined LLM Trust Factor (v46.0) ---
+        # --- Combined LLM Trust Factor (v47.0) ---
         # Перемножаем независимые факторы с floor 0.15
-        # v46.0: добавлен safety_mult
         self.llm_trust_factor = max(0.15, ad_mult * bot_mult * safety_mult)
 
-        # v46.0: EXCLUDED override (safety_mult = 0)
+        # v47.0: EXCLUDED override (safety_mult = 0)
         if safety_mult == 0.0:
             self.llm_trust_factor = 0.0
 
@@ -548,44 +554,45 @@ def infer_channel_type(messages: list = None, category: str = None) -> str:
     return "GENERAL"
 
 
-# === BRAND SAFETY ANALYZER V46.0 ===
+# === BRAND SAFETY ANALYZER V47.0 (Grandmaster Edition) ===
 
-BRAND_SAFETY_SYSTEM = """You are a Brand Safety Analyst for advertising platforms (V46.0).
-Your goal is to detect toxic content that would make a channel unsuitable for brand advertising.
+BRAND_SAFETY_SYSTEM = """You are a Brand Safety Auditor (V47.0).
+Your mission is to protect advertisers from placing ads in TOXIC channels (Gambling, Adult, Scam).
+You analyze semantic meaning, ignoring obfuscation (leetspeak) and respecting context.
 
-## TOXIC CATEGORIES
+## 🚫 TOXIC CATEGORIES (DETECTION RULES)
 
-### 🎰 GAMBLING (Casino, Betting, Poker)
-- Online casinos, slots, roulette, jackpots
-- Sports betting (1xbet, fonbet, pinnacle, etc.)
-- Poker rooms, gambling strategies
-- "Guaranteed wins", "Double your deposit"
-- **Context matters:** "Sports news with betting odds" = GAMBLING, "Football match results" = NOT gambling
+### 1. GAMBLING 🎰
+- **Targets:** Online casinos, slots, betting, poker rooms.
+- **Keywords (inc. obfuscated):** k@zino, sl0ts, 1win, 1xbet, fonbet, "guaranteed profit", "double deposit".
+- **CONTEXT TRAP (SAFE):** Stock market news, "high stakes" in business, sports results WITHOUT betting promotion, gambling legislation news.
+- **VERDICT:** Only flag if the post PROMOTES or NORMALIZES gambling.
 
-### 🔞 ADULT (Porn, Escort, 18+)
-- Pornographic content, explicit sexual material
-- Escort services, prostitution ads
-- OnlyFans/Fansly promotion with explicit content
-- **CRITICAL:** Any content involving minors = IMMEDIATE EXCLUDE
-- **Context matters:** "Dating advice" = NOT adult, "Hot girls in your city" = ADULT
+### 2. ADULT 🔞
+- **Targets:** Pornography, Hentai, Escort, OnlyFans (NSFW).
+- **Keywords (inc. obfuscated):** p0rn, s.e.x, nudes, "hot girls", эскорт, интим.
+- **CONTEXT TRAP (SAFE):** Dating advice, medical/health discussions, relationship psychology, art/anime (non-explicit), sex education.
+- **CRITICAL:** Any content involving minors = IMMEDIATE CRITICAL.
+- **VERDICT:** Only flag if the intent is sexual arousal or soliciting services.
 
-### ⚠️ SCAM (Darknet, Drugs, Fraud)
-- Darknet markets, illegal goods
-- Drug sales, "закладки", substance names
-- Carding, money laundering, drops schemes
-- Illegal weapons, fake documents
-- **Context matters:** "Crypto privacy tools" = NOT scam, "Untraceable payments for..." = SCAM
+### 3. SCAM ⚠️
+- **Targets:** Darknet markets, drugs (weed, meph, закладки), carding, cash-out schemes, fake documents.
+- **Keywords (inc. obfuscated):** даркнет, кладмен, обнал, дропы, CVV, fullz.
+- **CONTEXT TRAP (SAFE):** True crime stories, cybersecurity education, news about drug busts, crypto news (unless promoting scam tokens), privacy tools discussions.
+- **VERDICT:** Only flag if the channel SELLS or PROMOTES illegal goods/services.
 
-## ANALYSIS RULES
+## 🛡️ CORE PRINCIPLES
 
-1. **Analyze ALL posts** to determine the channel's main theme.
-2. **One toxic post ≠ toxic channel.** Look for PATTERNS.
-3. **Obfuscation detection:** к@зин0, p0rn, c@sino = SAME as казино, porn, casino.
-4. **Context is king:** "ставки" in sports betting context = GAMBLING, in "high stakes business deal" = NOT gambling.
-5. **Be conservative:** When in doubt, mark as CLEAN.
+1. **DE-OBFUSCATION:** Read "k@zin0" as "casino", "p0rn" as "porn", "s*x" as "sex", "к@зино" as "казино".
+2. **CONTEXT IS KING:** A news channel reporting on a casino robbery is SAFE. A channel promoting the casino is TOXIC.
+3. **PATTERN OVER SINGLE POST:** One toxic post ≠ toxic channel. Look for recurring themes.
+4. **CONSERVATIVE DEFAULT:** If you are not 100% sure it's toxic, mark as SAFE.
 
-## OUTPUT
-Provide your analysis in strict JSON format."""
+## OUTPUT INSTRUCTION
+
+1. First, analyze the input step-by-step in the `reasoning` field.
+2. Count the EXACT number of toxic posts found.
+3. Output valid JSON only."""
 
 BRAND_SAFETY_PROMPT = """Analyze these posts for brand safety.
 
@@ -593,21 +600,25 @@ POSTS:
 {posts_text}
 
 Output JSON:
-{{"toxic_category": "GAMBLING"|"ADULT"|"SCAM"|null, "confidence": 0-100, "toxic_post_count": <int>, "total_posts": <int>, "evidence": ["list of specific toxic phrases found"], "severity": "CRITICAL"|"HIGH"|"MEDIUM"|"LOW"}}
+{{"reasoning": "<brief explanation of found patterns or why channel is safe>", "toxic_category": "GAMBLING"|"ADULT"|"SCAM"|null, "toxic_post_count": <int>, "total_posts": <int>, "evidence": ["toxic phrase 1", "toxic phrase 2"], "severity_label": "CRITICAL"|"HIGH"|"MEDIUM"|"LOW"|"SAFE"}}
 
-Rules for severity:
-- CRITICAL (>20% toxic posts): Channel is primarily about toxic content
-- HIGH (10-20%): Significant toxic content mixed with normal
-- MEDIUM (5-10%): Occasional toxic content
-- LOW (<5%): Rare or borderline cases"""
+SEVERITY GUIDE (use semantic judgement, not math):
+- CRITICAL: Channel exists SOLELY for this toxic topic (Dominant theme, almost every post)
+- HIGH: Frequent toxic posts mixed with normal content (Regular pattern)
+- MEDIUM: Occasional promotional/toxic posts (Sometimes)
+- LOW: Rare mentions or borderline cases (1-2 posts)
+- SAFE: No toxic content found or context is clearly educational/news"""
 
 
 def analyze_brand_safety(messages: list) -> Optional[dict]:
     """
-    V46.0: LLM-based Brand Safety анализ.
+    V47.0: LLM-based Brand Safety анализ (Grandmaster Edition).
 
-    Заменяет стоп-слова фильтр для умной детекции токсичного контента.
-    LLM понимает контекст, обфускацию, эвфемизмы.
+    Улучшения V47.0:
+    - Chain-of-Thought (reasoning field) для повышения точности
+    - Semantic severity (не проценты, а смысл: "Dominant theme", "Occasional")
+    - Context Traps — явные примеры SAFE случаев
+    - De-obfuscation как Core Principle
 
     Returns:
         dict: {
@@ -615,8 +626,9 @@ def analyze_brand_safety(messages: list) -> Optional[dict]:
             'toxic_category': 'GAMBLING'|'ADULT'|'SCAM'|None,
             'confidence': int (0-100),
             'toxic_ratio': float,
-            'severity': 'CRITICAL'|'HIGH'|'MEDIUM'|'LOW',
-            'evidence': list[str]
+            'severity': 'CRITICAL'|'HIGH'|'MEDIUM'|'LOW'|'SAFE',
+            'evidence': list[str],
+            'reasoning': str  # V47.0: CoT explanation
         }
     """
     posts_text = _prepare_posts_text(messages)
@@ -629,8 +641,9 @@ def analyze_brand_safety(messages: list) -> Optional[dict]:
             'toxic_category': None,
             'confidence': 0,
             'toxic_ratio': 0.0,
-            'severity': 'LOW',
-            'evidence': []
+            'severity': 'SAFE',
+            'evidence': [],
+            'reasoning': 'Not enough text to analyze'
         }
 
     # Ограничиваем текст для LLM
@@ -640,7 +653,7 @@ def analyze_brand_safety(messages: list) -> Optional[dict]:
 
     if DEBUG_LLM_ANALYZER:
         print(f"\n{'='*60}")
-        print(f"BRAND SAFETY ANALYZER V46.0 - {len(messages)} posts")
+        print(f"BRAND SAFETY ANALYZER V47.0 - {len(messages)} posts")
         print(f"{'='*60}\n")
 
     response = _call_ollama(BRAND_SAFETY_SYSTEM, prompt)
@@ -649,16 +662,16 @@ def analyze_brand_safety(messages: list) -> Optional[dict]:
         return None
 
     if DEBUG_LLM_ANALYZER:
-        print(f"BRAND SAFETY RESPONSE:\n{response[:400]}")
+        print(f"BRAND SAFETY RESPONSE:\n{response[:500]}")
 
     # Парсим ответ
     default_values = {
+        "reasoning": "",
         "toxic_category": None,
-        "confidence": 0,
         "toxic_post_count": 0,
         "total_posts": len(messages),
         "evidence": [],
-        "severity": "LOW"
+        "severity_label": "SAFE"
     }
     data, warnings = safe_parse_json(response, default_values)
 
@@ -670,19 +683,31 @@ def analyze_brand_safety(messages: list) -> Optional[dict]:
     if data:
         toxic_count = int(data.get("toxic_post_count", 0))
         total = int(data.get("total_posts", len(messages)))
+        # V47.0: Python считает точный процент, не LLM
         toxic_ratio = toxic_count / total if total > 0 else 0.0
 
         category = data.get("toxic_category")
-        confidence = int(data.get("confidence", 0))
-        severity = data.get("severity", "LOW")
+        severity = data.get("severity_label", "SAFE")
+        reasoning = data.get("reasoning", "")
 
-        # Определяем is_toxic на основе severity и confidence
-        # CRITICAL/HIGH с confidence >= 60 = toxic
+        # V47.0: Confidence вычисляем из severity (LLM больше не отвечает за confidence)
+        # CRITICAL=95, HIGH=80, MEDIUM=60, LOW=40, SAFE=0
+        severity_to_confidence = {
+            "CRITICAL": 95,
+            "HIGH": 80,
+            "MEDIUM": 60,
+            "LOW": 40,
+            "SAFE": 0
+        }
+        confidence = severity_to_confidence.get(severity, 0)
+
+        # V47.0: is_toxic определяется по severity_label
+        # CRITICAL/HIGH = toxic, MEDIUM с ratio > 10% = toxic
         is_toxic = False
-        if category and confidence >= 60:
+        if category and category != "null":
             if severity in ["CRITICAL", "HIGH"]:
                 is_toxic = True
-            elif severity == "MEDIUM" and confidence >= 80:
+            elif severity == "MEDIUM" and toxic_ratio > 0.10:
                 is_toxic = True
 
         result = {
@@ -691,13 +716,19 @@ def analyze_brand_safety(messages: list) -> Optional[dict]:
             'confidence': confidence,
             'toxic_ratio': round(toxic_ratio, 3),
             'severity': severity,
-            'evidence': data.get("evidence", [])[:5]  # Макс 5 примеров
+            'evidence': data.get("evidence", [])[:5],  # Макс 5 примеров
+            'reasoning': reasoning  # V47.0: CoT explanation
         }
 
         if DEBUG_LLM_ANALYZER:
-            print(f"LLM BrandSafety: {severity} ({confidence}% confidence)")
+            print(f"LLM BrandSafety V47.0: {severity}")
+            if reasoning:
+                # Показываем первые 150 символов reasoning
+                print(f"  💭 Reasoning: {reasoning[:150]}...")
             if is_toxic:
-                print(f"  ⚠️ TOXIC: {category}")
+                print(f"  ⚠️ TOXIC: {category} (ratio: {toxic_ratio:.1%})")
+            else:
+                print(f"  ✅ SAFE")
 
         return result
 
