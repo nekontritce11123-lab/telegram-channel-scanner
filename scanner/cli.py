@@ -155,6 +155,10 @@ async def scan_channel(channel: str) -> dict:
                 } if llm_result.comments else None,
             }
 
+            # v46.0: Brand Safety из LLM
+            if llm_result.safety:
+                result['safety'] = llm_result.safety
+
         return result
 
 
