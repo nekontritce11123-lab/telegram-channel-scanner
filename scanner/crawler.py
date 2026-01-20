@@ -38,7 +38,7 @@ from .classifier import get_classifier, ChannelClassifier
 from .llm_analyzer import LLMAnalyzer
 
 # v43.0: Централизованная конфигурация
-from .config import GOOD_THRESHOLD, COLLECT_THRESHOLD
+from .config import GOOD_THRESHOLD, COLLECT_THRESHOLD, ensure_ollama_running
 
 
 def extract_content_for_classification(
@@ -179,6 +179,10 @@ class SmartCrawler:
 
     async def start(self):
         """Запускает Pyrogram клиент и AI классификатор."""
+        # v43.1: Проверяем и запускаем Ollama ПЕРВЫМ делом
+        # Без Ollama краулер не может работать (классификация + LLM анализ)
+        ensure_ollama_running()  # Выбросит RuntimeError если не удалось
+
         self.client = get_client()
         await self.client.start()
         print("Подключено к Telegram")
@@ -187,15 +191,8 @@ class SmartCrawler:
         self.classifier = get_classifier()
 
         # v38.0: LLM Analyzer для ad_percentage и bot detection
-        # v39.0: LLM обязателен — без него не запускаем краулер
-        try:
-            self.llm_analyzer = LLMAnalyzer()
-            print(f"✓ LLM Analyzer готов")
-        except Exception as e:
-            print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: LLM Analyzer не запущен!")
-            print(f"   Причина: {e}")
-            print(f"   Убедитесь что Ollama работает: ollama serve")
-            raise RuntimeError(f"LLM Analyzer required but failed: {e}")
+        self.llm_analyzer = LLMAnalyzer()
+        print(f"✓ LLM Analyzer готов")
 
     async def stop(self):
         """Останавливает клиент и классификатор."""

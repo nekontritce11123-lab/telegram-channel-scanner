@@ -37,39 +37,7 @@ from .client import get_client, smart_scan
 from .scorer import calculate_final_score
 from .llm_analyzer import LLMAnalyzer, LLMAnalysisResult, OLLAMA_URL, OLLAMA_MODEL
 from .classifier import get_classifier
-
-
-def check_ollama_available() -> tuple[bool, str]:
-    """
-    Проверяет доступность Ollama сервера.
-    v38.0: Ollama ОБЯЗАТЕЛЕН для работы сканера.
-
-    Returns:
-        (is_available, error_message)
-    """
-    try:
-        # Проверяем что сервер отвечает
-        response = requests.get("http://localhost:11434/api/tags", timeout=5)
-        if response.status_code != 200:
-            return False, f"Ollama вернул HTTP {response.status_code}"
-
-        # Проверяем что нужная модель установлена
-        data = response.json()
-        models = [m.get('name', '').split(':')[0] for m in data.get('models', [])]
-
-        required_model = OLLAMA_MODEL.split(':')[0]  # qwen3 из qwen3:8b
-        if required_model not in models and OLLAMA_MODEL not in [m.get('name', '') for m in data.get('models', [])]:
-            available = ', '.join(models) if models else 'нет моделей'
-            return False, f"Модель {OLLAMA_MODEL} не найдена. Доступные: {available}. Установи: ollama pull {OLLAMA_MODEL}"
-
-        return True, ""
-
-    except requests.exceptions.ConnectionError:
-        return False, "Ollama не запущен! Запусти: ollama serve"
-    except requests.exceptions.Timeout:
-        return False, "Ollama не отвечает (таймаут 5 сек)"
-    except Exception as e:
-        return False, f"Ошибка проверки Ollama: {e}"
+from .config import ensure_ollama_running, check_ollama_available
 
 
 async def scan_channel(channel: str) -> dict:
@@ -83,19 +51,17 @@ async def scan_channel(channel: str) -> dict:
     Returns:
         dict с результатами анализа
     """
-    # v38.0: Проверка Ollama ПЕРЕД сканированием
-    print("Проверка Ollama...")
-    ollama_ok, ollama_error = check_ollama_available()
-    if not ollama_ok:
-        print(f"\n❌ ОШИБКА: {ollama_error}")
-        print("\nOllama обязателен для работы сканера v38.0!")
+    # v43.1: Проверяем и запускаем Ollama если не работает
+    try:
+        ensure_ollama_running()
+    except RuntimeError as e:
+        print(f"\n❌ ОШИБКА: {e}")
+        print("\nOllama обязателен для работы сканера!")
         print("Инструкция:")
         print("  1. Установи Ollama: https://ollama.ai")
         print("  2. Запусти сервер: ollama serve")
         print(f"  3. Установи модель: ollama pull {OLLAMA_MODEL}")
         sys.exit(1)
-
-    print(f"✓ Ollama готов ({OLLAMA_MODEL})")
 
     async with get_client() as client:
         print(f"Подключение к Telegram...")

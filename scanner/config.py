@@ -1,14 +1,19 @@
 """
-Единая конфигурация проекта Scanner v1.0
+Единая конфигурация проекта Scanner v2.0
 
 Все константы вынесены сюда для централизованного управления.
 Используй os.getenv() для переопределения через переменные окружения.
 
 Использование:
     from scanner.config import OLLAMA_URL, OLLAMA_MODEL, GOOD_THRESHOLD
+    from scanner.config import ensure_ollama_running
 """
 
 import os
+import sys
+import time
+import subprocess
+import requests
 
 
 # =============================================================================
@@ -91,3 +96,120 @@ CATEGORIES = [
     "GAMBLING",      # ставки, казино
     "ADULT",         # 18+ контент
 ]
+
+
+# =============================================================================
+# OLLAMA MANAGEMENT
+# =============================================================================
+
+def check_ollama_available() -> tuple[bool, str]:
+    """
+    Проверяет доступность Ollama сервера и наличие нужной модели.
+
+    Returns:
+        (is_available, error_message)
+    """
+    try:
+        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if response.status_code != 200:
+            return False, f"Ollama вернул HTTP {response.status_code}"
+
+        # Проверяем что нужная модель установлена
+        data = response.json()
+        models = [m.get('name', '').split(':')[0] for m in data.get('models', [])]
+
+        required_model = OLLAMA_MODEL.split(':')[0]
+        if required_model not in models and OLLAMA_MODEL not in [m.get('name', '') for m in data.get('models', [])]:
+            available = ', '.join(models) if models else 'нет моделей'
+            return False, f"Модель {OLLAMA_MODEL} не найдена. Доступные: {available}. Установи: ollama pull {OLLAMA_MODEL}"
+
+        return True, ""
+
+    except requests.exceptions.ConnectionError:
+        return False, "Ollama не запущен"
+    except requests.exceptions.Timeout:
+        return False, "Ollama не отвечает (timeout)"
+    except Exception as e:
+        return False, f"Ошибка проверки Ollama: {e}"
+
+
+def start_ollama() -> bool:
+    """
+    Пытается запустить Ollama сервер.
+
+    Returns:
+        True если запущен успешно
+    """
+    print("Запускаю Ollama...")
+
+    try:
+        # На Windows запускаем через start чтобы не блокировать
+        if sys.platform == 'win32':
+            subprocess.Popen(
+                ['ollama', 'serve'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+            )
+        else:
+            subprocess.Popen(
+                ['ollama', 'serve'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+
+        # Ждём пока сервер запустится (до 30 секунд)
+        for i in range(30):
+            time.sleep(1)
+            ok, _ = check_ollama_available()
+            if ok:
+                print(f"✓ Ollama запущен (заняло {i+1} сек)")
+                return True
+            if i % 5 == 4:
+                print(f"  Ожидание Ollama... ({i+1}/30 сек)")
+
+        return False
+
+    except FileNotFoundError:
+        print("❌ Ollama не установлен! Установи: https://ollama.ai")
+        return False
+    except Exception as e:
+        print(f"❌ Не удалось запустить Ollama: {e}")
+        return False
+
+
+def ensure_ollama_running() -> bool:
+    """
+    Проверяет Ollama и запускает если не работает.
+
+    Если Ollama не может быть запущен, выбрасывает RuntimeError.
+
+    Returns:
+        True если Ollama работает
+
+    Raises:
+        RuntimeError если Ollama не может быть запущен
+    """
+    ok, error = check_ollama_available()
+
+    if ok:
+        print(f"✓ Ollama работает (модель: {OLLAMA_MODEL})")
+        return True
+
+    print(f"⚠ {error}")
+
+    # Пытаемся запустить
+    if "не запущен" in error.lower() or "не отвечает" in error.lower():
+        if start_ollama():
+            # Проверяем снова
+            ok, error = check_ollama_available()
+            if ok:
+                return True
+            else:
+                raise RuntimeError(f"Ollama запущен, но: {error}")
+        else:
+            raise RuntimeError("Не удалось запустить Ollama. Запусти вручную: ollama serve")
+
+    # Другая ошибка (например, нет модели)
+    raise RuntimeError(error)
