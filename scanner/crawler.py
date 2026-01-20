@@ -492,6 +492,10 @@ class SmartCrawler:
         result['description'] = content['description']
         result['content_json'] = content['content_json']
 
+        # v45.0: Добавляем safety в breakdown для сохранения в БД
+        if result['breakdown'] and result.get('safety'):
+            result['breakdown']['safety'] = result['safety']
+
         # Определяем статус (GOOD если score >= 60)
         if score >= GOOD_THRESHOLD:
             status = 'GOOD'
