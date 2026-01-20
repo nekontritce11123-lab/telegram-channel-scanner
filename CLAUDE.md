@@ -80,7 +80,7 @@ Final Score = Raw Score × Trust Factor
 **scanner/metrics.py** - Metric calculations
 - `FraudConvictionSystem` - Fraud detection with 13 factors (F1-F13)
 - `check_instant_scam()` - Quick SCAM detection
-- `calculate_ad_load()` - Ad post detection with keyword/link analysis
+- `analyze_private_invites()` - Private links detection for trust penalty
 
 **scanner/forensics.py** - User analysis
 - `UserForensics` class with 4 detection methods:

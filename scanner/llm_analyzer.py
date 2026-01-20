@@ -22,12 +22,26 @@ v41.0 изменения:
 import json
 import asyncio
 import re
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
 import requests
+
+# v2.1: Общие утилиты (clean_text)
+from scanner.utils import clean_text
+
+# v43.0: Централизованная конфигурация
+from scanner.config import (
+    OLLAMA_URL,
+    OLLAMA_MODEL,
+    OLLAMA_TIMEOUT,
+    MAX_RETRIES,
+    RETRY_DELAY,
+    CACHE_TTL_DAYS,
+)
 
 # === V2.0: JSON REPAIR ===
 try:
@@ -80,7 +94,9 @@ def safe_parse_json(response: str, default_values: dict = None) -> tuple:
             return _fill_defaults(data, default_values), warnings
     except json.JSONDecodeError as e:
         warnings.append(f"L1: JSON decode error - {e.msg}")
-    except Exception as e:
+    except (IndexError, KeyError) as e:
+        # IndexError: при работе с индексами response
+        # KeyError: при доступе к dict ключам
         warnings.append(f"L1: Parse error - {e}")
 
     # Level 2: json_repair library
@@ -91,7 +107,8 @@ def safe_parse_json(response: str, default_values: dict = None) -> tuple:
                 data = json.loads(repaired)
                 warnings.append("L2: json_repair succeeded")
                 return _fill_defaults(data, default_values), warnings
-        except Exception as e:
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            # json_repair может вернуть невалидный JSON или сломаться
             warnings.append(f"L2: json_repair failed - {e}")
     else:
         warnings.append("L2: json_repair not installed, skipping")
@@ -102,7 +119,8 @@ def safe_parse_json(response: str, default_values: dict = None) -> tuple:
         if data:
             warnings.append(f"L3: Regex extracted {len(data)} fields")
             return _fill_defaults(data, default_values), warnings
-    except Exception as e:
+    except (re.error, TypeError, AttributeError) as e:
+        # re.error: ошибка регулярки, TypeError/AttributeError: неверный тип данных
         warnings.append(f"L3: Regex extraction failed - {e}")
 
     warnings.append("FAILED: All parsing levels exhausted")
@@ -152,15 +170,12 @@ def _regex_extract_fields(response: str) -> dict:
 
 
 # === КОНФИГУРАЦИЯ ===
-
-OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "qwen3:8b"
-OLLAMA_TIMEOUT = 180  # Больше чем classifier — анализ сложнее
+# v43.0: OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, MAX_RETRIES, RETRY_DELAY, CACHE_TTL_DAYS
+# импортируются из scanner.config
 
 # Кэш
 CACHE_DIR = Path(__file__).parent.parent / "cache"
 LLM_CACHE_FILE = CACHE_DIR / "llm_analyzer_cache.json"
-CACHE_TTL_DAYS = 7
 
 # DEBUG
 DEBUG_LLM_ANALYZER = False  # v41.0: отключен для компактного вывода
@@ -284,7 +299,8 @@ def _load_cache() -> dict:
     try:
         with open(LLM_CACHE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, OSError, IOError):
+        # Ошибка чтения/парсинга - начинаем с пустого кэша
         return {}
 
 
@@ -293,22 +309,13 @@ def _save_cache(cache: dict):
     try:
         with open(LLM_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
-    except Exception as e:
+    except (OSError, IOError, TypeError) as e:
+        # OSError/IOError: ошибки файловой системы
+        # TypeError: несериализуемые данные
         print(f"LLM Cache save error: {e}")
 
 
 # === ПОДГОТОВКА ДАННЫХ ===
-
-def _clean_text(text: str) -> str:
-    """Очищает текст от ссылок и лишнего"""
-    if not text:
-        return ""
-    text = re.sub(r'https?://\S+', '', text)
-    text = re.sub(r't\.me/\S+', '', text)
-    text = re.sub(r'[\U0001F600-\U0001F64F]{3,}', '', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-
 
 def _detect_footer(posts_texts: list, min_occurrences: int = 5) -> Optional[str]:
     """
@@ -372,7 +379,7 @@ def _prepare_posts_text(messages: list) -> str:
         elif hasattr(msg, 'text') and msg.text:
             text = msg.text
         if text and len(text) > 30:
-            raw_texts.append(_clean_text(text))
+            raw_texts.append(clean_text(text))
 
     # Детектим повторяющийся футер
     footer = _detect_footer(raw_texts)
@@ -402,7 +409,7 @@ def _prepare_comments_text(comments: list) -> str:
             text = comment
 
         if text:
-            clean = _clean_text(text)[:200]
+            clean = clean_text(text)[:200]
             if clean and len(clean) > 5:
                 texts.append(f"[{i+1}]: {clean}")
 
@@ -411,8 +418,11 @@ def _prepare_comments_text(comments: list) -> str:
 
 # === OLLAMA API ===
 
-def _call_ollama(system_prompt: str, user_message: str) -> Optional[str]:
-    """Запрос к Ollama"""
+def _call_ollama(system_prompt: str, user_message: str, retry_count: int = 0) -> Optional[str]:
+    """
+    Запрос к Ollama с retry логикой.
+    v43.0: Добавлен retry при таймаутах (из classifier.py).
+    """
     payload = {
         "model": OLLAMA_MODEL,
         "messages": [
@@ -442,10 +452,17 @@ def _call_ollama(system_prompt: str, user_message: str) -> Optional[str]:
         print("OLLAMA: Не запущен! Запусти: ollama serve")
         return None
     except requests.exceptions.Timeout:
-        print(f"OLLAMA: Таймаут ({OLLAMA_TIMEOUT} сек)")
+        if retry_count < MAX_RETRIES:
+            wait = RETRY_DELAY * (retry_count + 1)
+            print(f"OLLAMA: Таймаут, retry {retry_count + 1}/{MAX_RETRIES} через {wait}с...")
+            time.sleep(wait)
+            return _call_ollama(system_prompt, user_message, retry_count + 1)
+        print(f"OLLAMA: Таймаут после {MAX_RETRIES} попыток!")
         return None
-    except Exception as e:
-        print(f"OLLAMA: Ошибка - {e}")
+    except (KeyError, TypeError, ValueError) as e:
+        # KeyError: неожиданная структура JSON ответа
+        # TypeError/ValueError: ошибки преобразования данных
+        print(f"OLLAMA: Ошибка обработки ответа - {e}")
         return None
 
 

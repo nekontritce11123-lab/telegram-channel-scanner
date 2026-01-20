@@ -1,6 +1,10 @@
 """
-Общие утилиты для scanner модулей.
-Избегаем дублирования кода между classifier.py и llm_analyzer.py
+scanner/utils.py - общие utility функции
+
+v1.0: clean_text, load_json_cache, save_json_cache
+v1.1: safe_int, safe_float (из mini-app/backend/main.py)
+
+Избегаем дублирования кода между модулями.
 """
 
 import json
@@ -55,7 +59,8 @@ def load_json_cache(path: Path) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, OSError, IOError):
+        # Ошибка чтения/парсинга - начинаем с пустого кэша
         return {}
 
 
@@ -76,6 +81,46 @@ def save_json_cache(path: Path, data: dict, indent: int = 2) -> bool:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=indent)
         return True
-    except Exception as e:
+    except (OSError, IOError, TypeError) as e:
+        # OSError/IOError: ошибки файловой системы
+        # TypeError: несериализуемые данные в JSON
         print(f"Cache save error: {e}")
         return False
+
+
+def safe_int(value, default: int = 0) -> int:
+    """
+    Безопасное преобразование в int.
+
+    Args:
+        value: Значение для преобразования (может быть None, str, float)
+        default: Значение по умолчанию при ошибке
+
+    Returns:
+        int значение или default
+    """
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    """
+    Безопасное преобразование в float.
+
+    Args:
+        value: Значение для преобразования (может быть None, str, int)
+        default: Значение по умолчанию при ошибке
+
+    Returns:
+        float значение или default
+    """
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default

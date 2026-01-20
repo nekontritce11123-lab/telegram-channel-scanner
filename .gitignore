@@ -1,6 +1,7 @@
 # Environment
 .env
 *.session
+*.session-journal
 
 # Python
 __pycache__/

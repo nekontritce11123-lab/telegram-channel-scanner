@@ -37,6 +37,9 @@ from .scorer import calculate_final_score
 from .classifier import get_classifier, ChannelClassifier
 from .llm_analyzer import LLMAnalyzer
 
+# v43.0: Централизованная конфигурация
+from .config import GOOD_THRESHOLD, COLLECT_THRESHOLD
+
 
 def extract_content_for_classification(
     chat,
@@ -150,9 +153,7 @@ RATE_LIMIT = {
     'batch_pause': 300,         # 5 минут отдыха
 }
 
-# Пороги качества
-GOOD_THRESHOLD = 60      # Минимум для статуса GOOD в базе
-COLLECT_THRESHOLD = 72   # v41.1: Минимум для сбора ссылок (размножения)
+# v43.0: GOOD_THRESHOLD, COLLECT_THRESHOLD импортируются из scanner.config
 
 
 class SmartCrawler:
@@ -432,8 +433,9 @@ class SmartCrawler:
                     breakdown['llm_analysis'] = llm_analysis
                     result['ad_pct'] = llm_analysis.get('ad_percentage')
                     result['bot_pct'] = llm_analysis.get('bot_percentage')
-            except Exception as e:
-                pass  # тихий fallback
+            except (AttributeError, KeyError, TypeError) as e:
+                # LLM анализ опционален - не прерываем сканирование
+                pass
 
         # Определяем статус (GOOD если score >= 60)
         if score >= GOOD_THRESHOLD:

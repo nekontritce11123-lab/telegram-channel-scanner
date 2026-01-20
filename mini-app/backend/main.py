@@ -323,14 +323,14 @@ def get_cpm_range(category: Optional[str]) -> tuple:
 
 def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
     """
-    v22.1: Оценивает детальный breakdown метрик на основе итогового score.
+    v40.4: Оценивает детальный breakdown метрик на основе итогового score.
 
     Используется как fallback когда нет breakdown_json в БД.
-    Ключи должны совпадать с METRIC_CONFIG в format_breakdown_for_ui().
+    Веса синхронизированы с RAW_WEIGHTS в scanner/scorer.py (v38.4).
 
-    - Quality (35 max): cv_views, reach, views_decay, forward_rate
-    - Engagement (40 max): comments, reaction_rate, er_variation, reaction_stability
-    - Reputation (16 max): verified, age, premium, source_diversity
+    - Quality (40 max): cv_views(15), reach(10), views_decay(8), forward_rate(7)
+    - Engagement (40 max): comments(15), reaction_rate(15), er_variation(5), stability(5)
+    - Reputation (20 max): age(7), premium(7), source(6)
     """
     # Raw score до trust factor
     raw_score = score / trust_factor if trust_factor > 0 else score
@@ -339,25 +339,25 @@ def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
     # Процент от максимума (приблизительно)
     pct = raw_score / 100
 
-    # v22.1: Ключи совпадают с METRIC_CONFIG и scorer.py
+    # v40.4: Веса синхронизированы с RAW_WEIGHTS в scorer.py (v38.4)
     weights = {
         'quality': {
-            'cv_views': {'max': 13, 'label': 'CV просмотров'},
+            'cv_views': {'max': 15, 'label': 'CV просмотров'},
             'reach': {'max': 10, 'label': 'Охват'},
-            'views_decay': {'max': 7, 'label': 'Стабильность'},
-            'forward_rate': {'max': 5, 'label': 'Репосты'},
+            'views_decay': {'max': 8, 'label': 'Стабильность'},
+            'forward_rate': {'max': 7, 'label': 'Репосты'},
         },
         'engagement': {
             'comments': {'max': 15, 'label': 'Комментарии'},
             'reaction_rate': {'max': 15, 'label': 'Реакции'},
             'er_variation': {'max': 5, 'label': 'Разнообразие'},
-            'reaction_stability': {'max': 5, 'label': 'Стабильность ER'},
+            'stability': {'max': 5, 'label': 'Стабильность ER'},
         },
         'reputation': {
-            # v34.0: verified убран - не влияет на score и отображается как галочка
-            'age': {'max': 4, 'label': 'Возраст'},
-            'premium': {'max': 4, 'label': 'Премиумы'},
-            'source_diversity': {'max': 4, 'label': 'Оригинальность'},
+            # v38.4: verified убран (0 баллов), age/premium по 7, source 6
+            'age': {'max': 7, 'label': 'Возраст'},
+            'premium': {'max': 7, 'label': 'Премиумы'},
+            'source': {'max': 6, 'label': 'Оригинальность'},
         },
     }
 

@@ -379,9 +379,12 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
             'kicked_count': getattr(full_chat, 'kicked_count', 0) or 0,
             'status': 'complete'
         }
-    except Exception:
-        # Приватный канал или ошибка - пропускаем Ghost Protocol
-        channel_health = {'status': 'unavailable'}
+    except (ChannelPrivate, ChannelInvalid) as e:
+        # Приватный канал или невалидный - пропускаем Ghost Protocol
+        channel_health = {'status': 'unavailable', 'reason': type(e).__name__}
+    except Exception as e:
+        # Другие ошибки (сеть, API) - логируем но не прерываем
+        channel_health = {'status': 'unavailable', 'reason': str(e)}
 
     return ScanResult(
         chat=chat,
@@ -432,8 +435,12 @@ async def _get_users_from_reactions(
             for raw_user in result.users:
                 users.append(RawUserWrapper(raw_user))
 
-    except Exception:
-        # Реакции недоступны или ошибка API
+    except (ChannelPrivate, ChannelInvalid):
+        # Реакции недоступны (приватный канал)
+        pass
+    except Exception as e:
+        # Другие ошибки API (не прерываем, юзеры просто останутся пустыми)
+        # Логирование опционально для дебага
         pass
 
     return users

@@ -46,7 +46,6 @@ from .metrics import (
     calculate_er_variation,
     calculate_source_diversity,
     calculate_forwards_ratio,
-    # calculate_ad_load,  # v41.0: REMOVED - теперь LLM ad_percentage
     get_channel_age_days,
     get_raw_stats,
     # v15.0: New metrics
@@ -107,8 +106,6 @@ TRUST_FACTORS = {
     'premium_zero': 0.8,              # 0% премиумов
 
     # Content-based penalties
-    # 'ad_load_spam': 0.4,            # v41.0: REMOVED - теперь LLM ad_percentage в llm_trust_factor
-    # 'ad_load_heavy': 0.7,           # v41.0: REMOVED
     'hidden_comments': 0.7,           # Скрытые комментарии
 
     # Conviction-based penalties
@@ -523,7 +520,6 @@ def calculate_adaptive_weights(forensics_available: bool, users_count: int) -> d
 
 def calculate_trust_factor(
     forensics_result,
-    # ad_load_data: dict,  # v41.0: REMOVED - теперь LLM ad_percentage
     comments_enabled: bool,
     conviction_score: int,
     is_verified: bool = False,
@@ -1292,7 +1288,6 @@ def calculate_final_score(
     raw_score = min(100, max(0, raw_score))  # Cap at 0-100
 
     # Дополнительные данные для Trust Factor
-    # ad_load_data = calculate_ad_load(messages, channel_username)  # v41.0: REMOVED
     regularity_cv = calculate_post_regularity(messages)
 
     # v41.0: ad_load больше не в breakdown (теперь LLM ad_percentage)
@@ -1354,7 +1349,6 @@ def calculate_final_score(
 
     trust_factor, trust_details = calculate_trust_factor(
         forensics_result=forensics_result,
-        # ad_load_data=ad_load_data,  # v41.0: REMOVED
         comments_enabled=comments_enabled,
         conviction_score=effective_conviction,
         is_verified=is_verified,
@@ -1450,7 +1444,6 @@ def calculate_final_score(
                     'floating_weights': not comments_enabled or not reactions_enabled,
                     'hardcore_mode': scoring_mode == 'hardcore'
                 },
-                # 'ad_load': ad_load_data,  # v41.0: REMOVED
                 'channel_health': channel_health,
                 'raw_stats': get_raw_stats(messages)
             }
@@ -1516,7 +1509,6 @@ def calculate_final_score(
             'floating_weights': not comments_enabled or not reactions_enabled,
             'hardcore_mode': scoring_mode == 'hardcore'
         },
-        # 'ad_load': ad_load_data,  # v41.0: REMOVED
         'channel_health': channel_health,  # v15.0: Ghost Protocol
         'raw_stats': get_raw_stats(messages)
     }

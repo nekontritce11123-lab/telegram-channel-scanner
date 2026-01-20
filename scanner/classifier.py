@@ -23,56 +23,22 @@ from typing import Optional
 # Для HTTP запросов к Ollama
 import requests
 
+# v2.1: Общие утилиты (clean_text)
+from scanner.utils import clean_text
 
-# === RETRY КОНФИГУРАЦИЯ ===
-MAX_RETRIES = 3
-RETRY_DELAY = 5  # секунд между попытками
-
-
-# === КОНФИГУРАЦИЯ ===
-
-CATEGORIES = [
-    # Премиальные (CPM 2000-7000₽)
-    "CRYPTO",        # криптовалюты, DeFi, NFT, Web3, трейдинг
-    "FINANCE",       # акции, инвестиции, форекс, банки (НЕ крипта)
-    "REAL_ESTATE",   # недвижимость, ипотека, риэлторы
-    "BUSINESS",      # B2B-услуги, SaaS, консалтинг, стартапы
-
-    # Технологии (CPM 1000-2000₽)
-    "TECH",          # программирование, IT, гаджеты, DevOps
-    "AI_ML",         # нейросети, ML, ChatGPT, Data Science
-
-    # Образование и развитие (CPM 700-1200₽)
-    "EDUCATION",     # курсы, обучение, онлайн-школы
-    "BEAUTY",        # косметика, парфюмерия, салоны красоты
-    "HEALTH",        # фитнес, медицина, ЗОЖ, диетология
-    "TRAVEL",        # туризм, авиа, отели, путешествия
-
-    # Коммерция (CPM 500-1000₽)
-    "RETAIL",        # магазины, e-commerce, товары
-
-    # Контент (CPM 100-500₽)
-    "ENTERTAINMENT", # игры, кино, музыка, мемы, юмор
-    "NEWS",          # новости, политика, события
-    "LIFESTYLE",     # личные блоги, лайфстайл
-
-    # Высокий риск
-    "GAMBLING",      # ставки, казино
-    "ADULT",         # 18+ контент
-]
-
-# === OLLAMA КОНФИГУРАЦИЯ (v32.0) ===
-
-OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "qwen3:8b"
-OLLAMA_TIMEOUT = 60
-
-CACHE_TTL_DAYS = 7
-MAX_POSTS_FOR_AI = 50
-MAX_CHARS_PER_POST = 800
-
-# DEBUG режим
-DEBUG_CLASSIFIER = False
+# v43.0: Централизованная конфигурация
+from scanner.config import (
+    OLLAMA_URL,
+    OLLAMA_MODEL,
+    OLLAMA_TIMEOUT,
+    MAX_RETRIES,
+    RETRY_DELAY,
+    CACHE_TTL_DAYS,
+    MAX_POSTS_FOR_AI,
+    MAX_CHARS_PER_POST,
+    DEBUG_CLASSIFIER,
+    CATEGORIES,
+)
 
 
 # === СИСТЕМНЫЙ ПРОМПТ v32.0 ===
@@ -120,7 +86,8 @@ def _load_cache() -> dict:
     try:
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, OSError, IOError) as e:
+        # Ошибка чтения/парсинга кэша - начинаем с пустого
         return {}
 
 
@@ -130,7 +97,9 @@ def _save_cache(cache: dict):
     try:
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
-    except Exception as e:
+    except (OSError, IOError, TypeError) as e:
+        # OSError/IOError: ошибки файловой системы
+        # TypeError: несериализуемые данные
         print(f"Ошибка сохранения кэша: {e}")
 
 
@@ -158,20 +127,6 @@ def _set_cached(channel_id: int, category: str, cache: dict):
 
 # === ПОДГОТОВКА ДАННЫХ ===
 
-def _clean_text(text: str) -> str:
-    """Очищает текст от ссылок и лишнего."""
-    if not text:
-        return ""
-
-    text = re.sub(r'https?://\S+', '', text)
-    text = re.sub(r't\.me/\S+', '', text)
-    text = re.sub(r'[\U0001F600-\U0001F64F]{3,}', '', text)
-    text = re.sub(r'[\U0001F300-\U0001F5FF]{3,}', '', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-
-    return text.strip()
-
-
 def _prepare_context(title: str, description: str, messages: list) -> str:
     """Формирует контекст для LLM."""
     parts = []
@@ -180,7 +135,7 @@ def _prepare_context(title: str, description: str, messages: list) -> str:
         parts.append(f"Channel name: {title[:256]}")
 
     if description:
-        clean_desc = _clean_text(description)[:1000]
+        clean_desc = clean_text(description)[:1000]
         if clean_desc:
             parts.append(f"Description: {clean_desc}")
 
@@ -193,7 +148,7 @@ def _prepare_context(title: str, description: str, messages: list) -> str:
             text = msg.text
 
         if text:
-            clean = _clean_text(text)[:MAX_CHARS_PER_POST]
+            clean = clean_text(text)[:MAX_CHARS_PER_POST]
             if clean and len(clean) > 20:
                 posts_text.append(f"- {clean}")
 
@@ -393,8 +348,10 @@ Reasoning:"""
             return _call_ollama_sync(context, retry_count + 1)
         print(f"OLLAMA: Таймаут после {MAX_RETRIES} попыток!")
         return None
-    except Exception as e:
-        print(f"OLLAMA: Ошибка - {e}")
+    except (KeyError, TypeError, ValueError) as e:
+        # KeyError: неожиданная структура JSON ответа
+        # TypeError/ValueError: ошибки преобразования данных
+        print(f"OLLAMA: Ошибка обработки ответа - {e}")
         return None
 
 
@@ -416,7 +373,8 @@ def _preload_model():
         )
         if response.status_code == 200:
             print(f"Модель {OLLAMA_MODEL} загружена в GPU")
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
+        # Любые ошибки сети при прогреве (connection, timeout, etc.)
         print(f"Предупреждение: не удалось прогреть модель - {e}")
 
 
@@ -429,8 +387,8 @@ def _unload_model():
             timeout=10
         )
         print(f"Модель {OLLAMA_MODEL} выгружена из GPU")
-    except:
-        pass  # Не критично при выходе
+    except (requests.exceptions.RequestException, OSError) as e:
+        pass  # Не критично при выходе - модель выгрузится сама по timeout
 
 
 # === ОСНОВНОЙ КЛАССИФИКАТОР ===
