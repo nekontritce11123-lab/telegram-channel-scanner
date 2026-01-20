@@ -16,8 +16,16 @@ import asyncio
 from pyrogram import Client
 from pyrogram.enums import ChatType
 from pyrogram.raw import functions
-from pyrogram.errors import ChannelPrivate, ChannelInvalid, FloodWait
+from pyrogram.errors import (
+    ChannelPrivate,
+    ChannelInvalid,
+    FloodWait,
+    RPCError,
+    UsernameNotOccupied,
+    UsernameInvalid,
+)
 from dotenv import load_dotenv
+from loguru import logger
 
 # Загружаем .env из корня проекта
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -382,9 +390,13 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
     except (ChannelPrivate, ChannelInvalid) as e:
         # Приватный канал или невалидный - пропускаем Ghost Protocol
         channel_health = {'status': 'unavailable', 'reason': type(e).__name__}
-    except Exception as e:
-        # Другие ошибки (сеть, API) - логируем но не прерываем
-        channel_health = {'status': 'unavailable', 'reason': str(e)}
+    except FloodWait:
+        # FloodWait всегда пробрасываем наверх - пусть вызывающий код решает
+        raise
+    except RPCError as e:
+        # Ошибки Telegram API (сеть, rate limit, etc.)
+        logger.warning(f"GetFullChannel RPC error for {channel}: {e}")
+        channel_health = {'status': 'unavailable', 'reason': f'RPC: {e}'}
 
     return ScanResult(
         chat=chat,
@@ -438,10 +450,12 @@ async def _get_users_from_reactions(
     except (ChannelPrivate, ChannelInvalid):
         # Реакции недоступны (приватный канал)
         pass
-    except Exception as e:
-        # Другие ошибки API (не прерываем, юзеры просто останутся пустыми)
-        # Логирование опционально для дебага
-        pass
+    except FloodWait:
+        # FloodWait всегда пробрасываем наверх
+        raise
+    except RPCError as e:
+        # Ошибки Telegram API - логируем, но не прерываем
+        logger.warning(f"GetMessageReactionsList RPC error: {e}")
 
     return users
 
@@ -500,8 +514,9 @@ async def smart_scan_safe(client: Client, channel: str, max_retries: int = 3) ->
 
             await asyncio.sleep(wait_time)
 
-        except (ChannelPrivate, ChannelInvalid) as e:
-            # Канал приватный или не существует
+        except (ChannelPrivate, ChannelInvalid, UsernameNotOccupied, UsernameInvalid) as e:
+            # Канал приватный, не существует или username невалидный
+            logger.debug(f"Channel access error for {channel}: {type(e).__name__}")
             return ScanResult(
                 chat=None,
                 messages=[],
@@ -510,14 +525,15 @@ async def smart_scan_safe(client: Client, channel: str, max_retries: int = 3) ->
                 channel_health={'status': 'error', 'reason': str(type(e).__name__)}
             )
 
-        except Exception as e:
-            # Другие ошибки — reason передаётся наверх, краулер выводит
+        except RPCError as e:
+            # Ошибки Telegram API (сеть, rate limit и т.д.)
+            logger.error(f"Telegram RPC error for {channel}: {e}")
             return ScanResult(
                 chat=None,
                 messages=[],
                 comments_data={},
                 users=[],
-                channel_health={'status': 'error', 'reason': str(e)}
+                channel_health={'status': 'error', 'reason': f'RPC: {e}'}
             )
 
     # Все попытки исчерпаны

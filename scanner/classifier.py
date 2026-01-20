@@ -26,6 +26,9 @@ import requests
 # v2.1: Общие утилиты (clean_text)
 from scanner.utils import clean_text
 
+# v23.0: unified cache from cache.py
+from scanner.cache import get_classification_cache
+
 # v43.0: Централизованная конфигурация
 from scanner.config import (
     OLLAMA_URL,
@@ -33,7 +36,6 @@ from scanner.config import (
     OLLAMA_TIMEOUT,
     MAX_RETRIES,
     RETRY_DELAY,
-    CACHE_TTL_DAYS,
     MAX_POSTS_FOR_AI,
     MAX_CHARS_PER_POST,
     DEBUG_CLASSIFIER,
@@ -74,56 +76,9 @@ IMPORTANT: Use EXACT name like AI_ML, CRYPTO, TECH - not "Technology" or "Artifi
 
 
 # === КЭШИРОВАНИЕ ===
-
-CACHE_DIR = Path(__file__).parent.parent / "cache"
-CACHE_FILE = CACHE_DIR / "classifier_cache.json"
-
-
-def _load_cache() -> dict:
-    """Загружает кэш из файла."""
-    if not CACHE_FILE.exists():
-        return {}
-    try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError, IOError) as e:
-        # Ошибка чтения/парсинга кэша - начинаем с пустого
-        return {}
-
-
-def _save_cache(cache: dict):
-    """Сохраняет кэш в файл."""
-    CACHE_DIR.mkdir(exist_ok=True)
-    try:
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(cache, f, ensure_ascii=False, indent=2)
-    except (OSError, IOError, TypeError) as e:
-        # OSError/IOError: ошибки файловой системы
-        # TypeError: несериализуемые данные
-        print(f"Ошибка сохранения кэша: {e}")
-
-
-def _get_cached(channel_id: int, cache: dict) -> Optional[str]:
-    """Проверяет кэш на наличие категории."""
-    key = str(channel_id)
-    if key not in cache:
-        return None
-
-    entry = cache[key]
-    cached_at = datetime.fromisoformat(entry.get("cached_at", "2000-01-01"))
-    if datetime.now() - cached_at > timedelta(days=CACHE_TTL_DAYS):
-        return None
-
-    return entry.get("category")
-
-
-def _set_cached(channel_id: int, category: str, cache: dict):
-    """Добавляет категорию в кэш."""
-    cache[str(channel_id)] = {
-        "category": category,
-        "cached_at": datetime.now().isoformat()
-    }
-
+# v23.0: unified cache from cache.py
+# Старые функции _load_cache/_save_cache/_get_cached/_set_cached удалены
+# Используем get_classification_cache() в классе ChannelClassifier
 
 # === ПОДГОТОВКА ДАННЫХ ===
 
@@ -397,10 +352,12 @@ class ChannelClassifier:
     """
     Классификатор каналов через локальный Ollama.
     v33.0: Автоматический прогрев/выгрузка модели.
+    v23.0: unified cache from cache.py
     """
 
     def __init__(self):
-        self.cache = _load_cache()
+        # v23.0: unified cache from cache.py
+        self.cache = get_classification_cache()
         self.results = {}
 
         # v33: Прогреваем модель при старте
@@ -423,10 +380,16 @@ class ChannelClassifier:
         Классифицирует канал через Ollama с thinking mode.
         Возвращает категорию или None.
         """
-        # Проверяем кэш
-        cached = _get_cached(channel_id, self.cache)
-        if cached:
-            return cached
+        # v23.0: unified cache from cache.py
+        cache_key = str(channel_id)
+        cached_data = self.cache.get(cache_key)
+        if cached_data and isinstance(cached_data, dict):
+            cached = cached_data.get("category")
+            if cached:
+                return cached
+        elif cached_data and isinstance(cached_data, str):
+            # Поддержка старого формата (просто строка)
+            return cached_data
 
         # Готовим контекст
         context = _prepare_context(title, description, messages)
@@ -436,14 +399,16 @@ class ChannelClassifier:
 
         # Сохраняем в кэш
         if category is not None:
-            _set_cached(channel_id, category, self.cache)
+            # v23.0: unified cache from cache.py
+            self.cache.set(cache_key, {"category": category})
             self.results[channel_id] = category
 
         return category
 
     def save_cache(self):
         """Сохраняет кэш на диск."""
-        _save_cache(self.cache)
+        # v23.0: unified cache from cache.py (JSONCache автоматически сохраняет)
+        pass  # JSONCache сохраняет при каждом set(), явный save не нужен
 
 
 # === ГЛОБАЛЬНЫЙ ЭКЗЕМПЛЯР ===

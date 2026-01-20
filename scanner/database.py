@@ -24,10 +24,13 @@ Multi-label: category + category_secondary (например TECH+ENTERTAINMENT)
 
 import sqlite3
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -129,8 +132,11 @@ class CrawlerDB:
             if 'category' not in columns:
                 cursor.execute("ALTER TABLE channels ADD COLUMN category TEXT DEFAULT NULL")
                 print("Миграция: добавлена колонка category")
-        except sqlite3.Error:
-            pass  # Колонка уже существует или другая ошибка
+        except sqlite3.OperationalError as e:
+            # Колонка уже существует (duplicate column name)
+            logger.debug(f"Migration category: column already exists or table issue: {e}")
+        except sqlite3.Error as e:
+            logger.error(f"Migration category failed: {e}")
 
     def _migrate_add_category_secondary(self):
         """Миграция v18.0: добавляет колонку category_secondary для multi-label."""
@@ -141,8 +147,10 @@ class CrawlerDB:
             if 'category_secondary' not in columns:
                 cursor.execute("ALTER TABLE channels ADD COLUMN category_secondary TEXT DEFAULT NULL")
                 print("Миграция v18.0: добавлена колонка category_secondary")
-        except sqlite3.Error:
-            pass
+        except sqlite3.OperationalError as e:
+            logger.debug(f"Migration category_secondary: column already exists or table issue: {e}")
+        except sqlite3.Error as e:
+            logger.error(f"Migration category_secondary failed: {e}")
 
     def _migrate_add_photo_url(self):
         """Миграция v19.0: добавляет колонку photo_url для аватарок каналов."""
@@ -153,8 +161,10 @@ class CrawlerDB:
             if 'photo_url' not in columns:
                 cursor.execute("ALTER TABLE channels ADD COLUMN photo_url TEXT DEFAULT NULL")
                 print("Миграция v19.0: добавлена колонка photo_url")
-        except sqlite3.Error:
-            pass
+        except sqlite3.OperationalError as e:
+            logger.debug(f"Migration photo_url: column already exists or table issue: {e}")
+        except sqlite3.Error as e:
+            logger.error(f"Migration photo_url failed: {e}")
 
         # v20.0: category_percent для мульти-категорий с процентами
         try:
@@ -163,8 +173,10 @@ class CrawlerDB:
             if 'category_percent' not in columns:
                 cursor.execute("ALTER TABLE channels ADD COLUMN category_percent INTEGER DEFAULT 100")
                 print("Миграция v20.0: добавлена колонка category_percent")
-        except sqlite3.Error:
-            pass
+        except sqlite3.OperationalError as e:
+            logger.debug(f"Migration category_percent: column already exists or table issue: {e}")
+        except sqlite3.Error as e:
+            logger.error(f"Migration category_percent failed: {e}")
 
     def _migrate_add_breakdown(self):
         """Миграция v21.0: добавляет колонку breakdown_json для реальных метрик."""
@@ -175,8 +187,10 @@ class CrawlerDB:
             if 'breakdown_json' not in columns:
                 cursor.execute("ALTER TABLE channels ADD COLUMN breakdown_json TEXT DEFAULT NULL")
                 print("Миграция v21.0: добавлена колонка breakdown_json")
-        except sqlite3.Error:
-            pass
+        except sqlite3.OperationalError as e:
+            logger.debug(f"Migration breakdown_json: column already exists or table issue: {e}")
+        except sqlite3.Error as e:
+            logger.error(f"Migration breakdown_json failed: {e}")
 
     def _migrate_v22_content_storage(self):
         """Миграция v22.0: добавляет колонки для хранения контента и переклассификации."""
@@ -191,8 +205,10 @@ class CrawlerDB:
                 try:
                     cursor.execute(f"ALTER TABLE channels ADD COLUMN {col} TEXT DEFAULT NULL")
                     print(f"Миграция v22.0: добавлена колонка {col}")
-                except sqlite3.Error:
-                    pass
+                except sqlite3.OperationalError as e:
+                    logger.debug(f"Migration v22.0 {col}: column already exists or table issue: {e}")
+                except sqlite3.Error as e:
+                    logger.error(f"Migration v22.0 {col} failed: {e}")
 
         self.conn.commit()
 
@@ -213,7 +229,16 @@ class CrawlerDB:
             )
             self.conn.commit()
             return cursor.rowcount > 0
-        except sqlite3.Error:
+        except sqlite3.IntegrityError as e:
+            # Ожидаемо: дубликат канала (UNIQUE constraint)
+            logger.debug(f"Channel {username} already exists: {e}")
+            return False
+        except sqlite3.OperationalError as e:
+            # Database locked, no such table, etc.
+            logger.error(f"Database operational error adding channel {username}: {e}")
+            return False
+        except sqlite3.Error as e:
+            logger.error(f"Database error adding channel {username}: {e}")
             return False
 
     def get_next(self) -> Optional[str]:
@@ -237,6 +262,154 @@ class CrawlerDB:
             (username,)
         )
         self.conn.commit()
+
+    def get_next_atomic(self) -> Optional[str]:
+        """
+        Атомарно получить и заблокировать следующий канал.
+
+        Использует UPDATE...RETURNING для атомарности.
+        Избегает race condition при параллельных краулерах.
+
+        Требует SQLite 3.35+ (Python 3.10+ обычно включает).
+
+        Returns:
+            username канала или None если очередь пуста
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE channels
+            SET status = 'PROCESSING', scanned_at = datetime('now')
+            WHERE username = (
+                SELECT username FROM channels
+                WHERE status = 'WAITING'
+                ORDER BY created_at ASC
+                LIMIT 1
+            )
+            RETURNING username
+        """)
+        row = cursor.fetchone()
+        self.conn.commit()
+        return row['username'] if row else None
+
+    # ========== v43.0: All-or-nothing механика ==========
+
+    def peek_next(self) -> Optional[str]:
+        """
+        v43.0: Возвращает следующий канал БЕЗ изменения статуса.
+
+        Используется для "всё или ничего" семантики:
+        - Берём канал
+        - Обрабатываем в памяти
+        - Записываем атомарно через claim_and_complete()
+
+        При Ctrl+C или краше канал остаётся WAITING.
+
+        Returns:
+            username канала или None если очередь пуста
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT username FROM channels
+            WHERE status = 'WAITING'
+            ORDER BY created_at ASC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+        return row['username'] if row else None
+
+    def claim_and_complete(
+        self,
+        username: str,
+        status: str,
+        score: int = 0,
+        verdict: str = "",
+        trust_factor: float = 1.0,
+        members: int = 0,
+        ad_links: list = None,
+        category: str = None,
+        category_secondary: str = None,
+        breakdown: dict = None,
+        categories: dict = None,
+        llm_analysis: dict = None,
+        title: str = None,
+        description: str = None,
+        content_json: str = None
+    ) -> bool:
+        """
+        v43.0: Атомарно записывает результат ТОЛЬКО если канал в WAITING.
+
+        Реализует "всё или ничего" семантику:
+        - Если канал в WAITING → записываем ВСЕ данные, возвращаем True
+        - Если канал в другом статусе → ничего не делаем, возвращаем False
+
+        Защита параллельных краулеров (optimistic locking):
+        - Только один краулер успешно запишет результат
+        - Остальные получат False и возьмут следующий канал
+
+        Returns:
+            True если успешно записали, False если канал уже обработан
+        """
+        username = username.lower().lstrip('@')
+        ad_links_json = json.dumps(ad_links or [], ensure_ascii=False)
+
+        breakdown_json = None
+        if breakdown or categories or llm_analysis:
+            breakdown_json = json.dumps({
+                'breakdown': breakdown,
+                'categories': categories,
+                'llm_analysis': llm_analysis
+            }, ensure_ascii=False)
+
+        cursor = self.conn.cursor()
+        # v43.1: Используем LOWER() для case-insensitive поиска
+        # (в БД могут быть usernames с разным регистром из старых версий)
+        cursor.execute("""
+            UPDATE channels SET
+                status = ?,
+                score = ?,
+                verdict = ?,
+                trust_factor = ?,
+                members = ?,
+                ad_links = ?,
+                category = COALESCE(?, category),
+                category_secondary = COALESCE(?, category_secondary),
+                breakdown_json = ?,
+                title = ?,
+                description = ?,
+                content_json = ?,
+                scanned_at = datetime('now')
+            WHERE LOWER(username) = ? AND status = 'WAITING'
+            RETURNING username
+        """, (status, score, verdict, trust_factor, members, ad_links_json,
+              category, category_secondary, breakdown_json,
+              title, description, content_json, username))
+
+        row = cursor.fetchone()
+        self.conn.commit()
+        return row is not None
+
+    def delete_if_waiting(self, username: str) -> bool:
+        """
+        v43.0: Удаляет канал ТОЛЬКО если он в WAITING.
+
+        Для "всё или ничего" семантики с невалидными каналами:
+        - Если канал ещё WAITING → удаляем, возвращаем True
+        - Если канал уже обработан другим краулером → возвращаем False
+
+        Returns:
+            True если удалили, False если канал уже не WAITING
+        """
+        username = username.lower().lstrip('@')
+        cursor = self.conn.cursor()
+        # v43.1: Используем LOWER() для case-insensitive поиска
+        cursor.execute("""
+            DELETE FROM channels
+            WHERE LOWER(username) = ? AND status = 'WAITING'
+        """, (username,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    # ========== Старые методы (для обратной совместимости) ==========
 
     def mark_done(
         self,

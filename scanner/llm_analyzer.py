@@ -33,6 +33,9 @@ import requests
 # v2.1: Общие утилиты (clean_text)
 from scanner.utils import clean_text
 
+# v23.0: unified cache from cache.py
+from scanner.cache import get_llm_cache
+
 # v43.0: Централизованная конфигурация
 from scanner.config import (
     OLLAMA_URL,
@@ -40,7 +43,6 @@ from scanner.config import (
     OLLAMA_TIMEOUT,
     MAX_RETRIES,
     RETRY_DELAY,
-    CACHE_TTL_DAYS,
 )
 
 # === V2.0: JSON REPAIR ===
@@ -170,12 +172,9 @@ def _regex_extract_fields(response: str) -> dict:
 
 
 # === КОНФИГУРАЦИЯ ===
-# v43.0: OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, MAX_RETRIES, RETRY_DELAY, CACHE_TTL_DAYS
+# v43.0: OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, MAX_RETRIES, RETRY_DELAY
 # импортируются из scanner.config
-
-# Кэш
-CACHE_DIR = Path(__file__).parent.parent / "cache"
-LLM_CACHE_FILE = CACHE_DIR / "llm_analyzer_cache.json"
+# v23.0: кэширование через unified cache.py (get_llm_cache)
 
 # DEBUG
 DEBUG_LLM_ANALYZER = False  # v41.0: отключен для компактного вывода
@@ -292,28 +291,9 @@ class LLMAnalysisResult:
 
 
 # === КЭШИРОВАНИЕ ===
-
-def _load_cache() -> dict:
-    if not LLM_CACHE_FILE.exists():
-        return {}
-    try:
-        with open(LLM_CACHE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError, IOError):
-        # Ошибка чтения/парсинга - начинаем с пустого кэша
-        return {}
-
-
-def _save_cache(cache: dict):
-    CACHE_DIR.mkdir(exist_ok=True)
-    try:
-        with open(LLM_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(cache, f, ensure_ascii=False, indent=2)
-    except (OSError, IOError, TypeError) as e:
-        # OSError/IOError: ошибки файловой системы
-        # TypeError: несериализуемые данные
-        print(f"LLM Cache save error: {e}")
-
+# v23.0: unified cache from cache.py
+# Старые функции _load_cache/_save_cache удалены
+# Используем get_llm_cache() в классе LLMAnalyzer
 
 # === ПОДГОТОВКА ДАННЫХ ===
 
@@ -533,106 +513,39 @@ def infer_channel_type(messages: list = None, category: str = None) -> str:
 
 # === COMMENT ANALYZER V40.1 ===
 
-COMMENT_ANALYZER_SYSTEM = """You are a comment authenticity analyzer V40.1.
-Your goal is ACCURATE bot detection. Most Telegram channels have 0-5% bots.
+COMMENT_ANALYZER_SYSTEM = """You are a Turing-Test Level Comment Analyst (V45.0).
+Analyze the authenticity of the audience based on their comments relative to the Post Context.
 
-## CRITICAL: 0% BOTS IS NORMAL!
-Healthy channels typically have ZERO bots. Only count as bot if you see CLEAR evidence.
-Do NOT inflate bot_percentage "just in case" - that creates false positives.
+## INPUT DATA
+1. **CHANNEL INFO:** Type/Category.
+2. **POST CONTEXT:** The text users are reacting to.
+3. **COMMENTS:** User replies.
 
-## WHAT MAKES A COMMENT HUMAN (NOT bot):
+## ANALYSIS LOGIC
 
-1. TECHNICAL TERMS = 100% HUMAN
-   "gguf", "npm", "API", "llama.cpp", version numbers, library names
-   → Bots cannot generate domain-specific knowledge
+### 🤖 BOT SIGNALS (Red Flags)
+1. **Language Mismatch:** English generic comments ("Great project", "Awesome", "Sir") on a Russian channel.
+2. **Context Blindness:** - Post: "Bitcoin crashed, I lost everything."
+   - Comment: "Great project! To the moon! 🔥" (Zero context awareness).
+3. **Crypto Spam:** "Airdrop", "Claim reward", "Wallet connect", Asian characters spam.
+4. **Pattern Repetition:** Multiple users posting identical phrases.
 
-2. EMOTION = 100% HUMAN
-   Profanity, frustration, sarcasm, arguments, memes, slang
-   "ЗАЕБАЛСЯ", "ниипёт", "горишь", "садись, два" → definitely human
-
-3. CONVERSATION = 100% HUMAN
-   Back-and-forth dialogue, follow-up questions, corrections
-   "Жду gguf" → "Выложили" → "качаю" = real users talking
-
-4. SHORT ≠ BOT
-   "works", "+1", "спасибо", "ггуф нужен)" are NORMAL human replies
-
-## WHAT MAKES A COMMENT BOT:
-
-Count as BOT if you see these patterns:
-- IDENTICAL text from multiple users (copy-paste)
-- Generic English praise on Russian channel ("Great post!", "Amazing!")
-- Promotional spam unrelated to channel topic
-- Motivational quotes with no connection to content
-
-## CRYPTO SPAM = ALWAYS BOT (very important!):
-- Airdrop spam: "Клеймим Аирдроп", "дроп от", "клейм токена", "claim", "airdrop"
-- Korean/Chinese spam on Russian channel (에어드랍, 드롭, 클레임)
-- Phishing links: random domains with /claim, /airdrop, /reward
-- Link-only comments (just URL, no context)
-- "Проверьте кошелёк", "check your wallet" spam
+### 👤 HUMAN SIGNALS (Green Flags)
+1. **Context Relevance:** Comments discussing specific details from the Post Context.
+2. **Technical/Slang:** Terms like "deploy", "API", "скам", "ликвид", "имба".
+3. **Debate/Negativity:** "Автор не прав", "Это не работает". Bots are rarely negative/argumentative.
+4. **Brevity != Bot:** "+", "Согл", "Кек" are normal human reactions in Telegram.
 
 Output ONLY valid JSON."""
 
-COMMENT_ANALYZER_PROMPT_V3 = """Analyze these Telegram comments for bot detection.
+COMMENT_ANALYZER_PROMPT_V3 = """Analyze these comments.
 
-## CHANNEL TYPE: {channel_type}
+CHANNEL TYPE: {channel_type}
+POST CONTEXT: {posts_context}
+COMMENTS: {comments_text}
 
-## POST CONTEXT:
-{posts_context}
-
-## COMMENTS:
-{comments_text}
-
----
-
-## YOUR TASK:
-
-Count how many comments are CLEARLY bots vs humans.
-
-### HUMAN indicators (count as REAL):
-- Any technical jargon or domain knowledge
-- Profanity, emotion, sarcasm, slang
-- Questions about the post content
-- Debates, disagreements, corrections
-- Personal experience ("я пробовал", "у меня работает")
-- Conversation flow (replies to each other)
-- Short but contextually relevant ("works", "+1", "спасибо")
-
-### BOT indicators (count as BOT):
-- IDENTICAL text from different users (copy-paste)
-- Generic English on Russian channel ("Great!", "Amazing!")
-- Completely off-topic spam
-- Suspiciously formal language
-- CRYPTO SPAM (count ALL as bots!):
-  * Airdrop messages: "Клеймим Аирдроп", "дроп от", "клейм токена"
-  * Korean/Chinese text on Russian channel (에어드랍, 드롭)
-  * Phishing links: domains with /claim, /airdrop, /reward
-  * Link-only comments (just URL without context)
-  * "Проверьте кошелёк" wallet check spam
-
-## CALIBRATION:
-
-IMPORTANT: Most healthy channels have 0-5% bots!
-- If all comments have personality/context → bot_percentage = 0%
-- If 1-2 generic comments in 50 → bot_percentage = 2-4%
-- If 5+ identical/spam comments → bot_percentage = 10%+
-
-Only high bot_percentage (>10%) if you see MULTIPLE clear bot patterns.
-
-## EXAMPLES:
-
-Channel with 50 comments, all have technical terms or emotion:
-→ bot_percentage = 0%
-
-Channel with 50 comments, 2 say just "👍" on technical post:
-→ bot_percentage = 4%
-
-Channel with 50 comments, 10 are identical "Отличный пост!":
-→ bot_percentage = 20%
-
-Output ONLY this JSON format (NO other fields!):
-{{"bot_percentage": <0-100>, "bot_signals": [<patterns found>], "trust_score": <0-100>, "trust_signals": [<positive signals>]}}"""
+JSON Output:
+{{"total_comments": <int>, "suspicious_bot_count": <int>, "bot_signals": ["list of specific reasons"], "authenticity_tier": "HIGH"|"MEDIUM"|"LOW", "trust_sentiment": "POSITIVE"|"NEGATIVE"|"SKEPTICAL"|"NEUTRAL"}}"""
 
 
 def analyze_comments(comments: list, posts: list = None, channel_type: str = "GENERAL") -> Optional[CommentAnalysisResult]:
@@ -676,12 +589,13 @@ def analyze_comments(comments: list, posts: list = None, channel_type: str = "GE
     if DEBUG_LLM_ANALYZER:
         print(f"COMMENT ANALYZER RESPONSE:\n{response[:500]}")
 
-    # V2.0: Use safe_parse_json with fallback (v41.0: no authenticity)
+    # V50.0: Новый формат с authenticity_tier
     default_values = {
-        "bot_percentage": 50,
+        "total_comments": len(comments),
+        "suspicious_bot_count": 0,
         "bot_signals": [],
-        "trust_score": 50,
-        "trust_signals": []
+        "authenticity_tier": "HIGH",
+        "trust_sentiment": "NEUTRAL"
     }
     data, warnings = safe_parse_json(response, default_values)
 
@@ -691,11 +605,33 @@ def analyze_comments(comments: list, posts: list = None, channel_type: str = "GE
             print(f"  - {w}")
 
     if data:
+        # V50.0: Конвертируем новый формат в старый для совместимости
+        total = int(data.get("total_comments", len(comments)))
+        bot_count = int(data.get("suspicious_bot_count", 0))
+
+        # Поддержка старого формата (bot_percentage)
+        if "bot_percentage" in data:
+            bot_pct = int(data.get("bot_percentage", 0))
+        else:
+            bot_pct = int(bot_count / total * 100) if total > 0 else 0
+
+        # V50.0: Конвертируем authenticity_tier в trust_score
+        tier = data.get("authenticity_tier", "MEDIUM")
+        if "trust_score" in data:
+            trust_score = int(data.get("trust_score", 50))
+        else:
+            trust_map = {"HIGH": 95, "MEDIUM": 70, "LOW": 30}
+            trust_score = trust_map.get(tier, 50)
+
+        # V50.0: trust_sentiment как trust_signal
+        sentiment = data.get("trust_sentiment", "NEUTRAL")
+        trust_signals = data.get("trust_signals", [f"Sentiment: {sentiment}"])
+
         return CommentAnalysisResult(
-            bot_percentage=int(data.get("bot_percentage", 50)),
+            bot_percentage=bot_pct,
             bot_signals=data.get("bot_signals", []),
-            trust_score=int(data.get("trust_score", 50)),
-            trust_signals=data.get("trust_signals", []),
+            trust_score=trust_score,
+            trust_signals=trust_signals,
             raw_response=response
         )
 
@@ -706,71 +642,39 @@ def analyze_comments(comments: list, posts: list = None, channel_type: str = "GE
 
 # === AD PERCENTAGE ANALYZER V40.0 ===
 
-AD_ANALYZER_SYSTEM = """You are a Telegram advertising analyst V40.0.
-Your goal is ACCURATE classification, not maximum ad detection.
-CRITICAL: Distinguish between THIRD-PARTY ADS and AUTHOR'S OWN CONTENT.
-When uncertain, default to NOT counting as ad.
-Output ONLY valid JSON, no other text."""
+AD_ANALYZER_SYSTEM = """You are a conservative Advertising Auditor for Telegram channels (V50.0).
+Your goal is to identify paid promotional content with 100% certainty.
 
-AD_ANALYZER_PROMPT = """Analyze advertising content in this Telegram channel.
+## CORE PHILOSOPHY
+- **Conservative Approach:** If you are 99% sure it is an ad, but have 1% doubt -> IT IS NOT AN AD.
+- **False Positives are fatal:** Marking a genuine review or job post as an "Ad" is a critical failure.
+
+## CLASSIFICATION RULES
+
+### ✅ DEFINITELY AN AD (Count this)
+1. **Explicit Tags:** #реклама, #ad, #партнёр, #promo, "erid:".
+2. **Paid Markers:** "На правах рекламы", "Спонсор поста", "Заказать рекламу можно тут".
+3. **External Push:** Aggressive sales pitch for a 3rd party product with a distinct call-to-action ("Buy now", "Subscribe here").
+
+### ❌ NOT AN AD (Ignore this)
+1. **Self-Promotion:** Author promoting their own course, chat, or product (Internal traffic).
+2. **Job/Hiring:** "Looking for a developer", "Vacancy".
+3. **Genuine Reviews:** "I tested X and liked it" (without promo codes or tracking links).
+4. **Cross-promo:** "Subscribe to my friend's channel" (unless clearly paid).
+5. **Donations:** Patreon, Boosty, "Support the channel".
+
+## OUTPUT FORMAT
+1. First, provide a brief **Reasoning** listing IDs of posts identified as ads.
+2. Then, output strictly valid JSON."""
+
+AD_ANALYZER_PROMPT = """Analyze the provided list of posts.
+Input Format: <id> text...
 
 POSTS:
 {posts_text}
 
----
-
-## STEP 1: DETECT CHANNEL TYPE (do this FIRST!)
-
-Look at ALL posts and determine what kind of channel this is:
-- ARTIST/CREATOR: Posts about paintings, drawings, music, designs, handmade items
-- DEVELOPER: Posts about code, projects, tools, tutorials
-- BLOGGER: Personal stories, opinions, lifestyle content
-- NEWS: Reposts, aggregated content from other sources
-- COMPANY: Official brand channel
-
-⚠️ CRITICAL RULE: If channel is ARTIST/CREATOR type:
-- Posts selling their own artwork (auctions, prices, "ставки") = NOT ADS (0%)
-- Posts about their own creative process = NOT ADS
-- Links to their own store/gallery = NOT ADS
-- ONLY count as AD if they promote SOMEONE ELSE's products
-
-## STEP 2: COUNT ONLY THIRD-PARTY ADVERTISING
-
-### COUNT AS AD (promoting OTHER people's stuff):
-- Posts marked #реклама, #партнёр, #ad, #sponsored
-- Promotions of OTHER channels (not author's own)
-- Affiliate links for EXTERNAL products (?ref=, promo codes)
-- Crypto shills: token contracts (0x...), "fair launch"
-- Paid partnerships with external brands
-
-### NEVER COUNT AS AD (author's own content):
-- Author selling THEIR OWN products (art, courses, services)
-- Auctions for author's own work ("аукцион", "ставки", "лот")
-- Author's monetization: Boosty, Patreon, Ko-fi, донаты
-- Author's other channels/platforms
-- Tool mentions without affiliate context
-- Personal reviews without payment disclosure
-
-## EXAMPLES:
-
-ARTIST CHANNEL posting "Аукцион! Картина 'Закат'. Старт 5000₽. Ставки в комментариях 👇"
-→ This is the artist selling THEIR OWN painting
-→ NOT AN AD (ad_count = 0)
-
-TECH CHANNEL posting "Рекомендую курс от @other_channel, промокод SAVE20"
-→ This promotes ANOTHER channel with promo code
-→ THIS IS AN AD (ad_count = 1)
-
-BLOGGER posting "Мой новый курс на Boosty уже доступен!"
-→ Author's own monetization
-→ NOT AN AD (ad_count = 0)
-
-## CALIBRATION:
-- If channel sells author's own products → ad_percentage should be LOW (0-10%)
-- Only count THIRD-PARTY paid promotions
-- When uncertain → default to NOT AD
-
-Output JSON: {{"channel_type": "<artist|developer|blogger|news|company|unknown>", "ad_count": <number>, "monetization_count": <number>, "total_posts": <number>, "ad_percentage": <0-100>}}"""
+Output JSON structure:
+{{"total_posts_scanned": <int>, "ad_post_count": <int>, "ad_post_ids": [<list of integers>], "reasoning": "Brief explanation of why detected posts are ads"}}"""
 
 
 def analyze_ad_percentage(messages: list) -> Optional[int]:
@@ -809,8 +713,8 @@ def analyze_ad_percentage(messages: list) -> Optional[int]:
     if DEBUG_LLM_ANALYZER:
         print(f"AD ANALYZER RESPONSE:\n{response[:300]}")
 
-    # Парсим JSON
-    default_values = {"ad_count": 0, "total_posts": len(messages), "ad_percentage": 0}
+    # V50.0: Новый формат с ad_post_count
+    default_values = {"ad_post_count": 0, "total_posts_scanned": len(messages), "ad_post_ids": []}
     data, warnings = safe_parse_json(response, default_values)
 
     if DEBUG_LLM_ANALYZER and warnings:
@@ -819,7 +723,8 @@ def analyze_ad_percentage(messages: list) -> Optional[int]:
             print(f"  - {w}")
 
     if data:
-        ad_count = int(data.get("ad_count", 0))
+        # V50.0: Поддержка нового формата (ad_post_count) и старого (ad_count)
+        ad_count = int(data.get("ad_post_count", 0) or data.get("ad_count", 0))
 
         # v41.0: Используем РЕАЛЬНОЕ количество постов, не то что LLM посчитал
         total = actual_posts_count if actual_posts_count > 0 else len(messages)
@@ -845,7 +750,8 @@ class LLMAnalyzer:
     """Полный LLM анализ канала V40.0"""
 
     def __init__(self):
-        self.cache = _load_cache()
+        # v23.0: unified cache from cache.py
+        self.cache = get_llm_cache()
         print(f"LLM ANALYZER v40.0: Ollama ({OLLAMA_MODEL})")
 
     def analyze(
@@ -902,7 +808,8 @@ class LLMAnalyzer:
         return result
 
     def save_cache(self):
-        _save_cache(self.cache)
+        # v23.0: unified cache from cache.py (JSONCache автоматически сохраняет)
+        pass  # JSONCache сохраняет при каждом set(), явный save не нужен
 
 
 # v42.0: Удалён мёртвый код print_analysis_result() — 0 вызовов в проекте

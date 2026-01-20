@@ -305,12 +305,17 @@ class SmartCrawler:
 
         return links
 
-    async def process_channel(self, username: str) -> dict:
+    async def process_channel(self, username: str) -> Optional[dict]:
         """
-        Обрабатывает один канал.
+        v43.0: Обрабатывает один канал в памяти (all-or-nothing).
+
+        НЕ записывает в БД! Возвращает dict с данными для записи в run().
+        При любой ошибке или прерывании — канал остаётся WAITING.
 
         Returns:
-            dict с результатами: status, score, new_channels
+            dict с результатами для claim_and_complete(), или
+            dict с delete=True для удаления, или
+            None для retry (канал остаётся WAITING)
         """
         result = {
             'username': username,
@@ -318,67 +323,40 @@ class SmartCrawler:
             'score': 0,
             'verdict': '',
             'new_channels': 0,
-            'category': None,      # v41.0: для компактного вывода
-            'ad_pct': None,        # v41.0
-            'bot_pct': None,       # v41.0
+            'category': None,
+            'ad_pct': None,
+            'bot_pct': None,
+            # v43.0: Данные для claim_and_complete()
+            'trust_factor': 1.0,
+            'members': 0,
+            'breakdown': None,
+            'categories': None,
+            'llm_analysis': None,
+            'title': None,
+            'description': None,
+            'content_json': None,
+            'ad_links': None,
+            'delete': False,  # v43.0: флаг для удаления
         }
-
-        # Помечаем как обрабатываемый
-        self.db.mark_processing(username)
 
         # Сканируем
         scan_result = await smart_scan_safe(self.client, username)
 
-        # v42.0: Проверяем на ошибку — удаляем или requeue
+        # v43.0: Проверяем на ошибку
         if scan_result.chat is None:
             error_reason = scan_result.channel_health.get('reason', 'Unknown error')
 
-            # v42.0: Только сетевые ошибки → requeue в конец очереди
+            # Только сетевые ошибки → retry (возвращаем None, канал остаётся WAITING)
             network_errors = ['timeout', 'connection', 'network', 'connectionerror']
             is_network = any(err in error_reason.lower() for err in network_errors)
 
             if is_network:
-                # Временная ошибка — попробуем позже
-                self.db.requeue_channel(username)
+                # Временная ошибка — вернём None, канал останется WAITING для retry
+                return None
             else:
-                # Все остальные ошибки — УДАЛЯЕМ из базы
-                # (ChannelInvalid, ChannelPrivate, NOT_CHANNEL, Max retries, USERNAME_NOT_OCCUPIED)
-                self.db.delete_channel(username)
-
-            return None  # v42.0: не показываем в выводе
-
-        # Считаем score
-        try:
-            score_result = calculate_final_score(
-                scan_result.chat,
-                scan_result.messages,
-                scan_result.comments_data,
-                scan_result.users,
-                scan_result.channel_health
-            )
-
-            score = score_result.get('score', 0)
-            verdict = score_result.get('verdict', '')
-            trust_factor = score_result.get('trust_factor', 1.0)
-            members = score_result.get('members', 0)
-
-            # v22.5: Добавляем flags в breakdown для корректного отображения в UI
-            # (reactions_enabled, comments_enabled, floating_weights)
-            breakdown = score_result.get('breakdown', {})
-            flags = score_result.get('flags', {})
-            if breakdown and flags:
-                breakdown['reactions_enabled'] = flags.get('reactions_enabled', True)
-                breakdown['comments_enabled'] = flags.get('comments_enabled', True)
-                breakdown['floating_weights'] = flags.get('floating_weights', False)
-                score_result['breakdown'] = breakdown
-
-            result['score'] = score
-            result['verdict'] = verdict
-
-        except Exception as e:
-            self.db.mark_done(username, 'ERROR', verdict=str(e))
-            result['verdict'] = str(e)
-            return result
+                # Постоянные ошибки — помечаем для удаления
+                result['delete'] = True
+                return result
 
         # v22.1: Извлекаем контент для хранения и переклассификации
         # Включает 50 постов + 30 комментариев для AI анализа
@@ -388,6 +366,9 @@ class SmartCrawler:
             comments_data=scan_result.comments_data,
             users=scan_result.users
         )
+
+        # v43.2: Сначала классификация и LLM анализ, ПОТОМ score
+        # (чтобы llm_trust_factor применился к score!)
 
         # v41.2: Классификация для ВСЕХ каналов (не только GOOD)
         category = None
@@ -404,7 +385,8 @@ class SmartCrawler:
                     self.classified_count += 1
                     result['category'] = category
 
-        # v41.2: LLM Analysis для ВСЕХ каналов (не только GOOD)
+        # v43.2: LLM Analysis ПЕРЕД calculate_final_score (чтобы штрафы применились!)
+        llm_result = None
         if self.llm_analyzer:
             try:
                 comments = []
@@ -427,12 +409,66 @@ class SmartCrawler:
                         'ad_mult': getattr(llm_result, '_ad_mult', 1.0),
                         'bot_mult': getattr(llm_result, '_comment_mult', 1.0),
                     }
-                    breakdown['llm_analysis'] = llm_analysis
                     result['ad_pct'] = llm_analysis.get('ad_percentage')
                     result['bot_pct'] = llm_analysis.get('bot_percentage')
             except (AttributeError, KeyError, TypeError) as e:
                 # LLM анализ опционален - не прерываем сканирование
                 pass
+
+        # v43.2: Теперь считаем score С учётом llm_result (ad_percentage штраф!)
+        try:
+            score_result = calculate_final_score(
+                scan_result.chat,
+                scan_result.messages,
+                scan_result.comments_data,
+                scan_result.users,
+                scan_result.channel_health,
+                llm_result=llm_result  # v43.2: Передаём LLM для штрафов!
+            )
+
+            score = score_result.get('score', 0)
+            verdict = score_result.get('verdict', '')
+            trust_factor = score_result.get('trust_factor', 1.0)
+            members = score_result.get('members', 0)
+
+            # v22.5: Добавляем flags в breakdown для корректного отображения в UI
+            breakdown = score_result.get('breakdown', {})
+            flags = score_result.get('flags', {})
+            if breakdown and flags:
+                breakdown['reactions_enabled'] = flags.get('reactions_enabled', True)
+                breakdown['comments_enabled'] = flags.get('comments_enabled', True)
+                breakdown['floating_weights'] = flags.get('floating_weights', False)
+                score_result['breakdown'] = breakdown
+
+            # v43.2: Добавляем llm_analysis в breakdown
+            if llm_result:
+                breakdown['llm_analysis'] = {
+                    'ad_percentage': llm_result.posts.ad_percentage if llm_result.posts else None,
+                    'bot_percentage': llm_result.comments.bot_percentage if llm_result.comments else None,
+                    'trust_score': llm_result.comments.trust_score if llm_result.comments else None,
+                    'llm_trust_factor': llm_result.llm_trust_factor,
+                    'ad_mult': getattr(llm_result, '_ad_mult', 1.0),
+                    'bot_mult': getattr(llm_result, '_comment_mult', 1.0),
+                }
+
+            result['score'] = score
+            result['verdict'] = verdict
+            result['trust_factor'] = trust_factor
+            result['members'] = members
+
+        except (KeyError, TypeError, AttributeError, ValueError) as e:
+            # v43.0: Ошибки при расчёте — помечаем как ERROR для записи
+            error_msg = f"{type(e).__name__}: {e}"
+            result['status'] = 'ERROR'
+            result['verdict'] = error_msg
+            return result
+
+        # v43.0: Заполняем result данными для claim_and_complete()
+        result['breakdown'] = score_result.get('breakdown')
+        result['categories'] = score_result.get('categories')
+        result['title'] = content['title']
+        result['description'] = content['description']
+        result['content_json'] = content['content_json']
 
         # Определяем статус (GOOD если score >= 60)
         if score >= GOOD_THRESHOLD:
@@ -441,51 +477,21 @@ class SmartCrawler:
             # v41.2: Для GOOD категория обязательна
             if not category:
                 result['verdict'] = 'NO_CATEGORY'
-                return result
+                return None  # v43.0: Retry — категория получится при следующей попытке
 
             # Собираем ссылки только с ОЧЕНЬ хороших каналов (score >= 72)
             if score >= COLLECT_THRESHOLD:
                 links = self.extract_links(scan_result.messages, username)
+                result['ad_links'] = list(links)
+                # v43.0: Добавляем новые каналы сразу (это безопасно, INSERT OR IGNORE)
                 new_count = 0
                 for link in links:
                     if self.db.add_channel(link, parent=username):
                         new_count += 1
                 result['new_channels'] = new_count
 
-                self.db.mark_done(
-                    username, status, score, verdict, trust_factor, members,
-                    ad_links=list(links),
-                    category=category,
-                    breakdown=score_result.get('breakdown'),
-                    categories=score_result.get('categories'),
-                    title=content['title'],
-                    description=content['description'],
-                    content_json=content['content_json']
-                )
-            else:
-                # 60-71: GOOD но ссылки не собираем
-                self.db.mark_done(
-                    username, status, score, verdict, trust_factor, members,
-                    category=category,
-                    breakdown=score_result.get('breakdown'),
-                    categories=score_result.get('categories'),
-                    title=content['title'],
-                    description=content['description'],
-                    content_json=content['content_json']
-                )
-
         else:
             status = 'BAD'
-            # v41.2: BAD тоже получает категорию и LLM данные
-            self.db.mark_done(
-                username, status, score, verdict, trust_factor, members,
-                category=category,  # v41.2: категория для BAD тоже
-                breakdown=score_result.get('breakdown'),
-                categories=score_result.get('categories'),
-                title=content['title'],
-                description=content['description'],
-                content_json=content['content_json']
-            )
 
         result['status'] = status
         return result
@@ -549,17 +555,18 @@ class SmartCrawler:
         verbose: bool = True
     ):
         """
-        Основной цикл краулера.
+        v43.0: Основной цикл краулера с all-or-nothing семантикой.
 
         Args:
             seeds: начальные каналы (опционально)
             max_channels: максимум каналов для обработки (None = бесконечно)
             verbose: выводить ли подробный лог
         """
-        # Сбрасываем зависшие PROCESSING
+        # v43.0: Одноразовый сброс PROCESSING для миграции со старых версий
+        # После миграции этот код ничего не делает (нет PROCESSING каналов)
         reset = self.db.reset_processing()
         if reset > 0:
-            print(f"Сброшено {reset} зависших каналов")
+            print(f"Миграция v43.0: сброшено {reset} PROCESSING → WAITING")
 
         # Добавляем seed каналы
         if seeds:
@@ -578,7 +585,7 @@ class SmartCrawler:
             print("\nОчередь пуста! Добавьте seed каналы.")
             return
 
-        print(f"\nЗапускаю краулер...")
+        print(f"\nЗапускаю краулер (v43.0 all-or-nothing)...")
         print("Нажми Ctrl+C для остановки\n")
 
         try:
@@ -587,9 +594,11 @@ class SmartCrawler:
             # v30: Сначала доклассифицировать GOOD каналы без категории
             await self.reclassify_uncategorized(limit=50)
 
+            print("Начинаю основной цикл обработки...")
+
             while self.running:
-                # Берём следующий канал
-                username = self.db.get_next()
+                # v43.0: peek_next() БЕЗ изменения статуса
+                username = self.db.peek_next()
 
                 if not username:
                     print("\nОчередь пуста! Краулер завершён.")
@@ -600,12 +609,45 @@ class SmartCrawler:
                     print(f"\nДостигнут лимит {max_channels} каналов.")
                     break
 
-                # Обрабатываем
+                # v43.0: Обрабатываем в памяти (может быть прервано без последствий)
                 result = await self.process_channel(username)
 
-                # v42.0: None = канал удалён/requeue — пропускаем молча
+                # v43.0: None = retry (сетевая ошибка или NO_CATEGORY)
+                # Перемещаем в конец очереди чтобы не застрять в бесконечном цикле
                 if result is None:
+                    self.db.requeue_channel(username)
+                    await asyncio.sleep(2)
                     continue
+
+                # v43.0: Атомарная запись результата
+                if result.get('delete'):
+                    # Удаляем невалидный канал
+                    self.db.delete_if_waiting(username)
+                    continue
+
+                if result['status'] in ('GOOD', 'BAD', 'ERROR'):
+                    # Атомарно записываем ВСЕ данные
+                    success = self.db.claim_and_complete(
+                        username=username,
+                        status=result['status'],
+                        score=result.get('score', 0),
+                        verdict=result.get('verdict', ''),
+                        trust_factor=result.get('trust_factor', 1.0),
+                        members=result.get('members', 0),
+                        ad_links=result.get('ad_links'),
+                        category=result.get('category'),
+                        breakdown=result.get('breakdown'),
+                        categories=result.get('categories'),
+                        llm_analysis=result.get('breakdown', {}).get('llm_analysis') if result.get('breakdown') else None,
+                        title=result.get('title'),
+                        description=result.get('description'),
+                        content_json=result.get('content_json'),
+                    )
+
+                    if not success:
+                        # v43.0: Канал уже обработан другим краулером
+                        print(f"[SKIP] @{username} уже обработан")
+                        continue
 
                 # v42.0: Чистый компактный вывод (только GOOD и BAD)
                 num = self.processed_count + 1
@@ -613,7 +655,7 @@ class SmartCrawler:
                 ad = result.get('ad_pct')
                 bot = result.get('bot_pct')
 
-                # v42.0: Форматируем None как "—"
+                # Форматируем None как "—"
                 ad_str = f"{ad}%" if ad is not None else "—"
                 bot_str = f"{bot}%" if bot is not None else "—"
                 llm_info = f"ad:{ad_str} bot:{bot_str}"
@@ -625,6 +667,8 @@ class SmartCrawler:
                 elif result['status'] == 'BAD':
                     cat_str = f" · {cat}" if cat else ""
                     print(f"[{num}] @{username}{cat_str} · {llm_info} · {result['score']} ✗")
+                elif result['status'] == 'ERROR':
+                    print(f"[{num}] @{username} · ERROR: {result.get('verdict', 'unknown')}")
 
                 self.processed_count += 1
                 self.new_links_count += result.get('new_channels', 0)
@@ -640,7 +684,8 @@ class SmartCrawler:
                     print("Продолжаю...\n")
 
         except KeyboardInterrupt:
-            print("\n\nОстановка по Ctrl+C...")
+            # v43.0: При Ctrl+C текущий канал остаётся WAITING — никаких потерь!
+            print("\n\nОстановка по Ctrl+C (данные не потеряны)...")
 
         finally:
             await self.stop()

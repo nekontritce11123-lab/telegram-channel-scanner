@@ -57,6 +57,7 @@ from .metrics import (
     check_reactions_enabled,
 )
 from .forensics import UserForensics
+from .config import SIZE_THRESHOLDS
 
 
 # ============================================================================
@@ -171,13 +172,14 @@ def reach_to_points(reach: float, members: int = 0, max_pts: int = None) -> int:
         max_pts = RAW_WEIGHTS['quality']['reach']  # 10
 
     # Размерные пороги для "накрутки"
-    if members < 200:
+    # v23.0: использует SIZE_THRESHOLDS из config.py
+    if members < SIZE_THRESHOLDS['micro']:
         scam_threshold = 200  # Микроканалы - до 200% норма
         high_is_good = 150
-    elif members < 1000:
+    elif members < SIZE_THRESHOLDS['small']:
         scam_threshold = 150
         high_is_good = 100
-    elif members < 5000:
+    elif members < SIZE_THRESHOLDS['medium']:
         scam_threshold = 130
         high_is_good = 80
     else:
@@ -214,10 +216,11 @@ def reaction_rate_to_points(rate: float, members: int = 0, max_pts: int = None) 
     if max_pts is None:
         max_pts = RAW_WEIGHTS['engagement']['reaction_rate']  # 15
     # Размерные пороги
-    if members < 200:
+    # v23.0: использует SIZE_THRESHOLDS из config.py
+    if members < SIZE_THRESHOLDS['micro']:
         scam_threshold = 20
         high_threshold = 15
-    elif members < 1000:
+    elif members < SIZE_THRESHOLDS['small']:
         scam_threshold = 12
         high_threshold = 8
     else:
@@ -349,7 +352,8 @@ def er_cv_to_points(cv: float, members: int = 0, max_pts: int = None) -> int:
         max_pts = RAW_WEIGHTS['engagement']['er_variation']  # 5
 
     # Микроканалы: маленькие числа → меньше вариация
-    if members < 200:
+    # v23.0: использует SIZE_THRESHOLDS из config.py
+    if members < SIZE_THRESHOLDS['micro']:
         if cv < 15:
             return 0
         if cv < 30:
@@ -404,9 +408,10 @@ def forward_rate_to_points(rate: float, members: int = 0, max_pts: int = None) -
         max_pts = RAW_WEIGHTS['quality']['forward_rate']  # 7
 
     # Размерные пороги
-    if members > 50000:
+    # v23.0: использует SIZE_THRESHOLDS из config.py
+    if members > SIZE_THRESHOLDS['large']:
         thresholds = {'viral': 1.5, 'excellent': 0.7, 'good': 0.3, 'medium': 0.1}
-    elif members > 5000:
+    elif members > SIZE_THRESHOLDS['medium']:
         thresholds = {'viral': 2.0, 'excellent': 1.0, 'good': 0.5, 'medium': 0.2}
     else:
         thresholds = {'viral': 3.0, 'excellent': 1.5, 'good': 0.5, 'medium': 0.1}
@@ -653,12 +658,13 @@ def calculate_trust_factor(
 
     # 7. HOLLOW VIEWS - Накрученные просмотры без активности
     # v15.2: Адаптивные пороги по размеру канала
+    # v23.0: использует SIZE_THRESHOLDS из config.py
     # Маленькие каналы могут иметь высокий reach если растут (аудитория с YouTube и т.д.)
-    if members < 500:
+    if members < SIZE_THRESHOLDS['micro'] * 2.5:  # < 500
         hollow_threshold = 400   # Микроканалы — мягче
-    elif members < 2000:
+    elif members < SIZE_THRESHOLDS['small'] * 2:  # < 2000
         hollow_threshold = 300   # Маленькие — средне
-    elif members < 10000:
+    elif members < SIZE_THRESHOLDS['medium'] * 2:  # < 10000
         hollow_threshold = 225   # Средние — строже
     else:
         hollow_threshold = 200   # Большие — очень строго
@@ -917,7 +923,8 @@ def comments_to_points(comments_data: dict, members: int = 0, max_pts: int = 10)
     avg = comments_data.get('avg_comments', 0)
 
     # Размерные пороги
-    if members < 200:
+    # v23.0: использует SIZE_THRESHOLDS из config.py
+    if members < SIZE_THRESHOLDS['micro']:
         if avg < 0.01:
             pts = 0
         elif avg < 0.05:
@@ -928,7 +935,7 @@ def comments_to_points(comments_data: dict, members: int = 0, max_pts: int = 10)
             pts = int(max_pts * 0.8)  # 8
         else:
             pts = max_pts  # 10
-    elif members < 1000:
+    elif members < SIZE_THRESHOLDS['small']:
         if avg < 0.1:
             pts = 0
         elif avg < 0.3:
