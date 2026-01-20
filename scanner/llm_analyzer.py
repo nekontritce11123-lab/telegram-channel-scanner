@@ -1,20 +1,21 @@
 """
-LLM Анализатор каналов v41.0
+LLM Анализатор каналов v46.0
 
-Два модуля:
+Три модуля:
 1. AdAnalyzer — % рекламных постов (контекстный анализ через LLM)
 2. CommentAnalyzer — Bot Detection + Trust Score
+3. BrandSafetyAnalyzer — детекция токсичного контента (v46.0)
 
-v41.0 изменения:
-- ad_percentage теперь влияет на llm_trust_factor (ad_mult)
-- authenticity УДАЛЕНА (дубликат bot_percentage)
-- Unified: llm_trust_factor = ad_mult × bot_mult
-- Keyword-based ad_load больше не используется
+v46.0 изменения:
+- Добавлен LLM Brand Safety анализатор (GAMBLING, ADULT, SCAM)
+- LLM понимает контекст, обфускацию, эвфемизмы
+- Заменяет стоп-слова фильтр для умной детекции
 
 Метрики:
 - ad_percentage: % рекламных постов → ad_mult (0.4-1.0)
 - bot_percentage: % ботов в комментариях → bot_mult (0.3-1.0)
 - trust_score: доверие аудитории к контенту
+- brand_safety: токсичность контента → safety_mult (0.0-1.0)
 
 Использует Ollama + Qwen3-8B
 """
@@ -221,9 +222,12 @@ class CommentAnalysisResult:
 
 @dataclass
 class LLMAnalysisResult:
-    """Полный результат LLM анализа v41.0"""
+    """Полный результат LLM анализа v46.0"""
     posts: Optional[PostAnalysisResult]
     comments: Optional[CommentAnalysisResult]
+
+    # v46.0: Brand Safety результат
+    safety: Optional[dict] = None    # {is_toxic, toxic_category, severity, ...}
 
     # Расчётные метрики
     llm_bonus: float = 0.0           # +0-15 points
@@ -234,9 +238,9 @@ class LLMAnalysisResult:
     tier_cap: int = 100              # Максимальный скор для тира
     exclusion_reason: Optional[str] = None  # Причина исключения (если EXCLUDED)
 
-    # v41.0: Детали для отладки (ad_mult + bot_mult)
+    # v46.0: Детали для отладки (ad_mult + bot_mult + safety_mult)
     _ad_mult: float = 1.0            # v41.0: множитель от ad_percentage
-    _brand_mult: float = 1.0
+    _safety_mult: float = 1.0        # v46.0: множитель от Brand Safety
     _comment_mult: float = 1.0       # bot_mult
     _political_mult: float = 1.0
 
@@ -287,15 +291,40 @@ class LLMAnalysisResult:
                 bot_mult = max(0.3, 1.0 - penalty)
         self._comment_mult = bot_mult
 
-        # --- Combined LLM Trust Factor (v41.0) ---
-        # Перемножаем независимые факторы с floor 0.15
-        self.llm_trust_factor = max(0.15, ad_mult * bot_mult)
+        # --- Brand Safety Multiplier (v46.0) ---
+        safety_mult = 1.0
+        if self.safety and self.safety.get('is_toxic'):
+            severity = self.safety.get('severity', 'LOW')
+            confidence = self.safety.get('confidence', 0)
 
-        self._brand_mult = 1.0
+            # Множители по severity
+            if severity == 'CRITICAL':
+                safety_mult = 0.0  # EXCLUDED
+                self.tier = "EXCLUDED"
+                self.tier_cap = 0
+                self.exclusion_reason = f"TOXIC_{self.safety.get('toxic_category', 'CONTENT')}"
+            elif severity == 'HIGH':
+                safety_mult = 0.3
+                self.tier = "RESTRICTED"
+                self.tier_cap = 30
+            elif severity == 'MEDIUM':
+                safety_mult = 0.7
+            # LOW не штрафуем
+        self._safety_mult = safety_mult
+
+        # --- Combined LLM Trust Factor (v46.0) ---
+        # Перемножаем независимые факторы с floor 0.15
+        # v46.0: добавлен safety_mult
+        self.llm_trust_factor = max(0.15, ad_mult * bot_mult * safety_mult)
+
+        # v46.0: EXCLUDED override (safety_mult = 0)
+        if safety_mult == 0.0:
+            self.llm_trust_factor = 0.0
+
         self._political_mult = 1.0
 
         if DEBUG_LLM_ANALYZER:
-            print(f"📊 V3.0: ad_mult={ad_mult:.2f}, bot_mult={bot_mult:.2f} → llm_trust={self.llm_trust_factor:.2f}")
+            print(f"📊 V46.0: ad={ad_mult:.2f}, bot={bot_mult:.2f}, safety={safety_mult:.2f} → llm_trust={self.llm_trust_factor:.2f}")
 
 
 # === КЭШИРОВАНИЕ ===
@@ -517,6 +546,162 @@ def infer_channel_type(messages: list = None, category: str = None) -> str:
             return best_type
 
     return "GENERAL"
+
+
+# === BRAND SAFETY ANALYZER V46.0 ===
+
+BRAND_SAFETY_SYSTEM = """You are a Brand Safety Analyst for advertising platforms (V46.0).
+Your goal is to detect toxic content that would make a channel unsuitable for brand advertising.
+
+## TOXIC CATEGORIES
+
+### 🎰 GAMBLING (Casino, Betting, Poker)
+- Online casinos, slots, roulette, jackpots
+- Sports betting (1xbet, fonbet, pinnacle, etc.)
+- Poker rooms, gambling strategies
+- "Guaranteed wins", "Double your deposit"
+- **Context matters:** "Sports news with betting odds" = GAMBLING, "Football match results" = NOT gambling
+
+### 🔞 ADULT (Porn, Escort, 18+)
+- Pornographic content, explicit sexual material
+- Escort services, prostitution ads
+- OnlyFans/Fansly promotion with explicit content
+- **CRITICAL:** Any content involving minors = IMMEDIATE EXCLUDE
+- **Context matters:** "Dating advice" = NOT adult, "Hot girls in your city" = ADULT
+
+### ⚠️ SCAM (Darknet, Drugs, Fraud)
+- Darknet markets, illegal goods
+- Drug sales, "закладки", substance names
+- Carding, money laundering, drops schemes
+- Illegal weapons, fake documents
+- **Context matters:** "Crypto privacy tools" = NOT scam, "Untraceable payments for..." = SCAM
+
+## ANALYSIS RULES
+
+1. **Analyze ALL posts** to determine the channel's main theme.
+2. **One toxic post ≠ toxic channel.** Look for PATTERNS.
+3. **Obfuscation detection:** к@зин0, p0rn, c@sino = SAME as казино, porn, casino.
+4. **Context is king:** "ставки" in sports betting context = GAMBLING, in "high stakes business deal" = NOT gambling.
+5. **Be conservative:** When in doubt, mark as CLEAN.
+
+## OUTPUT
+Provide your analysis in strict JSON format."""
+
+BRAND_SAFETY_PROMPT = """Analyze these posts for brand safety.
+
+POSTS:
+{posts_text}
+
+Output JSON:
+{{"toxic_category": "GAMBLING"|"ADULT"|"SCAM"|null, "confidence": 0-100, "toxic_post_count": <int>, "total_posts": <int>, "evidence": ["list of specific toxic phrases found"], "severity": "CRITICAL"|"HIGH"|"MEDIUM"|"LOW"}}
+
+Rules for severity:
+- CRITICAL (>20% toxic posts): Channel is primarily about toxic content
+- HIGH (10-20%): Significant toxic content mixed with normal
+- MEDIUM (5-10%): Occasional toxic content
+- LOW (<5%): Rare or borderline cases"""
+
+
+def analyze_brand_safety(messages: list) -> Optional[dict]:
+    """
+    V46.0: LLM-based Brand Safety анализ.
+
+    Заменяет стоп-слова фильтр для умной детекции токсичного контента.
+    LLM понимает контекст, обфускацию, эвфемизмы.
+
+    Returns:
+        dict: {
+            'is_toxic': bool,
+            'toxic_category': 'GAMBLING'|'ADULT'|'SCAM'|None,
+            'confidence': int (0-100),
+            'toxic_ratio': float,
+            'severity': 'CRITICAL'|'HIGH'|'MEDIUM'|'LOW',
+            'evidence': list[str]
+        }
+    """
+    posts_text = _prepare_posts_text(messages)
+
+    if not posts_text or len(posts_text) < 100:
+        if DEBUG_LLM_ANALYZER:
+            print("LLM BrandSafety: Недостаточно текста для анализа")
+        return {
+            'is_toxic': False,
+            'toxic_category': None,
+            'confidence': 0,
+            'toxic_ratio': 0.0,
+            'severity': 'LOW',
+            'evidence': []
+        }
+
+    # Ограничиваем текст для LLM
+    truncated_text = posts_text[:8000]
+
+    prompt = BRAND_SAFETY_PROMPT.format(posts_text=truncated_text)
+
+    if DEBUG_LLM_ANALYZER:
+        print(f"\n{'='*60}")
+        print(f"BRAND SAFETY ANALYZER V46.0 - {len(messages)} posts")
+        print(f"{'='*60}\n")
+
+    response = _call_ollama(BRAND_SAFETY_SYSTEM, prompt)
+
+    if not response:
+        return None
+
+    if DEBUG_LLM_ANALYZER:
+        print(f"BRAND SAFETY RESPONSE:\n{response[:400]}")
+
+    # Парсим ответ
+    default_values = {
+        "toxic_category": None,
+        "confidence": 0,
+        "toxic_post_count": 0,
+        "total_posts": len(messages),
+        "evidence": [],
+        "severity": "LOW"
+    }
+    data, warnings = safe_parse_json(response, default_values)
+
+    if DEBUG_LLM_ANALYZER and warnings:
+        print(f"JSON PARSE WARNINGS:")
+        for w in warnings:
+            print(f"  - {w}")
+
+    if data:
+        toxic_count = int(data.get("toxic_post_count", 0))
+        total = int(data.get("total_posts", len(messages)))
+        toxic_ratio = toxic_count / total if total > 0 else 0.0
+
+        category = data.get("toxic_category")
+        confidence = int(data.get("confidence", 0))
+        severity = data.get("severity", "LOW")
+
+        # Определяем is_toxic на основе severity и confidence
+        # CRITICAL/HIGH с confidence >= 60 = toxic
+        is_toxic = False
+        if category and confidence >= 60:
+            if severity in ["CRITICAL", "HIGH"]:
+                is_toxic = True
+            elif severity == "MEDIUM" and confidence >= 80:
+                is_toxic = True
+
+        result = {
+            'is_toxic': is_toxic,
+            'toxic_category': category if is_toxic else None,
+            'confidence': confidence,
+            'toxic_ratio': round(toxic_ratio, 3),
+            'severity': severity,
+            'evidence': data.get("evidence", [])[:5]  # Макс 5 примеров
+        }
+
+        if DEBUG_LLM_ANALYZER:
+            print(f"LLM BrandSafety: {severity} ({confidence}% confidence)")
+            if is_toxic:
+                print(f"  ⚠️ TOXIC: {category}")
+
+        return result
+
+    return None
 
 
 # === COMMENT ANALYZER V40.1 ===
@@ -781,12 +966,23 @@ class LLMAnalyzer:
         Returns:
             LLMAnalysisResult с метриками
         """
-        result = LLMAnalysisResult(posts=None, comments=None)
+        result = LLMAnalysisResult(posts=None, comments=None, safety=None)
 
         # V40.0: Определяем тип канала для калибровки промптов
         channel_type = infer_channel_type(messages, category)
         if DEBUG_LLM_ANALYZER:
             print(f"📊 Channel type detected: {channel_type} (category: {category})")
+
+        # V46.0: Brand Safety анализ (перед Ad, чтобы сразу EXCLUDED если CRITICAL)
+        safety_result = analyze_brand_safety(messages)
+        if safety_result:
+            result.safety = safety_result
+            if safety_result.get('is_toxic') and safety_result.get('severity') == 'CRITICAL':
+                # CRITICAL = сразу EXCLUDED, пропускаем остальные анализы
+                if DEBUG_LLM_ANALYZER:
+                    print(f"⛔ CRITICAL TOXIC: {safety_result.get('toxic_category')} - skipping other analysis")
+                result.calculate_impact_v2()
+                return result
 
         # V40.0: Ad Percentage с улучшенным промптом
         ad_pct = analyze_ad_percentage(messages)

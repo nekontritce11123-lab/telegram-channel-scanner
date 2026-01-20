@@ -1,19 +1,16 @@
 """
 Brand Safety модуль v45.0 - детекция токсичного контента.
 
-Локальный Python фильтр по стоп-словам для защиты Brand Safety.
-Работает мгновенно (< 1ms) без LLM.
+⚠️ DEPRECATED в v46.0 — используется LLM Brand Safety вместо стоп-слов.
+   См. scanner/llm_analyzer.py → analyze_brand_safety()
 
-Категории токсичности:
-- GAMBLING: казино, ставки, букмекеры
-- ADULT: порно, 18+, эскорт
-- SCAM: даркнет, обнал, кардинг
+LLM преимущества:
+- Понимает контекст ("ставки" в спорте vs казино)
+- Детектирует обфускацию (к@зин0, p0rn)
+- Понимает эвфемизмы и сленг
 
-Использование:
-    from scanner.brand_safety import check_content_safety
-    result = check_content_safety(messages)
-    if result.is_toxic:
-        print(f"TOXIC: {result.toxic_category} - {result.toxic_matches}")
+Старый модуль (стоп-слова) оставлен для справки.
+Не импортируется в crawler.py с v46.0.
 """
 
 import re

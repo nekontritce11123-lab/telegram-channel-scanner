@@ -36,7 +36,7 @@ from .client import get_client, smart_scan_safe
 from .scorer import calculate_final_score
 from .classifier import get_classifier, ChannelClassifier
 from .llm_analyzer import LLMAnalyzer
-from .brand_safety import check_content_safety, get_exclusion_reason
+# v46.0: Brand Safety теперь в LLM Analyzer, стоп-слова deprecated
 
 # v43.0: Централизованная конфигурация
 from .config import GOOD_THRESHOLD, COLLECT_THRESHOLD, ensure_ollama_running
@@ -369,25 +369,8 @@ class SmartCrawler:
             users=scan_result.users
         )
 
-        # v45.0: Brand Safety Check (ПЕРЕД классификацией и скорингом)
-        safety_result = check_content_safety(scan_result.messages)
-        result['safety'] = {
-            'is_toxic': safety_result.is_toxic,
-            'category': safety_result.toxic_category,
-            'ratio': safety_result.toxic_ratio,
-            'severity': safety_result.severity,
-            'matches': safety_result.toxic_matches[:5] if safety_result.toxic_matches else [],
-        }
-
-        # Если CRITICAL токсичность - сразу BAD без дальнейшего анализа
-        if safety_result.severity == "CRITICAL":
-            result['status'] = 'BAD'
-            result['verdict'] = get_exclusion_reason(safety_result) or "TOXIC_CONTENT"
-            result['score'] = 0
-            result['title'] = content['title']
-            result['description'] = content['description']
-            result['content_json'] = content['content_json']
-            return result
+        # v46.0: Brand Safety теперь через LLM (см. ниже после llm_analyzer.analyze)
+        # Старый стоп-слова фильтр удалён - LLM понимает контекст лучше
 
         # v43.2: Сначала классификация и LLM анализ, ПОТОМ score
         # (чтобы llm_trust_factor применился к score!)
@@ -433,6 +416,29 @@ class SmartCrawler:
                     }
                     result['ad_pct'] = llm_analysis.get('ad_percentage')
                     result['bot_pct'] = llm_analysis.get('bot_percentage')
+
+                    # v46.0: Brand Safety из LLM (заменяет стоп-слова)
+                    if llm_result.safety:
+                        result['safety'] = {
+                            'is_toxic': llm_result.safety.get('is_toxic', False),
+                            'category': llm_result.safety.get('toxic_category'),
+                            'ratio': llm_result.safety.get('toxic_ratio', 0.0),
+                            'severity': llm_result.safety.get('severity', 'LOW'),
+                            'evidence': llm_result.safety.get('evidence', []),
+                            'confidence': llm_result.safety.get('confidence', 0),
+                        }
+
+                        # CRITICAL = сразу BAD без дальнейшего анализа
+                        if llm_result.safety.get('severity') == 'CRITICAL':
+                            toxic_cat = llm_result.safety.get('toxic_category', 'CONTENT')
+                            result['status'] = 'BAD'
+                            result['verdict'] = f"TOXIC_{toxic_cat}"
+                            result['score'] = 0
+                            result['title'] = content['title']
+                            result['description'] = content['description']
+                            result['content_json'] = content['content_json']
+                            return result
+
             except (AttributeError, KeyError, TypeError) as e:
                 # LLM анализ опционален - не прерываем сканирование
                 pass
