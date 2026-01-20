@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'https://ads-api.factchain-traker.online'
+export const API_BASE = import.meta.env.VITE_API_BASE || 'https://ads-api.factchain-traker.online'
 
 // Types
 export interface Recommendation {
@@ -22,11 +22,19 @@ export interface Channel {
   cpm_min: number | null
   cpm_max: number | null
   photo_url: string | null
+  is_verified: boolean  // v34.0: Telegram верификация
 }
 
 // v7.0: Detailed breakdown structure
 // v22.2: Added disabled flag for reactions/comments off
 // v23.1: Added status for Info Metrics
+// v39.0: Added bot_info for comments metric (AI-detected bots)
+export interface BotInfo {
+  value: string  // e.g. "22% боты"
+  status: 'good' | 'warning' | 'bad'
+  llm_source?: boolean
+}
+
 export interface MetricItem {
   score: number
   max: number
@@ -34,6 +42,7 @@ export interface MetricItem {
   value?: string    // Optional human-readable value (e.g., "2 года", "откл.")
   disabled?: boolean  // v22.2: True when metric is disabled (floating weights)
   status?: 'good' | 'warning' | 'bad'  // v23.1: Info Metric status
+  bot_info?: BotInfo  // v39.0: Bot info integrated into comments
 }
 
 // v24.0: Info Metric with bar_percent for progress bar
@@ -90,6 +99,14 @@ export interface CategoryRank {
   avg_score: number
 }
 
+// v38.0: LLM Analysis types
+// v39.0: Simplified - LLM data now integrated into breakdown metrics
+// Only tier info is passed separately for status banner
+export interface LLMAnalysis {
+  tier: 'PREMIUM' | 'STANDARD' | 'LIMITED' | 'RESTRICTED' | 'EXCLUDED'
+  tier_cap: number
+}
+
 export interface ChannelDetail extends Channel {
   recommendations: Recommendation[]
   status?: string
@@ -98,6 +115,7 @@ export interface ChannelDetail extends Channel {
   trust_penalties?: TrustPenalty[]
   price_estimate?: PriceEstimate
   category_rank?: CategoryRank
+  llm_analysis?: LLMAnalysis  // v38.0
 }
 
 export interface ChannelListResponse {

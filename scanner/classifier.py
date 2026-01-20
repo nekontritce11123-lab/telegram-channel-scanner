@@ -15,12 +15,18 @@ import os
 import json
 import asyncio
 import re
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 # Для HTTP запросов к Ollama
 import requests
+
+
+# === RETRY КОНФИГУРАЦИЯ ===
+MAX_RETRIES = 3
+RETRY_DELAY = 5  # секунд между попытками
 
 
 # === КОНФИГУРАЦИЯ ===
@@ -59,7 +65,7 @@ CATEGORIES = [
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_MODEL = "qwen3:8b"
-OLLAMA_TIMEOUT = 120
+OLLAMA_TIMEOUT = 60
 
 CACHE_TTL_DAYS = 7
 MAX_POSTS_FOR_AI = 50
@@ -247,10 +253,11 @@ def parse_category_response(response: str) -> str:
 
 # === OLLAMA API (v32.0) ===
 
-def _call_ollama_sync(context: str) -> Optional[str]:
+def _call_ollama_sync(context: str, retry_count: int = 0) -> Optional[str]:
     """
-    Синхронный запрос к Ollama v33.0.
+    Синхронный запрос к Ollama v33.0 с retry логикой.
     think=False, temperature=0.3 для детерминированности.
+    При таймауте делает до MAX_RETRIES попыток.
     """
     # V2.0: Chain-of-Thought + Extended Priority Rules (30+)
     user_message = f"""CHANNEL CONTENT:
@@ -335,6 +342,7 @@ Reasoning:"""
         ],
         "stream": False,
         "think": False,  # Отключаем thinking - модель должна думать в ответе
+        "keep_alive": -1,  # v33: НИКОГДА не выгружать модель из GPU!
         "options": {
             "temperature": 0.3,  # Низкая для детерминированности
             "num_predict": 300   # V2.0: увеличено для Chain-of-Thought reasoning
@@ -378,7 +386,12 @@ Reasoning:"""
         print("OLLAMA: Не запущен! Запусти: ollama serve")
         return None
     except requests.exceptions.Timeout:
-        print(f"OLLAMA: Таймаут ({OLLAMA_TIMEOUT} сек)")
+        if retry_count < MAX_RETRIES:
+            wait = RETRY_DELAY * (retry_count + 1)
+            print(f"OLLAMA: Таймаут, retry {retry_count + 1}/{MAX_RETRIES} через {wait}с...")
+            time.sleep(wait)
+            return _call_ollama_sync(context, retry_count + 1)
+        print(f"OLLAMA: Таймаут после {MAX_RETRIES} попыток!")
         return None
     except Exception as e:
         print(f"OLLAMA: Ошибка - {e}")
@@ -391,18 +404,55 @@ async def _call_ollama(context: str) -> Optional[str]:
     return await loop.run_in_executor(None, _call_ollama_sync, context)
 
 
+# === УПРАВЛЕНИЕ МОДЕЛЬЮ ===
+
+def _preload_model():
+    """Прогрев модели при старте — загружает в GPU."""
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={"model": OLLAMA_MODEL, "messages": [], "keep_alive": -1},
+            timeout=120
+        )
+        if response.status_code == 200:
+            print(f"Модель {OLLAMA_MODEL} загружена в GPU")
+    except Exception as e:
+        print(f"Предупреждение: не удалось прогреть модель - {e}")
+
+
+def _unload_model():
+    """Выгрузка модели при выходе — освобождает GPU."""
+    try:
+        requests.post(
+            OLLAMA_URL,
+            json={"model": OLLAMA_MODEL, "messages": [], "keep_alive": 0},
+            timeout=10
+        )
+        print(f"Модель {OLLAMA_MODEL} выгружена из GPU")
+    except:
+        pass  # Не критично при выходе
+
+
 # === ОСНОВНОЙ КЛАССИФИКАТОР ===
 
 class ChannelClassifier:
     """
     Классификатор каналов через локальный Ollama.
-    v32.0: Thinking mode + XML tags, без keyword костылей.
+    v33.0: Автоматический прогрев/выгрузка модели.
     """
 
     def __init__(self):
         self.cache = _load_cache()
         self.results = {}
+
+        # v33: Прогреваем модель при старте
+        _preload_model()
+
         print(f"CLASSIFIER V2.0: Ollama ({OLLAMA_MODEL}) + Chain-of-Thought + 30+ rules")
+
+    def unload(self):
+        """Выгружает модель из GPU. Вызывать при завершении работы."""
+        _unload_model()
 
     async def classify_sync(
         self,

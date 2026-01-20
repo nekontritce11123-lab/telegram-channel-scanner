@@ -25,7 +25,7 @@ AI классификация v18.0:
 import asyncio
 import re
 import random
-import base64
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -35,6 +35,112 @@ from .database import CrawlerDB
 from .client import get_client, smart_scan_safe
 from .scorer import calculate_final_score
 from .classifier import get_classifier, ChannelClassifier
+from .llm_analyzer import LLMAnalyzer
+
+
+def extract_content_for_classification(
+    chat,
+    messages: list,
+    comments_data: dict = None,
+    users: dict = None,
+    max_posts: int = 50,
+    max_comments: int = 30
+) -> dict:
+    """
+    v22.1: Извлекает контент канала для хранения и переклассификации.
+
+    Хранит ВСЕ данные нужные для AI анализа:
+    - 50 постов (тексты)
+    - 30 комментариев (текст + user_id + is_premium для bot detection)
+
+    Args:
+        chat: Объект канала (scan_result.chat)
+        messages: Список постов (scan_result.messages)
+        comments_data: Данные комментариев (scan_result.comments_data)
+        users: Данные пользователей (scan_result.users)
+        max_posts: Максимум постов (по умолчанию 50)
+        max_comments: Максимум комментариев (по умолчанию 30)
+
+    Returns:
+        dict с title, description, content_json
+    """
+    # Title и description из chat
+    title = getattr(chat, 'title', '') or ''
+    description = getattr(chat, 'description', '') or ''
+
+    # === ПОСТЫ (50 штук × 300 символов) ===
+    posts = []
+    for m in messages[:max_posts]:
+        text = ''
+        if hasattr(m, 'message') and m.message:
+            text = m.message
+        elif hasattr(m, 'text') and m.text:
+            text = m.text
+        elif hasattr(m, 'caption') and m.caption:
+            text = m.caption
+
+        if text:
+            posts.append(text[:300])  # 300 символов достаточно для классификации
+
+    # === КОММЕНТАРИИ (30 штук для bot detection) ===
+    # Формат: {"t": text, "p": is_premium, "id": user_id}
+    # Короткие ключи для экономии места
+    comments = []
+    if comments_data:
+        raw_comments = comments_data.get('comments', [])
+        users_dict = users or {}
+
+        for c in raw_comments[:max_comments]:
+            # Извлекаем текст комментария
+            text = ''
+            if hasattr(c, 'message') and c.message:
+                text = c.message
+            elif hasattr(c, 'text') and c.text:
+                text = c.text
+            elif isinstance(c, dict):
+                text = c.get('message', '') or c.get('text', '')
+
+            if not text:
+                continue
+
+            # Извлекаем user_id
+            user_id = None
+            if hasattr(c, 'from_user') and c.from_user:
+                user_id = getattr(c.from_user, 'id', None)
+            elif hasattr(c, 'from_id'):
+                from_id = c.from_id
+                if hasattr(from_id, 'user_id'):
+                    user_id = from_id.user_id
+            elif isinstance(c, dict):
+                user_id = c.get('user_id') or c.get('from_id')
+
+            # Проверяем is_premium из users dict
+            is_premium = False
+            if user_id and user_id in users_dict:
+                user = users_dict[user_id]
+                if hasattr(user, 'is_premium'):
+                    is_premium = bool(user.is_premium)
+                elif isinstance(user, dict):
+                    is_premium = bool(user.get('is_premium', False))
+
+            comments.append({
+                't': text[:150],  # 150 символов достаточно для паттернов
+                'p': is_premium,
+                'id': user_id
+            })
+
+    # Формируем JSON
+    content = {'posts': posts}
+    if comments:
+        content['comments'] = comments
+
+    content_json = json.dumps(content, ensure_ascii=False, separators=(',', ':'))
+
+    return {
+        'title': title,
+        'description': description,
+        'content_json': content_json
+    }
 
 
 # Настройки rate limiting
@@ -46,53 +152,7 @@ RATE_LIMIT = {
 
 # Пороги качества
 GOOD_THRESHOLD = 60      # Минимум для статуса GOOD в базе
-COLLECT_THRESHOLD = 66   # Минимум для сбора ссылок (размножения)
-
-
-async def get_avatar_base64(client: Client, chat) -> str | None:
-    """
-    Скачивает аватарку канала и конвертирует в base64 data URL.
-
-    v22.0: Аватарки хранятся в БД как data:image/jpeg;base64,...
-    Размер ~10KB на канал, работает офлайн без proxy.
-
-    Args:
-        client: Pyrogram клиент
-        chat: Объект канала из scan_result.chat
-
-    Returns:
-        str: data:image/jpeg;base64,... или None если нет аватарки
-    """
-    if not chat:
-        return None
-
-    # Проверяем наличие фото
-    photo = getattr(chat, 'photo', None)
-    if not photo:
-        return None
-
-    # Получаем file_id большой версии фото
-    big_file_id = getattr(photo, 'big_file_id', None)
-    if not big_file_id:
-        return None
-
-    try:
-        # Скачиваем в память (BytesIO)
-        photo_bytes = await client.download_media(
-            big_file_id,
-            in_memory=True
-        )
-
-        if photo_bytes:
-            # Конвертируем BytesIO в base64
-            b64 = base64.b64encode(photo_bytes.getvalue()).decode('utf-8')
-            return f"data:image/jpeg;base64,{b64}"
-
-    except Exception as e:
-        # Тихо игнорируем ошибки скачивания (канал может запретить)
-        pass
-
-    return None
+COLLECT_THRESHOLD = 72   # v41.1: Минимум для сбора ссылок (размножения)
 
 
 class SmartCrawler:
@@ -113,7 +173,8 @@ class SmartCrawler:
         self.running = True
         self.classifier: Optional[ChannelClassifier] = None
         self.classified_count = 0  # Счётчик классифицированных
-        self._channel_id_to_username = {}  # Маппинг для callback
+        self.new_links_count = 0   # v41.1: Счётчик новых ссылок
+        self.llm_analyzer: Optional[LLMAnalyzer] = None  # v38.0: LLM анализ
 
     async def start(self):
         """Запускает Pyrogram клиент и AI классификатор."""
@@ -121,32 +182,29 @@ class SmartCrawler:
         await self.client.start()
         print("Подключено к Telegram")
 
-        # Запускаем AI классификатор в фоне
+        # v29: Классификатор без фонового worker — всё синхронно
         self.classifier = get_classifier()
-        await self.classifier.start_worker()
-        print("AI классификатор запущен в фоне")
+
+        # v38.0: LLM Analyzer для ad_percentage и bot detection
+        # v39.0: LLM обязателен — без него не запускаем краулер
+        try:
+            self.llm_analyzer = LLMAnalyzer()
+            print(f"✓ LLM Analyzer готов")
+        except Exception as e:
+            print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: LLM Analyzer не запущен!")
+            print(f"   Причина: {e}")
+            print(f"   Убедитесь что Ollama работает: ollama serve")
+            raise RuntimeError(f"LLM Analyzer required but failed: {e}")
 
     async def stop(self):
         """Останавливает клиент и классификатор."""
         if self.classifier:
-            await self.classifier.stop_worker()
-            print(f"AI классификатор остановлен (классифицировано: {self.classified_count})")
+            self.classifier.save_cache()
+            self.classifier.unload()  # v33: Выгружаем модель из GPU
 
         if self.client:
             await self.client.stop()
             print("Отключено от Telegram")
-
-    def _on_category_ready(self, channel_id: int, category: str):
-        """
-        Callback когда категория готова - сохраняем в БД.
-        v15.0: category - уже готовая строка (CRYPTO, TECH, и т.д.)
-        """
-        # Находим username по channel_id (храним маппинг)
-        username = self._channel_id_to_username.get(channel_id)
-        if username:
-            # v15.0: category это строка, не нужно парсить
-            self.db.set_category(username, category, None, 100)
-            self.classified_count += 1
 
     def add_seeds(self, channels: list):
         """Добавляет начальные каналы в очередь."""
@@ -261,7 +319,10 @@ class SmartCrawler:
             'status': 'ERROR',
             'score': 0,
             'verdict': '',
-            'new_channels': 0
+            'new_channels': 0,
+            'category': None,      # v41.0: для компактного вывода
+            'ad_pct': None,        # v41.0
+            'bot_pct': None,       # v41.0
         }
 
         # Помечаем как обрабатываемый
@@ -270,12 +331,23 @@ class SmartCrawler:
         # Сканируем
         scan_result = await smart_scan_safe(self.client, username)
 
-        # Проверяем на ошибку
+        # v42.0: Проверяем на ошибку — удаляем или requeue
         if scan_result.chat is None:
             error_reason = scan_result.channel_health.get('reason', 'Unknown error')
-            self.db.mark_done(username, 'ERROR', verdict=error_reason)
-            result['verdict'] = error_reason
-            return result
+
+            # v42.0: Только сетевые ошибки → requeue в конец очереди
+            network_errors = ['timeout', 'connection', 'network', 'connectionerror']
+            is_network = any(err in error_reason.lower() for err in network_errors)
+
+            if is_network:
+                # Временная ошибка — попробуем позже
+                self.db.requeue_channel(username)
+            else:
+                # Все остальные ошибки — УДАЛЯЕМ из базы
+                # (ChannelInvalid, ChannelPrivate, NOT_CHANNEL, Max retries, USERNAME_NOT_OCCUPIED)
+                self.db.delete_channel(username)
+
+            return None  # v42.0: не показываем в выводе
 
         # Считаем score
         try:
@@ -310,72 +382,166 @@ class SmartCrawler:
             result['verdict'] = str(e)
             return result
 
-        # v22.0: Извлекаем аватарку для сохранения в БД
-        photo_url = await get_avatar_base64(self.client, scan_result.chat)
+        # v22.1: Извлекаем контент для хранения и переклассификации
+        # Включает 50 постов + 30 комментариев для AI анализа
+        content = extract_content_for_classification(
+            scan_result.chat,
+            scan_result.messages,
+            comments_data=scan_result.comments_data,
+            users=scan_result.users
+        )
+
+        # v41.2: Классификация для ВСЕХ каналов (не только GOOD)
+        category = None
+        if self.classifier:
+            channel_id = getattr(scan_result.chat, 'id', None)
+            if channel_id:
+                category = await self.classifier.classify_sync(
+                    channel_id=channel_id,
+                    title=getattr(scan_result.chat, 'title', ''),
+                    description=getattr(scan_result.chat, 'description', ''),
+                    messages=scan_result.messages
+                )
+                if category:
+                    self.classified_count += 1
+                    result['category'] = category
+
+        # v41.2: LLM Analysis для ВСЕХ каналов (не только GOOD)
+        if self.llm_analyzer:
+            try:
+                comments = []
+                if scan_result.comments_data:
+                    comments = scan_result.comments_data.get('comments', [])
+
+                llm_result = self.llm_analyzer.analyze(
+                    channel_id=getattr(scan_result.chat, 'id', 0),
+                    messages=scan_result.messages,
+                    comments=comments,
+                    category=category or "DEFAULT"
+                )
+
+                if llm_result:
+                    llm_analysis = {
+                        'ad_percentage': llm_result.posts.ad_percentage if llm_result.posts else None,
+                        'bot_percentage': llm_result.comments.bot_percentage if llm_result.comments else None,
+                        'trust_score': llm_result.comments.trust_score if llm_result.comments else None,
+                        'llm_trust_factor': llm_result.llm_trust_factor,
+                        'ad_mult': getattr(llm_result, '_ad_mult', 1.0),
+                        'bot_mult': getattr(llm_result, '_comment_mult', 1.0),
+                    }
+                    breakdown['llm_analysis'] = llm_analysis
+                    result['ad_pct'] = llm_analysis.get('ad_percentage')
+                    result['bot_pct'] = llm_analysis.get('bot_percentage')
+            except Exception as e:
+                pass  # тихий fallback
 
         # Определяем статус (GOOD если score >= 60)
         if score >= GOOD_THRESHOLD:
             status = 'GOOD'
 
-            # Добавляем в очередь AI классификации (асинхронно, не блокирует)
-            if self.classifier:
-                channel_id = getattr(scan_result.chat, 'id', None)
-                if channel_id:
-                    self._channel_id_to_username[channel_id] = username
-                    self.classifier.add_to_queue(
-                        channel_id=channel_id,
-                        title=getattr(scan_result.chat, 'title', ''),
-                        description=getattr(scan_result.chat, 'description', ''),
-                        messages=scan_result.messages,
-                        callback=self._on_category_ready
-                    )
+            # v41.2: Для GOOD категория обязательна
+            if not category:
+                result['verdict'] = 'NO_CATEGORY'
+                return result
 
-            # Собираем ссылки только с ОЧЕНЬ хороших каналов (score >= 66)
+            # Собираем ссылки только с ОЧЕНЬ хороших каналов (score >= 72)
             if score >= COLLECT_THRESHOLD:
                 links = self.extract_links(scan_result.messages, username)
-
-                # Добавляем новые каналы в очередь
                 new_count = 0
                 for link in links:
                     if self.db.add_channel(link, parent=username):
                         new_count += 1
-
                 result['new_channels'] = new_count
 
-                # v21.0: Передаём реальный breakdown для сохранения в БД
-                # v22.0: Добавляем photo_url (base64)
                 self.db.mark_done(
                     username, status, score, verdict, trust_factor, members,
                     ad_links=list(links),
-                    photo_url=photo_url,
+                    category=category,
                     breakdown=score_result.get('breakdown'),
-                    categories=score_result.get('categories')
+                    categories=score_result.get('categories'),
+                    title=content['title'],
+                    description=content['description'],
+                    content_json=content['content_json']
                 )
             else:
-                # 60-65: GOOD но ссылки не собираем (тупиковая ветка)
-                # v21.0: Передаём реальный breakdown
-                # v22.0: Добавляем photo_url (base64)
+                # 60-71: GOOD но ссылки не собираем
                 self.db.mark_done(
                     username, status, score, verdict, trust_factor, members,
-                    photo_url=photo_url,
+                    category=category,
                     breakdown=score_result.get('breakdown'),
-                    categories=score_result.get('categories')
+                    categories=score_result.get('categories'),
+                    title=content['title'],
+                    description=content['description'],
+                    content_json=content['content_json']
                 )
 
         else:
             status = 'BAD'
-            # Ссылки НЕ собираем с плохих каналов
-            # v21.0: Передаём реальный breakdown
-            # v22.0: Добавляем photo_url (base64)
+            # v41.2: BAD тоже получает категорию и LLM данные
             self.db.mark_done(
                 username, status, score, verdict, trust_factor, members,
-                photo_url=photo_url,
+                category=category,  # v41.2: категория для BAD тоже
                 breakdown=score_result.get('breakdown'),
-                categories=score_result.get('categories')
+                categories=score_result.get('categories'),
+                title=content['title'],
+                description=content['description'],
+                content_json=content['content_json']
             )
 
         result['status'] = status
         return result
+
+    async def reclassify_uncategorized(self, limit: int = 50):
+        """
+        v31: Переклассифицирует GOOD каналы без категории.
+        Вызывается в начале сессии для "догоняния".
+        """
+        if not self.classifier:
+            return
+
+        uncategorized = self.db.get_uncategorized(limit=limit)
+        if not uncategorized:
+            return
+
+        print(f"\nРеклассификация {len(uncategorized)} каналов без категории...")
+
+        reclassified = 0
+        for i, username in enumerate(uncategorized, 1):
+            if not self.running:
+                break
+
+            print(f"  [{i}/{len(uncategorized)}] @{username}...", end=" ", flush=True)
+
+            scan_result = await smart_scan_safe(self.client, username)
+            if scan_result.chat is None:
+                print("ERROR (scan)")
+                continue
+
+            channel_id = getattr(scan_result.chat, 'id', None)
+            if not channel_id:
+                print("ERROR (no id)")
+                continue
+
+            category = await self.classifier.classify_sync(
+                channel_id=channel_id,
+                title=getattr(scan_result.chat, 'title', ''),
+                description=getattr(scan_result.chat, 'description', ''),
+                messages=scan_result.messages
+            )
+
+            if category:
+                self.db.set_category(username, category)
+                reclassified += 1
+                self.classified_count += 1
+                print(category)
+            else:
+                # v33: НЕ останавливаем — пропускаем и продолжаем
+                print("SKIP (retry later)")
+                await asyncio.sleep(5)  # Пауза перед следующим
+
+            await asyncio.sleep(3)
+
+        print(f"Реклассификация завершена: {reclassified} категорий\n")
 
     async def run(
         self,
@@ -419,6 +585,9 @@ class SmartCrawler:
         try:
             await self.start()
 
+            # v30: Сначала доклассифицировать GOOD каналы без категории
+            await self.reclassify_uncategorized(limit=50)
+
             while self.running:
                 # Берём следующий канал
                 username = self.db.get_next()
@@ -433,19 +602,33 @@ class SmartCrawler:
                     break
 
                 # Обрабатываем
-                print(f"[{self.processed_count + 1}] @{username}...", end=" ", flush=True)
-
                 result = await self.process_channel(username)
 
-                # Выводим результат
+                # v42.0: None = канал удалён/requeue — пропускаем молча
+                if result is None:
+                    continue
+
+                # v42.0: Чистый компактный вывод (только GOOD и BAD)
+                num = self.processed_count + 1
+                cat = result.get('category') or ''
+                ad = result.get('ad_pct')
+                bot = result.get('bot_pct')
+
+                # v42.0: Форматируем None как "—"
+                ad_str = f"{ad}%" if ad is not None else "—"
+                bot_str = f"{bot}%" if bot is not None else "—"
+                llm_info = f"ad:{ad_str} bot:{bot_str}"
+
                 if result['status'] == 'GOOD':
-                    print(f"GOOD {result['score']} (+{result['new_channels']} новых)")
+                    cat_str = f" · {cat}" if cat else ""
+                    new_str = f" +{result['new_channels']}" if result.get('new_channels') else ""
+                    print(f"[{num}] @{username}{cat_str} · {llm_info} · {result['score']} ✓{new_str}")
                 elif result['status'] == 'BAD':
-                    print(f"BAD {result['score']}")
-                else:
-                    print(f"ERROR: {result['verdict']}")
+                    cat_str = f" · {cat}" if cat else ""
+                    print(f"[{num}] @{username}{cat_str} · {llm_info} · {result['score']} ✗")
 
                 self.processed_count += 1
+                self.new_links_count += result.get('new_channels', 0)
 
                 # Пауза между каналами
                 pause = RATE_LIMIT['between_channels'] + random.uniform(-1, 2)
@@ -463,22 +646,17 @@ class SmartCrawler:
         finally:
             await self.stop()
 
-            # Финальная статистика
+            # v41.1: Компактная финальная статистика
             stats = self.db.get_stats()
-            print(f"\nИтого:")
-            print(f"  Обработано за сессию: {self.processed_count}")
-            print(f"  Классифицировано AI: {self.classified_count}")
-            print(f"  Всего в базе: {stats['total']}")
-            print(f"  GOOD: {stats['good']}")
-            print(f"  BAD: {stats['bad']}")
-            print(f"  В очереди: {stats['waiting']}")
+            print(f"\n{'─'*50}")
+            print(f"Сессия: {self.processed_count} каналов | +{self.new_links_count} ссылок")
+            print(f"База: {stats['good']} GOOD | {stats['bad']} BAD | {stats['waiting']} в очереди")
 
-            # Статистика по категориям
+            # v41.1: Категории в одну строку
             cat_stats = self.db.get_category_stats()
             if cat_stats:
-                print(f"\nПо категориям:")
-                for cat, count in list(cat_stats.items())[:10]:
-                    print(f"  {cat}: {count}")
+                cats = [f"{c}:{n}" for c, n in list(cat_stats.items())[:8]]
+                print(f"Категории: {' | '.join(cats)}")
 
             # Закрываем базу
             self.db.close()

@@ -46,7 +46,7 @@ from .metrics import (
     calculate_er_variation,
     calculate_source_diversity,
     calculate_forwards_ratio,
-    calculate_ad_load,
+    # calculate_ad_load,  # v41.0: REMOVED - теперь LLM ad_percentage
     get_channel_age_days,
     get_raw_stats,
     # v15.0: New metrics
@@ -81,10 +81,10 @@ RAW_WEIGHTS = {
     },
     # РЕПУТАЦИЯ (20 баллов)
     'reputation': {
-        'verified': 5,       # Верификация Telegram
-        'age': 5,            # Возраст канала
-        'premium': 5,        # Качество аудитории (премиумы)
-        'source': 5,         # Оригинальность контента
+        'verified': 0,       # v38.4: Верификация убрана (не коррелирует с качеством)
+        'age': 7,            # v38.4: было 5, +2
+        'premium': 7,        # v38.4: было 5, +2
+        'source': 6,         # v38.4: было 5, +1
     },
 }
 
@@ -107,8 +107,8 @@ TRUST_FACTORS = {
     'premium_zero': 0.8,              # 0% премиумов
 
     # Content-based penalties
-    'ad_load_spam': 0.4,              # >50% рекламы
-    'ad_load_heavy': 0.7,             # >30% рекламы
+    # 'ad_load_spam': 0.4,            # v41.0: REMOVED - теперь LLM ad_percentage в llm_trust_factor
+    # 'ad_load_heavy': 0.7,           # v41.0: REMOVED
     'hidden_comments': 0.7,           # Скрытые комментарии
 
     # Conviction-based penalties
@@ -523,7 +523,7 @@ def calculate_adaptive_weights(forensics_available: bool, users_count: int) -> d
 
 def calculate_trust_factor(
     forensics_result,
-    ad_load_data: dict,
+    # ad_load_data: dict,  # v41.0: REMOVED - теперь LLM ad_percentage
     comments_enabled: bool,
     conviction_score: int,
     is_verified: bool = False,
@@ -547,15 +547,16 @@ def calculate_trust_factor(
     category: str = None
 ) -> tuple[float, dict]:
     """
-    v15.2: Вычисляет мультипликатор доверия.
+    v41.0: Вычисляет мультипликатор доверия.
     Включает Forensics + Statistical Trust + Ghost Protocol + Decay Analysis.
 
     Trust Factor - это число от 0.0 до 1.0, которое УМНОЖАЕТСЯ на Raw Score.
     Различные сигналы недоверия снижают множитель.
 
+    v41.0: ad_load_data УДАЛЁН — теперь LLM ad_percentage в llm_trust_factor.
+
     Args:
         forensics_result: Результат UserForensics.analyze()
-        ad_load_data: Данные о рекламной нагрузке
         comments_enabled: Включены ли комментарии
         conviction_score: Effective conviction score
         is_verified: Верифицирован ли канал Telegram
@@ -621,24 +622,13 @@ def calculate_trust_factor(
                 'reason': '0% премиумов при достаточной выборке'
             }
 
-    # 4. Ad Load - рекламный спам
-    ad_percent = ad_load_data.get('ad_load_percent', 0)
-    if ad_percent > 50:
-        multipliers.append(TRUST_FACTORS['ad_load_spam'])
-        details['ad_load'] = {
-            'multiplier': 0.4,
-            'reason': f'{ad_percent}% рекламы (спам)'
-        }
-    elif ad_percent > 30:
-        multipliers.append(TRUST_FACTORS['ad_load_heavy'])
-        details['ad_load'] = {
-            'multiplier': 0.7,
-            'reason': f'{ad_percent}% рекламы (много)'
-        }
+    # 4. Ad Load - v41.0: REMOVED
+    # Теперь LLM ad_percentage влияет на llm_trust_factor в llm_analyzer.py
+    # Больше не используем keyword-based ad_load здесь
 
     # 5. Hidden Comments - скрытые комментарии
-    # v13.1: Верифицированные каналы НЕ штрафуются (верификация = доверие)
-    if not comments_enabled and not is_verified:
+    # v38.4: Штраф для ВСЕХ каналов (верификация не коррелирует с качеством)
+    if not comments_enabled:
         # Смягчённый штраф ×0.85 вместо ×0.7
         multipliers.append(0.85)
         details['hidden_comments'] = {
@@ -844,10 +834,8 @@ def calculate_trust_factor(
 # ============================================================================
 
 def verified_to_points(is_verified: bool, max_pts: int = None) -> int:
-    """v13.0: Верификация -> баллы (default max 5)."""
-    if max_pts is None:
-        max_pts = RAW_WEIGHTS['reputation']['verified']  # 5
-    return max_pts if is_verified else 0
+    """v38.4: Верификация НЕ дает баллов (не коррелирует с качеством)."""
+    return 0  # Верифицированные каналы тоже накручивают
 
 
 def premium_to_points(premium_ratio: float, premium_count: int, max_pts: int = None) -> int:
@@ -976,12 +964,18 @@ def calculate_final_score(
     messages: list,
     comments_data: dict = None,
     users: list = None,
-    channel_health: dict = None  # v15.0: Ghost Protocol данные
+    channel_health: dict = None,  # v15.0: Ghost Protocol данные
+    llm_result=None  # v37.2: LLM Analysis Result с tier_cap
 ) -> dict:
     """
-    v15.0: Trust Multiplier System + Ghost Protocol.
+    v37.2: Trust Multiplier System + Ghost Protocol + Tier Cap.
 
-    Формула: Final Score = Raw Score × Trust Factor
+    Формула: Final Score = min(Raw Score × Trust Factor × LLM Trust, Tier Cap)
+
+    v37.2 изменения:
+    - Добавлен llm_result параметр для tier_cap
+    - EXCLUDED tier → score=0, verdict=EXCLUDED
+    - Tier caps: PREMIUM=100, STANDARD=85, LIMITED=70, RESTRICTED=50
 
     RAW SCORE (0-100) - "витрина":
     - КАЧЕСТВО: 40 баллов (cv_views 15, reach 10, decay 8, forward_rate 7)
@@ -1022,7 +1016,28 @@ def calculate_final_score(
     scoring_mode = adaptive_weights['mode']
 
     # ===== SCAM CHECK =====
-    is_scam, scam_reason, conviction_details = check_instant_scam(chat, messages, comments_data)
+    is_scam, scam_reason, conviction_details, is_insufficient_data = check_instant_scam(chat, messages, comments_data)
+
+    # v37.2: Новые/маленькие каналы получают NEW_CHANNEL вместо SCAM
+    if is_insufficient_data:
+        return {
+            'channel': getattr(chat, 'username', None) or str(getattr(chat, 'id', 'unknown')),
+            'members': getattr(chat, 'members_count', 0),
+            'score': 0,
+            'verdict': 'NEW_CHANNEL',
+            'reason': 'Недостаточно данных для оценки (менее 10 постов или 100 подписчиков)',
+            'conviction': {},
+            'breakdown': {},
+            'categories': {},
+            'flags': {
+                'is_scam': False,
+                'is_fake': False,
+                'is_verified': getattr(chat, 'is_verified', False),
+                'comments_enabled': comments_data.get('enabled', False),
+                'is_new_channel': True
+            },
+            'raw_stats': get_raw_stats(messages)
+        }
 
     if is_scam:
         return {
@@ -1277,15 +1292,10 @@ def calculate_final_score(
     raw_score = min(100, max(0, raw_score))  # Cap at 0-100
 
     # Дополнительные данные для Trust Factor
-    ad_load_data = calculate_ad_load(messages, channel_username)
+    # ad_load_data = calculate_ad_load(messages, channel_username)  # v41.0: REMOVED
     regularity_cv = calculate_post_regularity(messages)
 
-    # Сохраняем в breakdown для отладки
-    breakdown['ad_load'] = {
-        'value': ad_load_data['ad_load_percent'],
-        'status': ad_load_data['status'],
-        'affects': 'trust_factor'  # v13.0: влияет на Trust, не на Raw
-    }
+    # v41.0: ad_load больше не в breakdown (теперь LLM ad_percentage)
     breakdown['regularity'] = {
         'value': round(regularity_cv, 2),
         'status': 'info_only'  # v13.0: только информационно
@@ -1344,7 +1354,7 @@ def calculate_final_score(
 
     trust_factor, trust_details = calculate_trust_factor(
         forensics_result=forensics_result,
-        ad_load_data=ad_load_data,
+        # ad_load_data=ad_load_data,  # v41.0: REMOVED
         comments_enabled=comments_enabled,
         conviction_score=effective_conviction,
         is_verified=is_verified,
@@ -1382,9 +1392,76 @@ def calculate_final_score(
             }
 
     # =========================================================================
-    # v13.0: FINAL SCORE = RAW × TRUST
+    # v37.2: FINAL SCORE = min(RAW × TRUST × LLM_TRUST, TIER_CAP)
     # =========================================================================
-    final_score = int(raw_score * trust_factor)
+
+    # v37.2: Трёхэтапная система с tier_cap
+    tier = None
+    tier_cap = 100
+    llm_trust_factor = 1.0
+    exclusion_reason = None
+
+    if llm_result:
+        # Получаем данные из LLM анализа
+        tier = getattr(llm_result, 'tier', None)
+        tier_cap = getattr(llm_result, 'tier_cap', 100)
+        llm_trust_factor = getattr(llm_result, 'llm_trust_factor', 1.0)
+        exclusion_reason = getattr(llm_result, 'exclusion_reason', None)
+
+        # ЭТАП 1: Проверка на EXCLUDED
+        if tier == "EXCLUDED":
+            final_score = 0
+            verdict = 'EXCLUDED'
+            # Возвращаем ранний результат для EXCLUDED
+            forensics_breakdown = None
+            if forensics_result:
+                forensics_breakdown = {
+                    'users_analyzed': forensics_result.users_analyzed,
+                    'status': forensics_result.status,
+                    'id_clustering': forensics_result.id_clustering,
+                    'geo_dc_check': forensics_result.geo_dc_check,
+                    'premium_density': forensics_result.premium_density,
+                    'hidden_flags': forensics_result.hidden_flags
+                }
+            return {
+                'channel': channel_username or str(getattr(chat, 'id', 'unknown')),
+                'members': members,
+                'raw_score': raw_score,
+                'trust_factor': round(trust_factor, 2),
+                'trust_details': trust_details,
+                'score': 0,
+                'final_score': 0,
+                'verdict': 'EXCLUDED',
+                'exclusion_reason': exclusion_reason,
+                'tier': 'EXCLUDED',
+                'tier_cap': 0,
+                'llm_trust_factor': llm_trust_factor,
+                'scoring_mode': scoring_mode,
+                'categories': categories,
+                'breakdown': breakdown,
+                'forensics': forensics_breakdown,
+                'conviction': conviction_details,
+                'flags': {
+                    'is_scam': getattr(chat, 'is_scam', False),
+                    'is_fake': getattr(chat, 'is_fake', False),
+                    'is_verified': is_verified,
+                    'comments_enabled': comments_enabled,
+                    'reactions_enabled': reactions_enabled,
+                    'floating_weights': not comments_enabled or not reactions_enabled,
+                    'hardcore_mode': scoring_mode == 'hardcore'
+                },
+                # 'ad_load': ad_load_data,  # v41.0: REMOVED
+                'channel_health': channel_health,
+                'raw_stats': get_raw_stats(messages)
+            }
+
+        # ЭТАП 2-3: Расчёт с tier_cap
+        base_score = raw_score * trust_factor * llm_trust_factor
+        final_score = int(min(base_score, tier_cap))
+    else:
+        # Старая формула без LLM
+        final_score = int(raw_score * trust_factor)
+
     final_score = max(0, min(100, final_score))
 
     # Вердикт
@@ -1414,12 +1491,17 @@ def calculate_final_score(
     return {
         'channel': channel_username or str(getattr(chat, 'id', 'unknown')),
         'members': members,
-        # v13.0: Trust Multiplier System
+        # v37.2: Trust Multiplier System + Tier Cap
         'raw_score': raw_score,
         'trust_factor': round(trust_factor, 2),
         'trust_details': trust_details,
         'score': final_score,
+        'final_score': final_score,  # v37.2: алиас для совместимости
         'verdict': verdict,
+        # v37.2: Tier System
+        'tier': tier,
+        'tier_cap': tier_cap,
+        'llm_trust_factor': round(llm_trust_factor, 2),
         'scoring_mode': scoring_mode,
         'categories': categories,
         'breakdown': breakdown,
@@ -1434,7 +1516,7 @@ def calculate_final_score(
             'floating_weights': not comments_enabled or not reactions_enabled,
             'hardcore_mode': scoring_mode == 'hardcore'
         },
-        'ad_load': ad_load_data,
+        # 'ad_load': ad_load_data,  # v41.0: REMOVED
         'channel_health': channel_health,  # v15.0: Ghost Protocol
         'raw_stats': get_raw_stats(messages)
     }

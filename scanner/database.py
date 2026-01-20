@@ -1,6 +1,6 @@
 """
 База данных для Smart Crawler.
-v18.0: SQLite хранилище для очереди каналов + AI категории с multi-label.
+v22.0: Хранение контента для переклассификации (title, description, content_json).
 
 Статусы:
   WAITING    - В очереди на проверку
@@ -44,8 +44,11 @@ class ChannelRecord:
     category: str = None  # v18.0: AI категория (основная)
     category_secondary: str = None  # v18.0: Вторичная категория (multi-label)
     category_percent: int = 100  # v20.0: Процент основной категории
-    photo_url: str = None  # v19.0: URL аватарки канала
+    photo_url: str = None  # v19.0: deprecated, фото загружаются через /api/photo/{username}
     breakdown_json: str = None  # v21.0: Детальный breakdown метрик (JSON)
+    title: str = None  # v22.0: Название канала
+    description: str = None  # v22.0: Описание канала
+    content_json: str = None  # v22.0: Тексты постов для переклассификации
     scanned_at: datetime = None
     created_at: datetime = None
 
@@ -106,6 +109,9 @@ class CrawlerDB:
 
         # v21.0: Миграция - добавляем колонку breakdown_json для реальных метрик
         self._migrate_add_breakdown()
+
+        # v22.0: Миграция - добавляем колонки для переклассификации
+        self._migrate_v22_content_storage()
 
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
@@ -172,6 +178,24 @@ class CrawlerDB:
         except sqlite3.Error:
             pass
 
+    def _migrate_v22_content_storage(self):
+        """Миграция v22.0: добавляет колонки для хранения контента и переклассификации."""
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(channels)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        # Добавляем новые колонки
+        new_columns = ['title', 'description', 'content_json']
+        for col in new_columns:
+            if col not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE channels ADD COLUMN {col} TEXT DEFAULT NULL")
+                    print(f"Миграция v22.0: добавлена колонка {col}")
+                except sqlite3.Error:
+                    pass
+
+        self.conn.commit()
+
     def add_channel(self, username: str, parent: str = "") -> bool:
         """
         Добавляет канал в очередь.
@@ -225,9 +249,13 @@ class CrawlerDB:
         ad_links: list = None,
         category: str = None,
         category_secondary: str = None,
-        photo_url: str = None,
+        photo_url: str = None,  # v22.0: deprecated, не сохраняем (фото через /api/photo/)
         breakdown: dict = None,    # v21.0: детальный breakdown метрик
-        categories: dict = None    # v21.0: итоги по категориям (quality/engagement/reputation)
+        categories: dict = None,   # v21.0: итоги по категориям (quality/engagement/reputation)
+        llm_analysis: dict = None,  # v38.0: LLM анализ (tier, brand_safety, etc.)
+        title: str = None,  # v22.0: название канала
+        description: str = None,  # v22.0: описание канала
+        content_json: str = None  # v22.0: тексты постов (JSON)
     ):
         """
         Помечает канал как проверенный.
@@ -241,24 +269,29 @@ class CrawlerDB:
             ad_links: Список найденных рекламных ссылок
             category: AI категория основная (CRYPTO, NEWS, TECH и т.д.)
             category_secondary: AI категория вторичная (для multi-label)
-            photo_url: URL аватарки канала (Telegram CDN)
+            photo_url: deprecated v22.0 - не используется, фото загружаются через API
             breakdown: v21.0 - детальные метрики (cv_views, reach, verified, etc.)
             categories: v21.0 - итоги по категориям (quality, engagement, reputation)
+            llm_analysis: v38.0 - LLM анализ (tier, tier_cap, posts, comments)
+            title: v22.0 - название канала для переклассификации
+            description: v22.0 - описание канала для переклассификации
+            content_json: v22.0 - тексты постов (JSON) для переклассификации
         """
         username = username.lower().lstrip('@')
         ad_links_json = json.dumps(ad_links or [])
 
-        # v21.0: Сериализуем breakdown в JSON
+        # v38.0: Сериализуем breakdown + llm_analysis в JSON
         breakdown_json = None
-        if breakdown or categories:
+        if breakdown or categories or llm_analysis:
             breakdown_json = json.dumps({
                 'breakdown': breakdown,
-                'categories': categories
+                'categories': categories,
+                'llm_analysis': llm_analysis  # v38.0
             }, ensure_ascii=False)
 
         cursor = self.conn.cursor()
         # v24.0: COALESCE чтобы не перезаписывать category/category_secondary если NULL
-        # Это позволяет классификатору работать параллельно с mark_done
+        # v22.0: photo_url больше не сохраняем, title/description/content_json добавлены
         cursor.execute('''
             UPDATE channels SET
                 status = ?,
@@ -269,11 +302,15 @@ class CrawlerDB:
                 ad_links = ?,
                 category = COALESCE(?, category),
                 category_secondary = COALESCE(?, category_secondary),
-                photo_url = ?,
                 breakdown_json = ?,
+                title = ?,
+                description = ?,
+                content_json = ?,
                 scanned_at = ?
             WHERE username = ?
-        ''', (status, score, verdict, trust_factor, members, ad_links_json, category, category_secondary, photo_url, breakdown_json, datetime.now(), username))
+        ''', (status, score, verdict, trust_factor, members, ad_links_json,
+              category, category_secondary, breakdown_json,
+              title, description, content_json, datetime.now(), username))
         self.conn.commit()
 
     def set_category(self, username: str, category: str, category_secondary: str = None, percent: int = 100):
@@ -304,6 +341,7 @@ class CrawlerDB:
         if not row:
             return None
 
+        keys = row.keys()
         return ChannelRecord(
             username=row['username'],
             status=row['status'],
@@ -313,11 +351,14 @@ class CrawlerDB:
             members=row['members'],
             found_via=row['found_via'],
             ad_links=json.loads(row['ad_links']) if row['ad_links'] else [],
-            category=row['category'] if 'category' in row.keys() else None,
-            category_secondary=row['category_secondary'] if 'category_secondary' in row.keys() else None,
-            category_percent=row['category_percent'] if 'category_percent' in row.keys() else 100,
-            photo_url=row['photo_url'] if 'photo_url' in row.keys() else None,
-            breakdown_json=row['breakdown_json'] if 'breakdown_json' in row.keys() else None,  # v21.0
+            category=row['category'] if 'category' in keys else None,
+            category_secondary=row['category_secondary'] if 'category_secondary' in keys else None,
+            category_percent=row['category_percent'] if 'category_percent' in keys else 100,
+            photo_url=row['photo_url'] if 'photo_url' in keys else None,
+            breakdown_json=row['breakdown_json'] if 'breakdown_json' in keys else None,
+            title=row['title'] if 'title' in keys else None,  # v22.0
+            description=row['description'] if 'description' in keys else None,  # v22.0
+            content_json=row['content_json'] if 'content_json' in keys else None,  # v22.0
             scanned_at=row['scanned_at'],
             created_at=row['created_at']
         )
@@ -415,6 +456,36 @@ class CrawlerDB:
                 ])
 
         return len(rows)
+
+    def delete_channel(self, username: str) -> bool:
+        """
+        v42.0: Удаляет канал из базы (для невалидных).
+
+        Используется для: ChannelInvalid, ChannelPrivate, NOT_CHANNEL,
+        USERNAME_NOT_OCCUPIED, Max retries exceeded.
+        """
+        username = username.lower().lstrip('@')
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM channels WHERE username = ?", (username,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def requeue_channel(self, username: str) -> bool:
+        """
+        v42.0: Кидает канал в конец очереди (для временных ошибок).
+
+        Обновляет created_at на NOW — канал будет обработан последним.
+        Используется для: Timeout, Connection errors.
+        """
+        username = username.lower().lstrip('@')
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE channels
+            SET status = 'WAITING', created_at = datetime('now')
+            WHERE username = ?
+        """, (username,))
+        self.conn.commit()
+        return cursor.rowcount > 0
 
     def reset_processing(self):
         """

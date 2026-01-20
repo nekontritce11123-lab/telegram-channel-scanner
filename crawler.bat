@@ -1,29 +1,29 @@
 @echo off
 chcp 65001 >nul 2>&1
-title Smart Crawler v18.0
+title Crawler v42.0
 
 :menu
 cls
-echo ========================================================
-echo            SMART CRAWLER v18.0
-echo      17 categories + multi-label classification
-echo ========================================================
+echo ============================================================
+echo                     CRAWLER v42.0
+echo         LLM analiz reklamy i botov - 17 kategoriy
+echo ============================================================
 echo.
-echo   [1] Run crawler (infinite)
-echo   [2] Run crawler (limited)
-echo   [3] Add seed channels
+echo   [1] Zapustit crawler (beskonechno)
+echo   [2] Zapustit crawler (ogranicheno)
+echo   [3] Dobavit seed kanaly
 echo.
-echo   [4] Database stats
-echo   [5] Category stats
+echo   [4] Statistika bazy
+echo   [5] Statistika po kategoriyam
 echo.
-echo   [6] Classify existing channels
-echo   [7] Export GOOD channels to CSV
-echo   [8] Export by category
+echo   [6] Klassificirovat kanaly
+echo   [7] Export GOOD v CSV
+echo   [8] Export po kategorii
 echo.
-echo   [9] Scan single channel
-echo   [0] Exit
+echo   [9] Skanirovat odin kanal
+echo   [0] Vyhod
 echo.
-set /p choice="Select: "
+set /p choice="Vybor: "
 
 if "%choice%"=="1" goto run_infinite
 if "%choice%"=="2" goto run_limited
@@ -36,13 +36,13 @@ if "%choice%"=="8" goto export_category
 if "%choice%"=="9" goto scan_one
 if "%choice%"=="0" goto exit
 
-echo Invalid choice!
+echo Nevernyy vybor!
 pause
 goto menu
 
 :run_infinite
 cls
-echo Starting crawler... (Ctrl+C to stop)
+echo Zapusk crawlera... (Ctrl+C dlya ostanovki)
 echo.
 python crawler.py
 pause
@@ -50,7 +50,7 @@ goto menu
 
 :run_limited
 cls
-set /p max_count="How many channels to process: "
+set /p max_count="Skolko kanalov obrabotat: "
 echo.
 python crawler.py --max %max_count%
 pause
@@ -58,8 +58,8 @@ goto menu
 
 :add_seeds
 cls
-echo Enter channels separated by space (e.g. @channel1 @channel2)
-set /p seeds="Channels: "
+echo Vvedite kanaly cherez probel (naprimer @channel1 @channel2)
+set /p seeds="Kanaly: "
 echo.
 python crawler.py %seeds%
 pause
@@ -81,7 +81,7 @@ goto menu
 
 :classify
 cls
-set /p classify_count="How many channels to classify (Enter = 100): "
+set /p classify_count="Skolko kanalov klassificirovat (Enter = 100): "
 if "%classify_count%"=="" set classify_count=100
 echo.
 python crawler.py --classify --max %classify_count%
@@ -90,34 +90,34 @@ goto menu
 
 :export_all
 cls
-set /p filename="Filename (Enter = good_channels.csv): "
+set /p filename="Imya fayla (Enter = good_channels.csv): "
 if "%filename%"=="" set filename=good_channels.csv
 echo.
 python crawler.py --export %filename%
 echo.
-echo Saved: %filename%
+echo Sohraneno: %filename%
 pause
 goto menu
 
 :export_category
 cls
-echo Categories: CRYPTO, FINANCE, REAL_ESTATE, BUSINESS, TECH, AI_ML,
-echo             EDUCATION, BEAUTY, HEALTH, TRAVEL, RETAIL,
-echo             ENTERTAINMENT, NEWS, LIFESTYLE, GAMBLING, ADULT
+echo Kategorii: CRYPTO, FINANCE, REAL_ESTATE, BUSINESS, TECH, AI_ML,
+echo            EDUCATION, BEAUTY, HEALTH, TRAVEL, RETAIL,
+echo            ENTERTAINMENT, NEWS, LIFESTYLE, GAMBLING, ADULT
 echo.
-set /p cat="Category: "
-set /p catfile="Filename (Enter = %cat%.csv): "
+set /p cat="Kategoriya: "
+set /p catfile="Imya fayla (Enter = %cat%.csv): "
 if "%catfile%"=="" set catfile=%cat%.csv
 echo.
 python crawler.py --export %catfile% --category %cat%
 echo.
-echo Saved: %catfile%
+echo Sohraneno: %catfile%
 pause
 goto menu
 
 :scan_one
 cls
-set /p channel="Channel (@username): "
+set /p channel="Kanal (@username): "
 echo.
 python run.py %channel%
 pause

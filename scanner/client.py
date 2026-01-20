@@ -319,6 +319,15 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
                 for raw_user in linked_result.users:
                     users_for_forensics.append(RawUserWrapper(raw_user))
 
+            # v39.1: Извлекаем ТЕКСТЫ комментариев для LLM анализа
+            comment_texts = []
+            if hasattr(linked_result, 'messages') and linked_result.messages:
+                for msg in linked_result.messages:
+                    text = getattr(msg, 'message', None)
+                    if text and len(text) > 2:  # Игнорируем пустые и однобуквенные
+                        comment_texts.append(text)
+            comments_data['comments'] = comment_texts
+
             # v7.1: Если юзеров всё ещё мало, дополняем из авторов сообщений
             if len(users_for_forensics) < 10 and hasattr(linked_result, 'messages'):
                 for msg in linked_result.messages:
@@ -495,8 +504,7 @@ async def smart_scan_safe(client: Client, channel: str, max_retries: int = 3) ->
             )
 
         except Exception as e:
-            # Другие ошибки
-            print(f"Ошибка при сканировании {channel}: {e}")
+            # Другие ошибки — reason передаётся наверх, краулер выводит
             return ScanResult(
                 chat=None,
                 messages=[],

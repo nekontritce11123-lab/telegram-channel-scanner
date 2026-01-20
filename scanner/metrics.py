@@ -660,30 +660,41 @@ class FraudConvictionSystem:
         }
 
 
-def check_instant_scam(chat: Any, messages: list, comments_data: dict = None) -> tuple[bool, str, dict]:
+def check_instant_scam(chat: Any, messages: list, comments_data: dict = None) -> tuple[bool, str, dict, bool]:
     """
     Проверяет накрутку через систему совокупных факторов.
-    Возвращает (is_scam, reason, conviction_details).
+    Возвращает (is_scam, reason, conviction_details, is_insufficient_data).
+
+    v37.2: Добавлен флаг is_insufficient_data для отличия новых каналов от скама.
     """
+    # Минимальные требования для оценки (v37.2)
+    MIN_POSTS = 10
+    MIN_MEMBERS = 100
+
+    members = getattr(chat, 'participants_count', 0) or getattr(chat, 'members_count', 0) or 0
+
+    if len(messages) < MIN_POSTS or members < MIN_MEMBERS:
+        return False, "INSUFFICIENT_DATA", {}, True  # НЕ scam, просто мало данных
+
     # Абсолютные стоп-сигналы (Telegram флаги)
     if getattr(chat, 'is_scam', False):
-        return True, "Telegram пометил канал как SCAM", {}
+        return True, "Telegram пометил канал как SCAM", {}, False
 
     if getattr(chat, 'is_fake', False):
-        return True, "Telegram пометил канал как FAKE", {}
+        return True, "Telegram пометил канал как FAKE", {}, False
 
     views = [m.views for m in messages if hasattr(m, 'views') and m.views]
     if not views:
-        return True, "Нет данных о просмотрах", {}
+        return True, "Нет данных о просмотрах", {}, False
 
     # Математически невозможные значения
     for m in messages:
         if hasattr(m, 'forwards') and m.forwards and m.views and m.forwards > m.views:
-            return True, "Пересылок больше чем просмотров (невозможно)", {}
+            return True, "Пересылок больше чем просмотров (невозможно)", {}, False
 
         total_reactions = get_message_reactions_count(m)
         if m.views and total_reactions > m.views:
-            return True, "Реакций больше чем просмотров (невозможно)", {}
+            return True, "Реакций больше чем просмотров (невозможно)", {}, False
 
     # Система совокупных факторов
     if comments_data is None:
@@ -695,7 +706,7 @@ def check_instant_scam(chat: Any, messages: list, comments_data: dict = None) ->
     system = FraudConvictionSystem(chat, messages, comments_data)
     result = system.calculate_conviction()
 
-    return result['is_scam'], result['reason'], result
+    return result['is_scam'], result['reason'], result, False
 
 
 # ============================================================================

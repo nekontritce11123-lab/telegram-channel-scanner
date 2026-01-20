@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, JSX } from 'react'
 import { useTelegram } from './hooks/useTelegram'
-import { useChannels, useStats, useScan, Channel, ChannelDetail, ChannelFilters } from './hooks/useApi'
+import { useChannels, useStats, useScan, Channel, ChannelDetail, ChannelFilters, BotInfo, API_BASE } from './hooks/useApi'
 import styles from './App.module.css'
 
 // All 17 categories
@@ -167,7 +167,15 @@ function estimateER(members: number, score: number): number {
 }
 
 // v12.0: Status banner based on trust and risks
-function getStatusBanner(trustFactor: number, risksCount: number): { type: 'safe' | 'warning' | 'danger'; icon: string; text: string } {
+// v34.0: Проверяем score/verdict ПЕРВЫМ — SCAM каналы всегда danger
+function getStatusBanner(trustFactor: number, risksCount: number, score?: number, verdict?: string): { type: 'safe' | 'warning' | 'danger'; icon: string; text: string } {
+  // v34.0: SCAM или score=0 — всегда danger, независимо от trust_factor
+  if (score === 0 || verdict === 'SCAM') {
+    return { type: 'danger', icon: '🚨', text: 'SCAM — высокий риск накрутки!' }
+  }
+  if (verdict === 'HIGH_RISK') {
+    return { type: 'danger', icon: '⚠️', text: 'Высокий риск — требуется проверка' }
+  }
   if (trustFactor >= 0.9 && risksCount === 0) {
     return { type: 'safe', icon: '✓', text: 'Рисков не обнаружено. Канал безопасен.' }
   }
@@ -209,7 +217,8 @@ function getMetricColorClass(score: number, max: number): string {
 
 // v11.5: ScoreRing компонент для карточек (SVG circle с прогрессом)
 // large: для детального просмотра (90px), обычный: 64px
-function ScoreRing({ score, verdict, showCheck, large }: { score: number; verdict: string; showCheck?: boolean; large?: boolean }) {
+// v34.0: Галочка для Telegram верифицированных каналов, SCAM бейдж для score=0
+function ScoreRing({ score, verdict, verified, large }: { score: number; verdict: string; verified?: boolean; large?: boolean }) {
   // Большой размер для детального просмотра
   const size = large ? 90 : 64
   const radius = large ? 36 : 26
@@ -217,6 +226,9 @@ function ScoreRing({ score, verdict, showCheck, large }: { score: number; verdic
   const circumference = 2 * Math.PI * radius
   const progress = (score / 100) * circumference
   const offset = circumference - progress
+
+  // v34.0: SCAM/Error badge для score=0 или verdict=SCAM
+  const isScam = score === 0 || verdict === 'SCAM'
 
   return (
     <div className={large ? styles.scoreRingLarge : styles.scoreRing}>
@@ -240,9 +252,17 @@ function ScoreRing({ score, verdict, showCheck, large }: { score: number; verdic
           style={{ transform: 'rotate(-90deg)', transformOrigin: 'center' }}
         />
       </svg>
-      <span className={styles.scoreRingValue}>{score}</span>
-      {/* Синий кружок с галочкой справа-сверху */}
-      {showCheck && (
+      <span className={styles.scoreRingValue}>{isScam ? '!' : score}</span>
+      {/* v34.0: SCAM badge для score=0 */}
+      {isScam && (
+        <div className={styles.scamBadge}>
+          <svg viewBox="0 0 24 24" fill="#fff">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+          </svg>
+        </div>
+      )}
+      {/* v34.0: Verified badge для Telegram верифицированных каналов (не для SCAM) */}
+      {verified && !isScam && (
         <div className={styles.verifiedBadge}>
           <svg viewBox="0 0 24 24" fill="#000">
             <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
@@ -341,16 +361,62 @@ const METRIC_DESCRIPTIONS: Record<string, { title: string; description: string; 
     title: 'Приватные ссылки',
     description: 'Процент рекламы с приватными invite-ссылками.',
     interpretation: 'Приватные ссылки нельзя проверить. До 30% — норма. Больше 60% — риск.'
+  },
+  // v38.0: LLM Analysis Metrics
+  'toxicity': {
+    title: 'Токсичность',
+    description: 'Уровень hate speech, дискриминации и оскорблений.',
+    interpretation: 'До 20% — норма (мат без targeting). 20-50% — риск. 50%+ — hate speech, бренды избегают.'
+  },
+  'violence': {
+    title: 'Насилие',
+    description: 'Призывы к насилию, графический контент.',
+    interpretation: 'До 20% — упоминания конфликтов. 50%+ — призывы к насилию, исключение из рекламы.'
+  },
+  'political_quantity': {
+    title: 'Политика',
+    description: 'Процент постов с политическим контентом.',
+    interpretation: 'До 30% — обычный канал. 30-70% — политический канал. 70%+ — ограниченный инвентарь.'
+  },
+  'political_risk': {
+    title: 'Политический риск',
+    description: 'Насколько опасен политический контент для брендов.',
+    interpretation: '0-20 — нейтральные новости. 40-60 — односторонность. 80+ — пропаганда/экстремизм.'
+  },
+  'brand_safety': {
+    title: 'Brand Safety',
+    description: 'Общий показатель безопасности для рекламодателей.',
+    interpretation: '80%+ — безопасно для любого бренда. 50-80% — требует проверки. <50% — высокий риск.'
+  },
+  'bot_percentage': {
+    title: 'Боты',
+    description: 'Процент ботов среди комментаторов.',
+    interpretation: 'До 15% — норма. 15-30% — подозрительно. 30%+ — вероятна накрутка комментариев.'
+  },
+  // v41.0: authenticity REMOVED (дубликат bot_percentage)
+  'misinformation': {
+    title: 'Дезинформация',
+    description: 'Уровень непроверенных/ложных утверждений.',
+    interpretation: 'До 20% — норма. 40%+ — канал распространяет сомнительную информацию.'
+  },
+  'trust_score': {
+    title: 'Доверие аудитории',
+    description: 'Насколько аудитория доверяет контенту канала.',
+    interpretation: '70%+ — аудитория активно поддерживает контент. 40-70% — смешанно. <40% — много скептических комментариев.'
   }
 }
 
 // Avatar component
-function Avatar({ username, photoUrl, size = 32 }: { username: string; photoUrl?: string | null; size?: number }) {
+// v22.0: Загружаем фото через API endpoint вместо хранения base64 в БД
+function Avatar({ username, size = 32 }: { username: string; size?: number }) {
   const [imgError, setImgError] = useState(false)
   const firstLetter = username.charAt(0).toUpperCase()
   const bgColor = getAvatarColor(username)
 
-  if (photoUrl && !imgError) {
+  // URL для загрузки аватарки через API
+  const photoUrl = `${API_BASE}/api/photo/${username.toLowerCase().replace('@', '')}`
+
+  if (!imgError) {
     return (
       <img
         src={photoUrl}
@@ -388,7 +454,8 @@ function SkeletonCard() {
 // v12.0: MetricItem component with progress bar
 // v22.2: Support for disabled metrics (reactions/comments off)
 // v25.0: Support for Info Metrics (value without max, e.g. ad_load, activity)
-function MetricItem({ item, onClick }: { item: { score: number; max: number; label: string; disabled?: boolean; value?: string; status?: 'good' | 'warning' | 'bad' }; onClick: () => void }) {
+// v39.0: Support for bot_info in comments metric (AI-detected bots)
+function MetricItem({ item, onClick }: { item: { score: number; max: number; label: string; disabled?: boolean; value?: string; status?: 'good' | 'warning' | 'bad'; bot_info?: BotInfo }; onClick: () => void }) {
   // v22.2: If disabled, show "откл." and grey bar
   if (item.disabled) {
     return (
@@ -453,7 +520,15 @@ function MetricItem({ item, onClick }: { item: { score: number; max: number; lab
     <div className={styles.metricItem} onClick={onClick} role="button" tabIndex={0}>
       <div className={styles.metricItemHeader}>
         <span className={styles.metricItemLabel}>{item.label}</span>
-        <span className={styles.metricItemValue}>{item.score}/{item.max}</span>
+        <span className={styles.metricItemValue}>
+          {item.score}/{item.max}
+          {/* v39.0: Показываем bot_info если есть (AI-детекция ботов в комментах) */}
+          {item.bot_info && (
+            <span className={`${styles.botInfoBadge} ${styles[`bot_${item.bot_info.status}`]}`}>
+              {item.bot_info.value}
+            </span>
+          )}
+        </span>
       </div>
       <div className={styles.metricBar}>
         <div
@@ -680,7 +755,8 @@ function App() {
 
   // v12.0: Compute ER and status banner
   const channelER = selectedChannel ? estimateER(selectedChannel.members, selectedChannel.score) : 0
-  const statusBanner = selectedChannel ? getStatusBanner(selectedChannel.trust_factor, mockRisks.length) : null
+  // v34.0: Передаём score и verdict для корректной обработки SCAM каналов
+  const statusBanner = selectedChannel ? getStatusBanner(selectedChannel.trust_factor, mockRisks.length, selectedChannel.score, selectedChannel.verdict) : null
 
   // Channel Detail Page - v12.0 NEW LAYOUT
   if (selectedChannel) {
@@ -707,7 +783,6 @@ function App() {
           <div className={styles.detailHeroNew}>
             <Avatar
               username={selectedChannel.username}
-              photoUrl={selectedChannel.photo_url}
               size={64}
             />
             <div className={styles.heroNameBlock}>
@@ -717,16 +792,25 @@ function App() {
             <ScoreRing
               score={selectedChannel.score}
               verdict={selectedChannel.verdict}
-              showCheck={selectedChannel.trust_factor >= 0.9}
+              verified={selectedChannel.is_verified}
               large
             />
           </div>
 
-          {/* v12.0: Status Banner */}
+          {/* v12.0: Status Banner + v38.0: Tier Badge */}
           {statusBanner && (
             <div className={`${styles.statusBanner} ${styles[statusBanner.type]}`}>
               <span className={styles.statusIcon}>{statusBanner.icon}</span>
               <span className={styles.statusText}>{statusBanner.text}</span>
+              {/* v38.0: Tier Badge */}
+              {selectedChannel.llm_analysis?.tier && (
+                <span className={`${styles.tierBadge} ${styles[`tier_${selectedChannel.llm_analysis.tier.toLowerCase()}`]}`}>
+                  {selectedChannel.llm_analysis.tier}
+                </span>
+              )}
+              {selectedChannel.llm_analysis?.tier_cap && selectedChannel.llm_analysis.tier_cap < 100 && (
+                <span className={styles.tierCap}>Max {selectedChannel.llm_analysis.tier_cap}%</span>
+              )}
             </div>
           )}
 
@@ -754,7 +838,14 @@ function App() {
           </div>
 
           {/* v12.1: Metrics Grid - 3 blocks (Quality, Engagement, Reputation) */}
-          {breakdown ? (
+          {/* v34.0: Для SCAM каналов (score=0) показываем "Данные недоступны" */}
+          {selectedChannel.score === 0 || selectedChannel.verdict === 'SCAM' ? (
+            <div className={styles.noDataMessage}>
+              <span className={styles.noDataIcon}>⚠️</span>
+              <span className={styles.noDataText}>Данные недоступны</span>
+              <span className={styles.noDataSubtext}>Канал был помечен как SCAM до завершения сканирования</span>
+            </div>
+          ) : breakdown ? (
             <div className={styles.metricsGrid}>
               {/* Quality Block */}
               <div className={styles.metricsBlock}>
@@ -770,6 +861,7 @@ function App() {
                   />
                 ))}
                 {/* v25.0: Info Metrics (ad_load, activity) */}
+                {/* v39.0: ad_load теперь интегрирует LLM ad_percentage (если есть) — показывает "(AI)" в label */}
                 {breakdown.quality.info_metrics && Object.entries(breakdown.quality.info_metrics).map(([key, item]) => (
                   <MetricItem
                     key={key}
@@ -780,6 +872,7 @@ function App() {
               </div>
 
               {/* Engagement Block */}
+              {/* v39.0: comments теперь включает bot_info с LLM данными (если есть) */}
               <div className={styles.metricsBlock}>
                 <div className={styles.metricsBlockTitle}>
                   Вовлечённость
@@ -788,7 +881,7 @@ function App() {
                 {breakdown.engagement.items && Object.entries(breakdown.engagement.items).map(([key, item]) => (
                   <MetricItem
                     key={key}
-                    item={item}
+                    item={item as { score: number; max: number; label: string; disabled?: boolean; value?: string; status?: 'good' | 'warning' | 'bad'; bot_info?: BotInfo }}
                     onClick={() => setSelectedMetric(key)}
                   />
                 ))}
@@ -1106,7 +1199,6 @@ function App() {
                   <div className={styles.cardRow1}>
                     <Avatar
                       username={channel.username}
-                      photoUrl={channel.photo_url}
                       size={54}
                     />
                     <div className={styles.cardInfo}>
@@ -1129,11 +1221,11 @@ function App() {
                         @{channel.username} • {formatNumber(channel.members)} подписчиков • ER {estimateER(channel.members, channel.score)}%
                       </span>
                     </div>
-                    {/* Score Ring с галочкой внутри */}
+                    {/* v34.0: Score Ring с verified badge и SCAM badge */}
                     <ScoreRing
                       score={channel.score}
                       verdict={channel.verdict}
-                      showCheck={channel.trust_factor >= 0.9}
+                      verified={channel.is_verified}
                     />
                   </div>
                 </button>

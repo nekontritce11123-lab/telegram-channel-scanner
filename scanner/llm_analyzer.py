@@ -1,19 +1,19 @@
 """
-LLM Анализатор каналов v38.0
+LLM Анализатор каналов v41.0
 
 Два модуля:
 1. AdAnalyzer — % рекламных постов (контекстный анализ через LLM)
-2. CommentAnalyzer — Comment Authenticity + Trust Score (анализ комментариев)
+2. CommentAnalyzer — Bot Detection + Trust Score
 
-v38.0 изменения:
-- Добавлен AdAnalyzer — лёгкий анализ ad_percentage через LLM
-- PostAnalyzer (toxicity, violence, political) отключён как бесполезный
-- keep_alive: -1 — модель не выгружается из памяти между запросами
+v41.0 изменения:
+- ad_percentage теперь влияет на llm_trust_factor (ad_mult)
+- authenticity УДАЛЕНА (дубликат bot_percentage)
+- Unified: llm_trust_factor = ad_mult × bot_mult
+- Keyword-based ad_load больше не используется
 
 Метрики:
-- ad_percentage: % рекламных постов (более точно чем keyword-based)
-- authenticity: % живых людей в комментариях (100 = все живые)
-- bot_percentage: % бот-подобных комментариев
+- ad_percentage: % рекламных постов → ad_mult (0.4-1.0)
+- bot_percentage: % ботов в комментариях → bot_mult (0.3-1.0)
 - trust_score: доверие аудитории к контенту
 
 Использует Ollama + Qwen3-8B
@@ -163,7 +163,7 @@ LLM_CACHE_FILE = CACHE_DIR / "llm_analyzer_cache.json"
 CACHE_TTL_DAYS = 7
 
 # DEBUG
-DEBUG_LLM_ANALYZER = True
+DEBUG_LLM_ANALYZER = False  # v41.0: отключен для компактного вывода
 
 # Лимиты
 MAX_POSTS_FOR_ANALYSIS = 30
@@ -197,9 +197,8 @@ class PostAnalysisResult:
 
 @dataclass
 class CommentAnalysisResult:
-    """Результат анализа комментариев"""
-    authenticity: int          # 0-100 (100 = все живые)
-    bot_percentage: int        # 0-100%
+    """Результат анализа комментариев v41.0 (без authenticity)"""
+    bot_percentage: int        # 0-100% (главная метрика)
     bot_signals: list
     trust_score: int           # 0-100
     trust_signals: list
@@ -208,7 +207,7 @@ class CommentAnalysisResult:
 
 @dataclass
 class LLMAnalysisResult:
-    """Полный результат LLM анализа v37.0"""
+    """Полный результат LLM анализа v41.0"""
     posts: Optional[PostAnalysisResult]
     comments: Optional[CommentAnalysisResult]
 
@@ -221,15 +220,18 @@ class LLMAnalysisResult:
     tier_cap: int = 100              # Максимальный скор для тира
     exclusion_reason: Optional[str] = None  # Причина исключения (если EXCLUDED)
 
-    # v36.1: Детали для отладки
+    # v41.0: Детали для отладки (ad_mult + bot_mult)
+    _ad_mult: float = 1.0            # v41.0: множитель от ad_percentage
     _brand_mult: float = 1.0
-    _comment_mult: float = 1.0
+    _comment_mult: float = 1.0       # bot_mult
     _political_mult: float = 1.0
 
     def calculate_impact_v2(self):
         """
-        V2.1: Упрощённый расчёт — только от комментариев.
-        Post Analyzer отключен как бесполезный.
+        V3.0 (v41.0): Unified LLM Trust Factor.
+
+        Объединяет ad_mult (из ad_percentage) и bot_mult (из bot_percentage).
+        Оба фактора перемножаются для финального llm_trust_factor.
         """
         # Дефолтные значения
         self.tier = "STANDARD"
@@ -237,28 +239,41 @@ class LLMAnalysisResult:
         self.exclusion_reason = None
         self.llm_bonus = 5.0  # Фиксированный бонус
 
-        # LLM Trust Factor — штраф от bot_percentage
-        # v40.3: Штраф начинается с 15% ботов, растёт постепенно
-        comment_mult = 1.0
+        # --- Ad Multiplier (v41.0) ---
+        ad_mult = 1.0
+        if self.posts and self.posts.ad_percentage is not None:
+            ad_pct = self.posts.ad_percentage
+            if ad_pct <= 20:
+                ad_mult = 1.0      # Норма
+            elif ad_pct <= 35:
+                ad_mult = 0.85     # Много рекламы
+            elif ad_pct <= 50:
+                ad_mult = 0.65     # Очень много
+            else:
+                ad_mult = 0.40     # Спам
+        self._ad_mult = ad_mult
 
+        # --- Bot Multiplier (v40.3) ---
+        bot_mult = 1.0
         if self.comments and self.comments.bot_percentage is not None:
             bot_pct = self.comments.bot_percentage
             if bot_pct <= 15:
-                # До 15% ботов — без штрафа
-                comment_mult = 1.0
+                bot_mult = 1.0
             else:
-                # От 15% до 100% — линейный штраф
-                # 30% ботов → -15%, 50% → -35%, 100% → -70%
+                # Линейный штраф от 15% до 85%
                 penalty = (bot_pct - 15) / 100.0
-                comment_mult = max(0.3, 1.0 - penalty)
+                bot_mult = max(0.3, 1.0 - penalty)
+        self._comment_mult = bot_mult
 
-        self._comment_mult = comment_mult
+        # --- Combined LLM Trust Factor (v41.0) ---
+        # Перемножаем независимые факторы с floor 0.15
+        self.llm_trust_factor = max(0.15, ad_mult * bot_mult)
+
         self._brand_mult = 1.0
         self._political_mult = 1.0
-        self.llm_trust_factor = comment_mult
 
         if DEBUG_LLM_ANALYZER:
-            print(f"📊 V2.1: STANDARD (comment_mult={comment_mult})")
+            print(f"📊 V3.0: ad_mult={ad_mult:.2f}, bot_mult={bot_mult:.2f} → llm_trust={self.llm_trust_factor:.2f}")
 
 
 # === КЭШИРОВАНИЕ ===
@@ -558,7 +573,7 @@ COMMENT_ANALYZER_PROMPT_V3 = """Analyze these Telegram comments for bot detectio
 
 Count how many comments are CLEARLY bots vs humans.
 
-### HUMAN indicators (count as REAL - authenticity +1):
+### HUMAN indicators (count as REAL):
 - Any technical jargon or domain knowledge
 - Profanity, emotion, sarcasm, slang
 - Questions about the post content
@@ -591,16 +606,16 @@ Only high bot_percentage (>10%) if you see MULTIPLE clear bot patterns.
 ## EXAMPLES:
 
 Channel with 50 comments, all have technical terms or emotion:
-→ bot_percentage = 0%, authenticity = 100%
+→ bot_percentage = 0%
 
 Channel with 50 comments, 2 say just "👍" on technical post:
-→ bot_percentage = 4%, authenticity = 96%
+→ bot_percentage = 4%
 
 Channel with 50 comments, 10 are identical "Отличный пост!":
-→ bot_percentage = 20%, authenticity = 80%
+→ bot_percentage = 20%
 
-Output JSON:
-{{"authenticity": <0-100>, "bot_percentage": <0-100>, "bot_signals": [<patterns found>], "trust_score": <0-100>, "trust_signals": [<positive signals>], "sarcasm_warning": <true/false>}}"""
+Output ONLY this JSON format (NO other fields!):
+{{"bot_percentage": <0-100>, "bot_signals": [<patterns found>], "trust_score": <0-100>, "trust_signals": [<positive signals>]}}"""
 
 
 def analyze_comments(comments: list, posts: list = None, channel_type: str = "GENERAL") -> Optional[CommentAnalysisResult]:
@@ -644,14 +659,12 @@ def analyze_comments(comments: list, posts: list = None, channel_type: str = "GE
     if DEBUG_LLM_ANALYZER:
         print(f"COMMENT ANALYZER RESPONSE:\n{response[:500]}")
 
-    # V2.0: Use safe_parse_json with fallback
+    # V2.0: Use safe_parse_json with fallback (v41.0: no authenticity)
     default_values = {
-        "authenticity": 50,
         "bot_percentage": 50,
         "bot_signals": [],
         "trust_score": 50,
-        "trust_signals": [],
-        "sarcasm_warning": False
+        "trust_signals": []
     }
     data, warnings = safe_parse_json(response, default_values)
 
@@ -662,7 +675,6 @@ def analyze_comments(comments: list, posts: list = None, channel_type: str = "GE
 
     if data:
         return CommentAnalysisResult(
-            authenticity=int(data.get("authenticity", 50)),
             bot_percentage=int(data.get("bot_percentage", 50)),
             bot_signals=data.get("bot_signals", []),
             trust_score=int(data.get("trust_score", 50)),
@@ -670,7 +682,8 @@ def analyze_comments(comments: list, posts: list = None, channel_type: str = "GE
             raw_response=response
         )
 
-    print(f"COMMENT ANALYZER: Failed to parse response")
+    if DEBUG_LLM_ANALYZER:
+        print(f"COMMENT ANALYZER: Failed to parse response")
     return None
 
 
@@ -756,10 +769,15 @@ def analyze_ad_percentage(messages: list) -> Optional[int]:
     posts_text = _prepare_posts_text(messages)
 
     if not posts_text or len(posts_text) < 100:
-        print("LLM AdAnalyzer: Недостаточно текста для анализа")
+        if DEBUG_LLM_ANALYZER:
+            print("LLM AdAnalyzer: Недостаточно текста для анализа")
         return None
 
-    prompt = AD_ANALYZER_PROMPT.format(posts_text=posts_text[:6000])
+    # v41.0: Обрезаем текст и считаем РЕАЛЬНОЕ количество постов в обрезанном тексте
+    truncated_text = posts_text[:6000]
+    actual_posts_count = truncated_text.count("[Post ")
+
+    prompt = AD_ANALYZER_PROMPT.format(posts_text=truncated_text)
 
     if DEBUG_LLM_ANALYZER:
         print(f"\n{'='*60}")
@@ -784,21 +802,23 @@ def analyze_ad_percentage(messages: list) -> Optional[int]:
             print(f"  - {w}")
 
     if data:
-        ad_pct = int(data.get("ad_percentage", 0))
         ad_count = int(data.get("ad_count", 0))
-        total = int(data.get("total_posts", len(messages)))
 
-        # Валидация: пересчитываем если LLM дал count/total
-        if ad_count > 0 and total > 0:
-            calculated_pct = int(ad_count / total * 100)
-            # Если LLM дал процент сильно отличающийся от подсчёта — используем подсчёт
-            if abs(ad_pct - calculated_pct) > 15:
-                ad_pct = calculated_pct
+        # v41.0: Используем РЕАЛЬНОЕ количество постов, не то что LLM посчитал
+        total = actual_posts_count if actual_posts_count > 0 else len(messages)
 
-        print(f"LLM AdAnalyzer: {ad_pct}% рекламы ({ad_count}/{total} постов)")
+        # Пересчитываем процент на основе реального количества
+        if total > 0:
+            ad_pct = int(ad_count / total * 100)
+        else:
+            ad_pct = 0
+
+        if DEBUG_LLM_ANALYZER:
+            print(f"LLM AdAnalyzer: {ad_pct}% рекламы ({ad_count}/{total} постов)")
         return max(0, min(100, ad_pct))  # Clamp 0-100
 
-    print(f"AD ANALYZER: Failed to parse response")
+    if DEBUG_LLM_ANALYZER:
+        print(f"AD ANALYZER: Failed to parse response")
     return None
 
 
@@ -855,7 +875,8 @@ class LLMAnalyzer:
         # V40.0: Comment Analyzer с учётом типа канала
         if comments and len(comments) >= 5:
             result.comments = analyze_comments(comments, posts=messages, channel_type=channel_type)
-        else:
+        elif DEBUG_LLM_ANALYZER:
+            # v42.0: под DEBUG флаг
             print(f"LLM: Пропуск CommentAnalyzer (мало комментов: {len(comments) if comments else 0})")
 
         # V2.1: Упрощённый impact — только от комментариев
@@ -867,57 +888,4 @@ class LLMAnalyzer:
         _save_cache(self.cache)
 
 
-# === ТЕСТОВАЯ ФУНКЦИЯ ===
-
-def print_analysis_result(result: LLMAnalysisResult, channel_name: str = ""):
-    """Красиво выводит результат анализа v37.0"""
-    print(f"\n{'='*60}")
-    print(f"LLM ANALYSIS v37.0: {channel_name}")
-    print(f"{'='*60}")
-
-    # v37.0: Тир и cap
-    print(f"\n📊 SUITABILITY TIER: {result.tier} (cap={result.tier_cap})")
-    if result.exclusion_reason:
-        print(f"   ⛔ EXCLUDED: {result.exclusion_reason}")
-
-    if result.posts:
-        p = result.posts
-        print(f"\n📝 POST ANALYSIS:")
-        print(f"   Brand Safety: {p.brand_safety}/100")
-        print(f"   - Toxicity: {p.toxicity}")
-        print(f"   - Violence: {p.violence}")  # v37.0
-        print(f"   - Political Quantity: {p.political_quantity}%")  # v37.0
-        print(f"   - Political Risk: {p.political_risk}")  # v37.0
-        print(f"   - Misinformation: {p.misinformation}")
-        print(f"   Ad Percentage: {p.ad_percentage}%")
-        if p.red_flags:
-            print(f"   Red Flags: {p.red_flags}")
-    else:
-        print(f"\n📝 POST ANALYSIS: Пропущен (недостаточно данных)")
-
-    if result.comments:
-        c = result.comments
-        print(f"\n💬 COMMENT ANALYSIS:")
-        print(f"   Authenticity: {c.authenticity}/100 ({100-c.bot_percentage}% живые)")
-        print(f"   Bot Signals: {c.bot_signals}")
-        print(f"   Trust Score: {c.trust_score}/100")
-        print(f"   Trust Signals: {c.trust_signals}")
-    else:
-        print(f"\n💬 COMMENT ANALYSIS: Пропущен (недостаточно данных)")
-
-    print(f"\n📊 IMPACT ON SCORE:")
-    print(f"   LLM Bonus: +{result.llm_bonus:.1f} points")
-    print(f"   LLM Trust Factor: ×{result.llm_trust_factor:.2f}")
-    print(f"   Tier Cap: {result.tier_cap}")
-
-    # Пример влияния с tier cap
-    example_raw = 70
-    example_trust = 0.95
-    old_score = example_raw * example_trust
-    base_new = (example_raw + result.llm_bonus) * example_trust * result.llm_trust_factor
-    new_score = min(base_new, result.tier_cap)  # v37.0: применяем cap
-    print(f"\n   Example: Raw=70, Trust=0.95")
-    print(f"   Old formula: {old_score:.1f}")
-    print(f"   New formula: {base_new:.1f} → capped to {new_score:.1f}")
-
-    print(f"{'='*60}\n")
+# v42.0: Удалён мёртвый код print_analysis_result() — 0 вызовов в проекте

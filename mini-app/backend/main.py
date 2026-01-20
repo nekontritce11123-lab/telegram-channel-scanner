@@ -6,8 +6,11 @@ Reklamshik API - FastAPI backend для Mini App.
 import os
 import sys
 import json
+import httpx
+from io import BytesIO
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -114,6 +117,7 @@ class ChannelSummary(BaseModel):
     cpm_min: Optional[int] = None
     cpm_max: Optional[int] = None
     photo_url: Optional[str] = None  # v19.0: аватарка канала
+    is_verified: bool = False  # v34.0: Telegram верификация
 
 
 class ChannelListResponse(BaseModel):
@@ -350,7 +354,7 @@ def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
             'reaction_stability': {'max': 5, 'label': 'Стабильность ER'},
         },
         'reputation': {
-            'verified': {'max': 4, 'label': 'Верификация'},
+            # v34.0: verified убран - не влияет на score и отображается как галочка
             'age': {'max': 4, 'label': 'Возраст'},
             'premium': {'max': 4, 'label': 'Премиумы'},
             'source_diversity': {'max': 4, 'label': 'Оригинальность'},
@@ -391,9 +395,172 @@ def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
     return breakdown
 
 
-def format_breakdown_for_ui(breakdown_data: dict) -> dict:
+def format_llm_analysis_for_ui(llm_data: dict) -> dict:
+    """
+    v41.0: Форматирует LLM анализ для UI.
+
+    Поддерживает две структуры:
+
+    1. Плоская (v41.0 crawler):
+    {
+        'ad_percentage': 15,
+        'bot_percentage': 8,
+        'trust_score': 65,
+        'llm_trust_factor': 0.85,
+        'ad_mult': 1.0,
+        'bot_mult': 1.0
+    }
+
+    v41.0: authenticity УДАЛЕНА (дубликат bot_percentage).
+
+    2. Вложенная (старая):
+    {
+        'tier': 'STANDARD',
+        'posts': {...},
+        'comments': {...}
+    }
+    """
+    if not llm_data:
+        return None
+
+    result = {
+        'tier': llm_data.get('tier', 'STANDARD'),
+        'tier_cap': llm_data.get('tier_cap', 100),
+        'exclusion_reason': llm_data.get('exclusion_reason'),
+        'llm_bonus': round(llm_data.get('llm_bonus', 0), 1),
+        'llm_trust_factor': round(llm_data.get('llm_trust_factor', 1.0), 2),
+    }
+
+    # v41.0: Проверяем плоскую структуру (от нового crawler)
+    has_flat_data = 'ad_percentage' in llm_data or 'bot_percentage' in llm_data
+
+    if has_flat_data:
+        # Плоская структура — форматируем как posts/comments
+        ad_pct = llm_data.get('ad_percentage')
+        if ad_pct is not None:
+            result['posts'] = {
+                'ad_percentage': {
+                    'value': ad_pct,
+                    'label': 'Рекламы %',
+                    'status': _get_metric_status(ad_pct, good_max=20, warning_max=40)
+                }
+            }
+
+        # v41.0: authenticity REMOVED
+        bot_pct = llm_data.get('bot_percentage')
+        trust = llm_data.get('trust_score')
+
+        if bot_pct is not None or trust is not None:
+            result['comments'] = {}
+            if bot_pct is not None:
+                result['comments']['bot_percentage'] = {
+                    'value': bot_pct,
+                    'label': 'Ботов %',
+                    'status': _get_metric_status(bot_pct, good_max=20, warning_max=50)
+                }
+            if trust is not None:
+                result['comments']['trust_score'] = {
+                    'value': trust,
+                    'label': 'Доверие',
+                    'status': _get_reverse_status(trust, good_min=60, warning_min=30)
+                }
+
+        return result
+
+    # Старая вложенная структура
+    posts = llm_data.get('posts')
+    if posts:
+        result['posts'] = {
+            'brand_safety': {
+                'value': posts.get('brand_safety', 0),
+                'label': 'Brand Safety',
+                'status': _get_brand_safety_status(posts.get('brand_safety', 0))
+            },
+            'toxicity': {
+                'value': posts.get('toxicity', 0),
+                'label': 'Токсичность',
+                'status': _get_metric_status(posts.get('toxicity', 0), good_max=10, warning_max=40)
+            },
+            'violence': {
+                'value': posts.get('violence', 0),
+                'label': 'Насилие',
+                'status': _get_metric_status(posts.get('violence', 0), good_max=10, warning_max=30)
+            },
+            'political_quantity': {
+                'value': posts.get('political_quantity', 0),
+                'label': 'Политика %',
+                'status': _get_metric_status(posts.get('political_quantity', 0), good_max=15, warning_max=40)
+            },
+            'political_risk': {
+                'value': posts.get('political_risk', 0),
+                'label': 'Полит. риск',
+                'status': _get_metric_status(posts.get('political_risk', 0), good_max=20, warning_max=50)
+            },
+            'misinformation': {
+                'value': posts.get('misinformation', 0),
+                'label': 'Дезинформация',
+                'status': _get_metric_status(posts.get('misinformation', 0), good_max=10, warning_max=30)
+            },
+            'ad_percentage': {
+                'value': posts.get('ad_percentage', 0),
+                'label': 'Рекламы %',
+                'status': _get_metric_status(posts.get('ad_percentage', 0), good_max=20, warning_max=40)
+            },
+            'red_flags': posts.get('red_flags', [])
+        }
+
+    comments = llm_data.get('comments')
+    if comments:
+        # v41.0: authenticity REMOVED
+        result['comments'] = {
+            'bot_percentage': {
+                'value': comments.get('bot_percentage', 0),
+                'label': 'Ботов %',
+                'status': _get_metric_status(comments.get('bot_percentage', 0), good_max=20, warning_max=50)
+            },
+            'bot_signals': comments.get('bot_signals', []),
+            'trust_score': {
+                'value': comments.get('trust_score', 0),
+                'label': 'Доверие',
+                'status': _get_reverse_status(comments.get('trust_score', 0), good_min=60, warning_min=30)
+            },
+            'trust_signals': comments.get('trust_signals', [])
+        }
+
+    return result
+
+
+def _get_brand_safety_status(value: int) -> str:
+    """Статус для brand_safety (чем выше - тем лучше)."""
+    if value >= 80:
+        return 'good'
+    elif value >= 60:
+        return 'warning'
+    return 'bad'
+
+
+def _get_metric_status(value: int, good_max: int, warning_max: int) -> str:
+    """Статус для метрик где низкое значение = хорошо (toxicity, violence, etc)."""
+    if value <= good_max:
+        return 'good'
+    elif value <= warning_max:
+        return 'warning'
+    return 'bad'
+
+
+def _get_reverse_status(value: int, good_min: int, warning_min: int) -> str:
+    """Статус для метрик где высокое значение = хорошо (trust)."""
+    if value >= good_min:
+        return 'good'
+    elif value >= warning_min:
+        return 'warning'
+    return 'bad'
+
+
+def format_breakdown_for_ui(breakdown_data: dict, llm_analysis: dict = None) -> dict:
     """
     v23.0: Преобразует реальный breakdown из scorer.py в формат для UI.
+    v39.0: Интегрирует LLM данные в существующие метрики (не показывает отдельно).
 
     scorer.py возвращает:
         {
@@ -426,8 +593,20 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
             },
             ...
         }
+
+    v39.0: Если llm_analysis передан:
+        - ad_percentage из LLM заменяет keyword-based ad_load (более точный)
+        - bot_percentage из LLM добавляется в comments.bot_info
     """
     breakdown = breakdown_data.get('breakdown', {})
+
+    # v39.0: Извлекаем LLM данные для интеграции
+    llm_ad_percentage = None
+    llm_bot_percentage = None
+    if llm_analysis:
+        llm_ad_percentage = llm_analysis.get('ad_percentage')
+        llm_bot_percentage = llm_analysis.get('bot_percentage')
+
     categories = breakdown_data.get('categories', {})
 
     # v23.0: KEY_MAPPING для совместимости со старыми данными
@@ -451,7 +630,7 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
             'reaction_stability': 'Стабильность ER',
         },
         'reputation': {
-            'verified': 'Верификация',
+            # v34.0: verified убран - отображается как галочка на ScoreRing
             'age': 'Возраст',
             'premium': 'Премиумы',
             'source_diversity': 'Оригинальность',
@@ -625,6 +804,22 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
             if value:
                 item_data['value'] = value
 
+            # v39.0: Добавляем bot_percentage в comments если есть LLM данные
+            if metric_key == 'comments' and llm_bot_percentage is not None:
+                bot_pct = int(llm_bot_percentage)
+                # Определяем статус: <20% = good, 20-50% = warning, >50% = bad
+                if bot_pct <= 20:
+                    bot_status = 'good'
+                elif bot_pct <= 50:
+                    bot_status = 'warning'
+                else:
+                    bot_status = 'bad'
+                item_data['bot_info'] = {
+                    'value': f'{bot_pct}% боты',
+                    'status': bot_status,
+                    'llm_source': True,
+                }
+
             items[metric_key] = item_data
             calculated_max += max_val  # v22.2: Суммируем max каждого item
 
@@ -633,6 +828,25 @@ def format_breakdown_for_ui(breakdown_data: dict) -> dict:
         cat_info_config = INFO_METRICS_CONFIG.get(cat_key, {})
 
         for info_key, config in cat_info_config.items():
+            # v39.0: Для ad_load — используем LLM ad_percentage если есть (более точный)
+            if info_key == 'ad_load' and llm_ad_percentage is not None:
+                float_value = float(llm_ad_percentage)
+                status = get_info_metric_status(float_value, config)
+                formatted_value = f"{float_value:.0f}%"
+                bar_percent = 100 if status == 'good' else 60 if status == 'warning' else 20
+
+                info_metrics[info_key] = {
+                    'score': 0,
+                    'max': 0,
+                    'value': formatted_value,
+                    'label': config['label'] + ' (AI)',  # Маркируем как AI
+                    'status': status,
+                    'bar_percent': bar_percent,
+                    'raw_value': float_value,
+                    'llm_source': True,  # v39.0: помечаем что данные от LLM
+                }
+                continue
+
             # v25.0: source_key позволяет брать данные из другого ключа breakdown
             source_key = config.get('source_key', info_key)
             info_data = breakdown.get(source_key, {})
@@ -864,6 +1078,109 @@ def safe_float(value, default=1.0) -> float:
         return default
 
 
+# v22.0: Кэш для фото каналов (in-memory, до 1000 каналов)
+_photo_cache: dict = {}
+_PHOTO_CACHE_MAX = 1000
+
+
+@app.get("/api/photo/{username}")
+async def get_channel_photo(username: str):
+    """
+    v22.0: Загружает аватарку канала из Telegram.
+
+    Фото кэшируются в памяти для быстрого доступа.
+    Если бот не может получить фото — возвращает 404.
+    """
+    username = username.lower().lstrip('@')
+
+    # Проверяем кэш
+    if username in _photo_cache:
+        return Response(content=_photo_cache[username], media_type="image/jpeg")
+
+    # Пробуем получить из БД (старые каналы с photo_url)
+    if db:
+        channel = db.get_channel(username)
+        if channel and channel.photo_url and channel.photo_url.startswith('data:image'):
+            # Декодируем base64
+            import base64
+            try:
+                b64_data = channel.photo_url.split(',')[1]
+                photo_bytes = base64.b64decode(b64_data)
+
+                # Кэшируем
+                if len(_photo_cache) < _PHOTO_CACHE_MAX:
+                    _photo_cache[username] = photo_bytes
+
+                return Response(content=photo_bytes, media_type="image/jpeg")
+            except Exception:
+                pass
+
+    # Пробуем загрузить через Telegram Bot API
+    bot_token = os.getenv("BOT_TOKEN")
+    if not bot_token:
+        raise HTTPException(status_code=500, detail="BOT_TOKEN not configured")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # 1. Получаем информацию о канале
+            chat_resp = await client.get(
+                f"https://api.telegram.org/bot{bot_token}/getChat",
+                params={"chat_id": f"@{username}"},
+                timeout=10.0
+            )
+            chat_data = chat_resp.json()
+
+            if not chat_data.get("ok"):
+                raise HTTPException(status_code=404, detail="Channel not found")
+
+            chat = chat_data.get("result", {})
+            photo = chat.get("photo")
+
+            if not photo:
+                raise HTTPException(status_code=404, detail="Channel has no photo")
+
+            # 2. Получаем file_path для big_file_id
+            big_file_id = photo.get("big_file_id")
+            if not big_file_id:
+                raise HTTPException(status_code=404, detail="No photo file_id")
+
+            file_resp = await client.get(
+                f"https://api.telegram.org/bot{bot_token}/getFile",
+                params={"file_id": big_file_id},
+                timeout=10.0
+            )
+            file_data = file_resp.json()
+
+            if not file_data.get("ok"):
+                raise HTTPException(status_code=404, detail="Cannot get file info")
+
+            file_path = file_data.get("result", {}).get("file_path")
+            if not file_path:
+                raise HTTPException(status_code=404, detail="No file_path")
+
+            # 3. Скачиваем фото
+            photo_resp = await client.get(
+                f"https://api.telegram.org/file/bot{bot_token}/{file_path}",
+                timeout=30.0
+            )
+
+            if photo_resp.status_code != 200:
+                raise HTTPException(status_code=404, detail="Cannot download photo")
+
+            photo_bytes = photo_resp.content
+
+            # Кэшируем
+            if len(_photo_cache) < _PHOTO_CACHE_MAX:
+                _photo_cache[username] = photo_bytes
+
+            return Response(content=photo_bytes, media_type="image/jpeg")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching photo: {str(e)}")
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint с проверкой БД."""
@@ -906,9 +1223,9 @@ async def get_channels(
     """
     params = [min_score, max_score, min_members, max_members, min_trust]
 
-    # Base WHERE clause
+    # Base WHERE clause - v33: показываем и GOOD и BAD каналы
     where_clause = """
-        WHERE status = 'GOOD'
+        WHERE status IN ('GOOD', 'BAD')
           AND score >= ? AND score <= ?
           AND members >= ? AND members <= ?
           AND trust_factor >= ?
@@ -927,10 +1244,11 @@ async def get_channels(
     cursor = db.conn.execute(count_query, params)
     total = safe_int(cursor.fetchone()[0], 0)
 
-    # Main query
+    # Main query - v34.0: добавлен breakdown_json для is_verified
     query = f"""
         SELECT username, score, verdict, trust_factor, members,
-               category, category_secondary, scanned_at, photo_url, category_percent
+               category, category_secondary, scanned_at, photo_url, category_percent,
+               breakdown_json
         FROM channels {where_clause}
     """
 
@@ -948,6 +1266,22 @@ async def get_channels(
         trust_factor = safe_float(row[3], 1.0)
         members = safe_int(row[4], 0)
         category = row[5]
+
+        # v34.0: Извлекаем is_verified из breakdown_json
+        is_verified = False
+        if row[10]:  # breakdown_json
+            try:
+                breakdown_data = json.loads(row[10])
+                # Может быть в breakdown.verified.value или в flags.is_verified
+                bd = breakdown_data.get('breakdown', breakdown_data)
+                if 'verified' in bd and isinstance(bd['verified'], dict):
+                    is_verified = bd['verified'].get('value', False)
+                # Также проверяем flags
+                flags = breakdown_data.get('flags', {})
+                if 'is_verified' in flags:
+                    is_verified = flags.get('is_verified', False)
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
 
         # v13.1: Используем breakdown для консистентных цен
         breakdown = estimate_breakdown(score, trust_factor)
@@ -971,6 +1305,7 @@ async def get_channels(
             cpm_min=price_min,
             cpm_max=price_max,
             photo_url=str(row[8]) if row[8] else None,
+            is_verified=is_verified,  # v34.0
         ))
 
     return ChannelListResponse(
@@ -1036,14 +1371,47 @@ async def get_channel(username: str):
         except (json.JSONDecodeError, TypeError):
             real_breakdown_data = None
 
+    # v39.0: Извлекаем сырые LLM данные ПЕРЕД format_breakdown_for_ui
+    # чтобы можно было интегрировать их в метрики
+    # v40.3: Ищем в обоих местах - корень И вложенный breakdown (баг crawler.py)
+    raw_llm_analysis = None
+    if real_breakdown_data:
+        # Приоритет 1: корень (правильная структура)
+        if real_breakdown_data.get('llm_analysis'):
+            raw_llm_analysis = real_breakdown_data.get('llm_analysis')
+        # Приоритет 2: вложенный в breakdown (текущий баг crawler.py)
+        elif real_breakdown_data.get('breakdown', {}).get('llm_analysis'):
+            raw_llm_analysis = real_breakdown_data.get('breakdown', {}).get('llm_analysis')
+
     # v23.0: Если есть реальный breakdown - форматируем его для UI
+    # v39.0: Передаём LLM данные для интеграции в метрики
     # Иначе используем estimate_breakdown() как fallback
     if real_breakdown_data and real_breakdown_data.get('breakdown'):
-        breakdown = format_breakdown_for_ui(real_breakdown_data)
+        breakdown = format_breakdown_for_ui(real_breakdown_data, raw_llm_analysis)
         breakdown_source = "database"
     else:
         breakdown = estimate_breakdown(score, trust_factor)
         breakdown_source = "estimated"
+
+    # v39.0: llm_analysis теперь НЕ отдаём отдельно — данные интегрированы в breakdown
+    # Оставляем только tier/tier_cap для status banner (если нужно)
+    llm_analysis = None
+    if raw_llm_analysis:
+        llm_analysis = {
+            'tier': raw_llm_analysis.get('tier', 'STANDARD'),
+            'tier_cap': raw_llm_analysis.get('tier_cap', 100),
+        }
+
+    # v34.0: Извлекаем is_verified из breakdown_json
+    is_verified = False
+    if real_breakdown_data:
+        bd = real_breakdown_data.get('breakdown', real_breakdown_data)
+        if 'verified' in bd and isinstance(bd['verified'], dict):
+            is_verified = bd['verified'].get('value', False)
+        # Также проверяем flags
+        flags = real_breakdown_data.get('flags', {})
+        if 'is_verified' in flags:
+            is_verified = flags.get('is_verified', False)
 
     # v7.0: Trust penalties (риски)
     trust_penalties = estimate_trust_penalties(trust_factor, score)
@@ -1097,6 +1465,10 @@ async def get_channel(username: str):
         "breakdown_source": breakdown_source,  # v23.0: указываем источник данных
         "trust_penalties": trust_penalties,
         "price_estimate": price_estimate,
+        # v38.0: LLM Analysis
+        "llm_analysis": llm_analysis,
+        # v34.0: Telegram верификация
+        "is_verified": is_verified,
     }
 
 

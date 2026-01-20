@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Smart Crawler - автоматический сбор базы Telegram каналов.
-v18.0: Расширенная AI классификация (17 категорий) + multi-label
+v31.0: Локальный LLM (Ollama + Qwen3-8B), 17 категорий
 
 Использование:
     # Первый запуск с seed каналами
@@ -53,8 +53,8 @@ from scanner.classifier import get_classifier
 def print_banner():
     print("""
 ╔═══════════════════════════════════════════════════════════╗
-║            SMART CRAWLER v18.0                            ║
-║     Сбор базы каналов + 17 категорий + multi-label       ║
+║                    КРАУЛЕР v41.0                          ║
+║        LLM анализ рекламы и ботов • 17 категорий         ║
 ╚═══════════════════════════════════════════════════════════╝
     """)
 
@@ -120,10 +120,10 @@ async def classify_existing(db: CrawlerDB, limit: int = 100):
                 description = getattr(scan_result.chat, 'description', '') or ''
                 messages = scan_result.messages
 
-                # v28.0: ТОЛЬКО AI классификация - без fallback!
+                # v31.0: Ollama классификация (локально)
                 channel_id = getattr(scan_result.chat, 'id', None)
-                if not channel_id or not classifier.api_key:
-                    print(f"[{i}/{len(uncategorized)}] @{username} → SKIP (no API key)")
+                if not channel_id:
+                    print(f"[{i}/{len(uncategorized)}] @{username} → SKIP (no channel_id)")
                     errors += 1
                     await asyncio.sleep(1)
                     continue
@@ -174,6 +174,7 @@ async def classify_existing(db: CrawlerDB, limit: int = 100):
     print(f"Multi-label: {multi_label}")
     print(f"Ошибок: {errors}")
     classifier.save_cache()
+    classifier.unload()  # v33: Выгружаем модель из GPU
 
 
 def main():
@@ -288,7 +289,6 @@ def main():
         asyncio.run(crawler.run(seeds=seeds, max_channels=args.max))
     except KeyboardInterrupt:
         print("\nПрервано пользователем")
-        sys.exit(0)
 
 
 if __name__ == "__main__":

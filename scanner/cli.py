@@ -1,8 +1,8 @@
 """
 CLI модуль для сканирования каналов.
-v15.4: Улучшенная детекция рекламы - приватные инвайты, joinchat, telegram.me.
+v38.0: Интеграция LLM анализа (Ollama обязателен)
 
-Формула: Final Score = Raw Score × Trust Factor
+Формула: Final Score = min((Raw Score + LLM Bonus) × Trust Factor × LLM Trust Factor, Tier Cap)
 
 RAW SCORE (0-100) - "витрина":
 - КАЧЕСТВО: 40 баллов (cv_views, reach, decay, forward_rate)
@@ -13,14 +13,20 @@ TRUST FACTOR (0.0-1.0) - мультипликатор доверия:
 - Forensics (ID Clustering, Geo/DC, Premium)
 - Statistical Trust (Hollow Views, Zombie Engagement, Satellite)
 - Ghost Protocol (Ghost Channel, Zombie Audience, Member Discrepancy)
-- Decay Trust (Bot Wall ×0.6, Budget Cliff) - v15.1
-- v15.2: Satellite только при мёртвых комментах
+- Decay Trust (Bot Wall ×0.6, Budget Cliff)
+
+LLM ANALYSIS (v38.0):
+- Tier система: PREMIUM/STANDARD/LIMITED/RESTRICTED/EXCLUDED
+- Brand Safety: toxicity, violence, political_quantity, political_risk
+- Comment Analysis: bot_percentage, trust_score (v41.0: authenticity removed)
 """
 import asyncio
 import json
 import sys
 from pathlib import Path
 from datetime import datetime
+
+import requests
 
 # Фикс для Windows консоли - поддержка unicode
 if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
@@ -29,12 +35,48 @@ if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
 
 from .client import get_client, smart_scan
 from .scorer import calculate_final_score
+from .llm_analyzer import LLMAnalyzer, LLMAnalysisResult, OLLAMA_URL, OLLAMA_MODEL
+from .crawler import get_avatar_base64
+from .classifier import get_classifier
+
+
+def check_ollama_available() -> tuple[bool, str]:
+    """
+    Проверяет доступность Ollama сервера.
+    v38.0: Ollama ОБЯЗАТЕЛЕН для работы сканера.
+
+    Returns:
+        (is_available, error_message)
+    """
+    try:
+        # Проверяем что сервер отвечает
+        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if response.status_code != 200:
+            return False, f"Ollama вернул HTTP {response.status_code}"
+
+        # Проверяем что нужная модель установлена
+        data = response.json()
+        models = [m.get('name', '').split(':')[0] for m in data.get('models', [])]
+
+        required_model = OLLAMA_MODEL.split(':')[0]  # qwen3 из qwen3:8b
+        if required_model not in models and OLLAMA_MODEL not in [m.get('name', '') for m in data.get('models', [])]:
+            available = ', '.join(models) if models else 'нет моделей'
+            return False, f"Модель {OLLAMA_MODEL} не найдена. Доступные: {available}. Установи: ollama pull {OLLAMA_MODEL}"
+
+        return True, ""
+
+    except requests.exceptions.ConnectionError:
+        return False, "Ollama не запущен! Запусти: ollama serve"
+    except requests.exceptions.Timeout:
+        return False, "Ollama не отвечает (таймаут 5 сек)"
+    except Exception as e:
+        return False, f"Ошибка проверки Ollama: {e}"
 
 
 async def scan_channel(channel: str) -> dict:
     """
     Сканирует канал и возвращает результат анализа.
-    v15.0: Ghost Protocol сканирование (3 API запроса).
+    v38.0: Интеграция LLM анализа (Ollama обязателен).
 
     Args:
         channel: username канала (с @ или без)
@@ -42,6 +84,20 @@ async def scan_channel(channel: str) -> dict:
     Returns:
         dict с результатами анализа
     """
+    # v38.0: Проверка Ollama ПЕРЕД сканированием
+    print("Проверка Ollama...")
+    ollama_ok, ollama_error = check_ollama_available()
+    if not ollama_ok:
+        print(f"\n❌ ОШИБКА: {ollama_error}")
+        print("\nOllama обязателен для работы сканера v38.0!")
+        print("Инструкция:")
+        print("  1. Установи Ollama: https://ollama.ai")
+        print("  2. Запусти сервер: ollama serve")
+        print(f"  3. Установи модель: ollama pull {OLLAMA_MODEL}")
+        sys.exit(1)
+
+    print(f"✓ Ollama готов ({OLLAMA_MODEL})")
+
     async with get_client() as client:
         print(f"Подключение к Telegram...")
 
@@ -66,13 +122,79 @@ async def scan_channel(channel: str) -> dict:
             online = channel_health.get('online_count', 0)
             print(f"Ghost Protocol: {online:,} юзеров онлайн")
 
-        # v15.0: передаём channel_health для Ghost Protocol
-        result = calculate_final_score(chat, messages, comments_data, users, channel_health)
+        # v38.0: LLM анализ
+        print("\n--- LLM ANALYSIS ---")
+        llm_analyzer = LLMAnalyzer()
+
+        # Собираем комментарии из comments_data
+        # v41.0: comments_data['comments'] — это список текстов комментариев (не dict)
+        comments_list = []
+        if comments_data.get('enabled'):
+            comments_list = comments_data.get('comments', [])
+
+        # v38.3: Получаем категорию из classifier для category-aware LLM анализа
+        classifier = get_classifier()
+        category = await classifier.classify_sync(
+            channel_id=getattr(chat, 'id', 0),
+            title=getattr(chat, 'title', ''),
+            description=getattr(chat, 'description', ''),
+            messages=messages
+        )
+        if not category:
+            category = "DEFAULT"
+        print(f"Category: {category}")
+
+        llm_result = llm_analyzer.analyze(
+            channel_id=getattr(chat, 'id', 0),
+            messages=messages,
+            comments=comments_list,
+            category=category
+        )
+
+        # v38.0: передаём llm_result в scorer
+        result = calculate_final_score(chat, messages, comments_data, users, channel_health, llm_result=llm_result)
+
+        # v38.1: Получаем аватарку канала
+        print("Загрузка аватарки...")
+        photo_url = await get_avatar_base64(client, chat)
+        result['photo_url'] = photo_url
+        if photo_url:
+            print(f"✓ Аватарка получена ({len(photo_url)} bytes)")
+        else:
+            print("⚠ Аватарка не найдена")
 
         # Добавляем метаданные
         result['scan_time'] = datetime.now().isoformat()
         result['title'] = getattr(chat, 'title', None)
         result['description'] = getattr(chat, 'description', None)
+
+        # v38.0: Сериализация LLM результата для сохранения в БД
+        if llm_result:
+            result['llm_analysis'] = {
+                'tier': llm_result.tier,
+                'tier_cap': llm_result.tier_cap,
+                'exclusion_reason': llm_result.exclusion_reason,
+                'llm_bonus': round(llm_result.llm_bonus, 2),
+                'llm_trust_factor': round(llm_result.llm_trust_factor, 3),
+                'posts': {
+                    'brand_safety': llm_result.posts.brand_safety,
+                    'toxicity': llm_result.posts.toxicity,
+                    'violence': llm_result.posts.violence,
+                    'military_conflict': llm_result.posts.military_conflict,  # V2.0
+                    'political_quantity': llm_result.posts.political_quantity,
+                    'political_risk': llm_result.posts.political_risk,
+                    'misinformation': llm_result.posts.misinformation,
+                    'ad_percentage': llm_result.posts.ad_percentage,
+                    'red_flags': llm_result.posts.red_flags,
+                } if llm_result.posts else None,
+                'comments': {
+                    # v41.0: authenticity REMOVED (duplicate of bot_percentage)
+                    'bot_percentage': llm_result.comments.bot_percentage,
+                    'bot_signals': llm_result.comments.bot_signals,
+                    'trust_score': llm_result.comments.trust_score,
+                    'trust_signals': llm_result.comments.trust_signals,
+                } if llm_result.comments else None,
+            }
 
         return result
 
@@ -91,7 +213,8 @@ def print_result(result: dict) -> None:
         'GOOD': '\033[94m',       # Синий
         'MEDIUM': '\033[93m',     # Жёлтый
         'HIGH_RISK': '\033[91m',  # Красный
-        'SCAM': '\033[91m\033[1m' # Красный жирный
+        'SCAM': '\033[91m\033[1m', # Красный жирный
+        'NEW_CHANNEL': '\033[96m' # v37.2: Голубой для новых каналов
     }
     reset = '\033[0m'
     red = '\033[91m'
@@ -263,6 +386,59 @@ def print_result(result: dict) -> None:
                     print(f"    {yellow}private_links: {priv_ratio*100:.0f}% приватных ×{trust_mult}{reset}")
                 elif priv_ratio > 0:
                     print(f"    private_links: {priv_ratio*100:.0f}% приватных")
+
+    # v38.0: LLM Analysis
+    llm = result.get('llm_analysis')
+    if llm:
+        print(f"\n{cyan}--- LLM ANALYSIS v38.0 ---{reset}")
+
+        # Tier и Cap
+        tier = llm.get('tier', 'STANDARD')
+        tier_cap = llm.get('tier_cap', 100)
+        exclusion = llm.get('exclusion_reason')
+
+        tier_colors = {
+            'PREMIUM': green,
+            'STANDARD': cyan,
+            'LIMITED': yellow,
+            'RESTRICTED': '\033[91m',  # red
+            'EXCLUDED': '\033[91m\033[1m'  # red bold
+        }
+        tier_color = tier_colors.get(tier, reset)
+
+        print(f"  Tier: {tier_color}{tier}{reset} (cap={tier_cap})")
+        if exclusion:
+            print(f"  {red}⛔ EXCLUDED: {exclusion}{reset}")
+
+        llm_bonus = llm.get('llm_bonus', 0)
+        llm_trust = llm.get('llm_trust_factor', 1.0)
+        print(f"  LLM Bonus: +{llm_bonus:.1f} points")
+        print(f"  LLM Trust: ×{llm_trust:.2f}")
+
+        # V2.1: Post Analysis отключен — бесполезные метрики
+        # toxicity, violence, political — человек сам видит
+
+        # Comments analysis
+        comments = llm.get('comments')
+        if comments:
+            print(f"\n  💬 COMMENT ANALYSIS:")
+            # v41.0: authenticity REMOVED (duplicate of bot_percentage)
+
+            bot_pct = comments.get('bot_percentage', 0)
+            bot_color = green if bot_pct < 20 else (yellow if bot_pct < 50 else red)
+            print(f"     Bots: {bot_color}{bot_pct}%{reset}")
+
+            trust = comments.get('trust_score', 0)
+            trust_color = green if trust >= 60 else (yellow if trust >= 30 else red)
+            print(f"     Trust Score: {trust_color}{trust}/100{reset}")
+
+            bot_signals = comments.get('bot_signals', [])
+            if bot_signals:
+                print(f"     Bot Signals: {bot_signals[:3]}")
+
+            trust_signals = comments.get('trust_signals', [])
+            if trust_signals:
+                print(f"     Trust Signals: {trust_signals[:3]}")
 
     # User Forensics
     forensics = result.get('forensics')
