@@ -36,7 +36,6 @@ if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
 from .client import get_client, smart_scan
 from .scorer import calculate_final_score
 from .llm_analyzer import LLMAnalyzer, LLMAnalysisResult, OLLAMA_URL, OLLAMA_MODEL
-from .crawler import get_avatar_base64
 from .classifier import get_classifier
 
 
@@ -154,14 +153,8 @@ async def scan_channel(channel: str) -> dict:
         # v38.0: передаём llm_result в scorer
         result = calculate_final_score(chat, messages, comments_data, users, channel_health, llm_result=llm_result)
 
-        # v38.1: Получаем аватарку канала
-        print("Загрузка аватарки...")
-        photo_url = await get_avatar_base64(client, chat)
-        result['photo_url'] = photo_url
-        if photo_url:
-            print(f"✓ Аватарка получена ({len(photo_url)} bytes)")
-        else:
-            print("⚠ Аватарка не найдена")
+        # v22.0: Аватарки загружаются через /api/photo/{username}, не храним base64
+        result['photo_url'] = None
 
         # Добавляем метаданные
         result['scan_time'] = datetime.now().isoformat()
