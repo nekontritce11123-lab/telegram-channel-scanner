@@ -135,3 +135,98 @@
 - Backend: https://ads-api.factchain-traker.online
 
 **Note:** Существующие каналы в БД не имеют trust_details. Для отображения реальных штрафов нужно пересканировать каналы (или делать live scan).
+
+---
+
+## Session 5 - v59.5 Priority Queue + Case-Sensitivity Fix ✅
+
+### v59.5 Priority Queue
+**Задача:** Пользовательские запросы должны быть ближе к началу очереди (~позиция 3), а не в конце.
+
+**Реализация:**
+- Добавлена колонка `priority INTEGER DEFAULT 0` в channels
+- `add_scan_request()` добавляет канал с priority=1
+- `get_next()`, `peek_next()`, `get_next_atomic()` сортируют по `priority DESC, created_at ASC`
+
+**Результат:** Пользовательские запросы обрабатываются первыми.
+
+### v59.5 checkFullyProcessed Fix
+**Проблема:** После изменений карточки каналов перестали открываться.
+
+**Причина:** Проверка `score > 0 && status GOOD/BAD` блокировала все клики.
+
+**Решение:** Добавлен параметр `checkFullyProcessed`:
+- `scanChannel(username, false)` — для кликов по карточкам (всегда вернуть данные)
+- `scanChannel(username, true)` — для поиска (только полностью обработанные)
+
+### v59.5 Case-Sensitivity Duplicate Fix
+**Проблема:** thefactchain показывал SCAM с score=0, хотя в БД был score=74.
+
+**Причина:** На сервере было 2 записи с разным регистром:
+- `TheFactChain` → WAITING, score=None
+- `thefactchain` → GOOD, score=74
+
+API использует `LOWER()` и находил первую (WAITING).
+
+**Исправление:** Удалён дубликат `TheFactChain` на сервере.
+
+**Верификация:**
+- thefactchain: score=74, status=GOOD ✓
+- durov: score=61, status=GOOD, is_verified=True ✓
+
+---
+
+## Session 6 - v59.9 Reach Collision Bug Fix ✅
+
+### Проблема
+Охват (Reach) показывал 0/7 для всех каналов в UI.
+
+### Расследование
+1. Локальный output JSON имел ПРАВИЛЬНОЕ значение reach (290.46%)
+2. Колонка `reach_percent` в БД имела ПРАВИЛЬНОЕ значение (291.15)
+3. НО в `breakdown_json` поле `re` имело значение [1.31, 0] — НЕВЕРНО!
+
+### Причина
+**Коллизия ключей в json_compression.py!**
+
+```python
+BREAKDOWN_KEYS = {
+    'reach': 're',  # reach → 're'
+    # 'regularity' НЕ было в маппинге!
+}
+# Fallback: key[:2]
+# 'regularity'[:2] = 're' — COLLISION!
+```
+
+При сжатии breakdown оба ключа `reach` и `regularity` мапились на `'re'`.
+Python dict итерировался по порядку, `regularity` шёл ПОСЛЕ `reach` и ПЕРЕЗАПИСЫВАЛ его значение!
+
+Результат:
+- `reach: {value: 290.46, points: 0}` → `re: [290.46, 0]`
+- `regularity: {value: 1.31}` → `re: [1.31, 0]` ← ПЕРЕЗАПИСЬ!
+
+### Исправление
+**scanner/json_compression.py:**
+```python
+BREAKDOWN_KEYS = {
+    ...
+    # v59.9: Fix collision — regularity[:2] == 're' == reach!
+    'regularity': 'rg',
+    'er_trend': 'er',
+}
+
+BREAKDOWN_KEYS_REV['rg'] = 'regularity'
+BREAKDOWN_KEYS_REV['er'] = 'er_trend'
+```
+
+### Миграция данных
+Сброшены все 28 каналов с испорченными данными:
+- status → WAITING
+- breakdown_json → NULL
+- priority → 1 (обработаются первыми)
+
+### Следующий шаг
+Запустить краулер для пересканирования каналов:
+```bash
+python crawler.py
+```

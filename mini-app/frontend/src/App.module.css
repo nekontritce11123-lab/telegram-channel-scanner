@@ -367,7 +367,7 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 var(--spacing-md) var(--spacing-md);
+  padding: 0 1px var(--spacing-md);  /* v59.7: 1px отступы для максимально широких карточек */
 }
 
 .searchError {

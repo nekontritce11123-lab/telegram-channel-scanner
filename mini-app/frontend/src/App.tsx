@@ -493,7 +493,7 @@ function MetricItem({ item, onClick }: { item: { score: number; max: number; lab
 
 function App() {
   const { webApp, hapticLight, hapticMedium, hapticSuccess, hapticError } = useTelegram()
-  const { channels, total, loading, error, hasMore, fetchChannels, reset } = useChannels()
+  const { channels, loading, error, hasMore, fetchChannels, reset } = useChannels()
   const { fetchStats } = useStats()  // v9.0: stats removed from UI
   const { result: scanResult, loading: scanning, error: scanError, scanChannel, reset: resetScan } = useScan()
   const { submitRequest, loading: submitting } = useScanRequest()  // v58.0: Scan request queue
@@ -505,7 +505,7 @@ function App() {
   // State
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
-  const [sortBy, setSortBy] = useState<ChannelFilters['sort_by']>('scanned_at')
+  const [sortBy, setSortBy] = useState<ChannelFilters['sort_by']>('score')  // v59.6: По умолчанию по Score
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [minScore, setMinScore] = useState(0)
   const [minTrust, setMinTrust] = useState(0)
@@ -520,6 +520,9 @@ function App() {
 
   // v58.0: Scan on Demand UI state
   const [toast, setToast] = useState<{type: 'success' | 'error', text: string} | null>(null)
+
+  // v59.7: Filter preview count
+  const [filterPreviewCount, setFilterPreviewCount] = useState<number | null>(null)
 
   const gridRef = useRef<HTMLDivElement>(null)
   const isInitialized = useRef(false)
@@ -541,7 +544,7 @@ function App() {
     if (!isInitialized.current) {
       isInitialized.current = true
       fetchStats()
-      fetchChannels({ page: 1, page_size: 30, sort_by: 'scanned_at', sort_order: 'desc' })
+      fetchChannels({ page: 1, page_size: 30, sort_by: 'score', sort_order: 'desc' })  // v59.6: По умолчанию по Score
     }
   }, [fetchStats, fetchChannels])
 
@@ -587,6 +590,38 @@ function App() {
     setShowFilterSheet(false)
   }, [buildFilters, reset, fetchChannels])
 
+  // v59.7: Fetch filter preview count when filter sheet is open
+  useEffect(() => {
+    if (!showFilterSheet) {
+      setFilterPreviewCount(null)
+      return
+    }
+
+    const fetchCount = async () => {
+      try {
+        const params = new URLSearchParams()
+        if (selectedCategory) params.set('category', selectedCategory)
+        if (minScore > 0) params.set('min_score', String(minScore))
+        if (minTrust > 0) params.set('min_trust', String(minTrust))
+        if (minMembers > 0) params.set('min_members', String(minMembers))
+        if (maxMembers > 0) params.set('max_members', String(maxMembers))
+        if (verdictFilter) params.set('verdict', verdictFilter)
+
+        const response = await fetch(`${API_BASE}/api/channels/count?${params}`)
+        if (response.ok) {
+          const data = await response.json()
+          setFilterPreviewCount(data.count)
+        }
+      } catch {
+        setFilterPreviewCount(null)
+      }
+    }
+
+    // Debounce: fetch after 300ms
+    const timer = setTimeout(fetchCount, 300)
+    return () => clearTimeout(timer)
+  }, [showFilterSheet, selectedCategory, minScore, minTrust, minMembers, maxMembers, verdictFilter])
+
   // v9.0: Category selection now happens in filter sheet, applied on "Показать"
 
   // v58.0: Toast helper
@@ -597,21 +632,22 @@ function App() {
 
   // Handle search
   // v58.0: Queue-based scan - first check DB, then submit to queue if not found
+  // v59.5: checkFullyProcessed=true to only show fully scanned channels
   const handleSearch = useCallback(async () => {
     const query = searchQuery.trim().replace('@', '')
     if (!query) return
 
     hapticMedium()
 
-    // First try to get from DB
-    const result = await scanChannel(query)
+    // First try to get from DB (only if fully processed)
+    const result = await scanChannel(query, true)
 
     if (result) {
-      // Found in DB - show channel detail
+      // Found in DB and fully processed - show channel detail
       return
     }
 
-    // Not found in DB - submit to queue
+    // Not found or not fully processed - submit to queue
     const queueResult = await submitRequest(query)
     if (queueResult?.success) {
       showToast('success', `@${query} добавлен в очередь`)
@@ -1094,13 +1130,13 @@ function App() {
                 setMinMembers(0)
                 setMaxMembers(0)
                 setVerdictFilter(null)
-                setSortBy('scanned_at')
+                setSortBy('score')  // v59.6: По умолчанию по Score
                 setSortOrder('desc')
               }}>
                 Сбросить
               </button>
               <button className={styles.filterApply} onClick={applyFilters}>
-                Показать {total} шт.
+                Показать{filterPreviewCount !== null ? ` ${filterPreviewCount} шт.` : ''}
               </button>
             </div>
           </div>
@@ -1175,7 +1211,7 @@ function App() {
                       </div>
                       {/* Meta line */}
                       <span className={styles.cardMeta}>
-                        @{channel.username} • {formatNumber(channel.members)} подписчиков
+                        @{channel.username} • {formatNumber(channel.members)}
                         {channel.scanned_at && ` • ${formatRelativeDate(channel.scanned_at)}`}
                       </span>
                     </div>

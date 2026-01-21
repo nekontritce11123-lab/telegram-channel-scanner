@@ -269,7 +269,8 @@ def calculate_post_price(
     trust_factor: float = 1.0,
     score: int = 50,
     breakdown: dict = None,
-    trust_penalties: list = None
+    trust_penalties: list = None,
+    avg_views: int = None  # v59.6: Реальное значение из БД
 ) -> tuple:
     """
     v15.0: CPM-based ценообразование.
@@ -284,8 +285,9 @@ def calculate_post_price(
     # Нормализуем категорию (НИКОГДА не возвращаем None!)
     category = normalize_category(category)
 
-    # Оцениваем средние просмотры
-    avg_views = estimate_avg_views(members, breakdown, score)
+    # v59.6: Используем реальное avg_views если есть, иначе оцениваем
+    if avg_views is None or avg_views <= 0:
+        avg_views = estimate_avg_views(members, breakdown, score)
 
     # Получаем CPM по категории и score
     cpm = get_cpm_by_score(category, score, trust_factor)
@@ -306,7 +308,8 @@ def calculate_post_price_details(
     trust_factor: float = 1.0,
     score: int = 50,
     breakdown: dict = None,
-    trust_penalties: list = None
+    trust_penalties: list = None,
+    avg_views: int = None  # v59.6: Реальное значение из БД
 ) -> dict:
     """
     v15.0: CPM-based расчёт с деталями для UI.
@@ -316,8 +319,9 @@ def calculate_post_price_details(
     category = normalize_category(category)
     rates = CPM_RATES[category]
 
-    # Оцениваем средние просмотры
-    avg_views = estimate_avg_views(members, breakdown, score)
+    # v59.6: Используем реальное avg_views если есть, иначе оцениваем
+    if avg_views is None or avg_views <= 0:
+        avg_views = estimate_avg_views(members, breakdown, score)
 
     # Получаем CPM по score
     cpm = get_cpm_by_score(category, score, trust_factor)
@@ -1542,6 +1546,44 @@ async def get_channels(
     )
 
 
+# v59.7: Endpoint для подсчёта каналов (для preview в фильтрах)
+@app.get("/api/channels/count")
+async def get_channels_count(
+    category: Optional[str] = Query(None, description="Фильтр по категории"),
+    min_score: int = Query(0, ge=0, le=100),
+    max_score: int = Query(100, ge=0, le=100),
+    min_members: int = Query(0, ge=0),
+    max_members: int = Query(10000000, ge=0),
+    min_trust: float = Query(0.0, ge=0.0, le=1.0, description="Мин. Trust Factor"),
+    verdict: Optional[str] = Query(None, description="good_plus = EXCELLENT+GOOD"),
+):
+    """
+    Получить количество каналов по фильтрам (без пагинации).
+    Используется для preview в кнопке "Показать X шт."
+    """
+    params = [min_score, max_score, min_members, max_members, min_trust]
+
+    where_clause = """
+        WHERE status IN ('GOOD', 'BAD')
+          AND score >= ? AND score <= ?
+          AND members >= ? AND members <= ?
+          AND trust_factor >= ?
+    """
+
+    if verdict == "good_plus":
+        where_clause += " AND verdict IN ('EXCELLENT', 'GOOD')"
+
+    if category:
+        where_clause += " AND (category = ? OR category_secondary = ?)"
+        params.extend([category, category])
+
+    count_query = f"SELECT COUNT(*) FROM channels {where_clause}"
+    cursor = db.conn.execute(count_query, params)
+    total = safe_int(cursor.fetchone()[0], 0)
+
+    return {"count": total}
+
+
 @app.get("/api/channels/{username}")
 async def get_channel(username: str):
     """
@@ -1561,17 +1603,18 @@ async def get_channel(username: str):
     # v23.0: Читаем breakdown_json из БД (если колонка существует)
     # v59.3: Добавлен title
     # v59.4: LOWER() для case-insensitive поиска (в БД могут быть mixed-case)
+    # v59.6: Добавлен avg_views для расчёта цены
     # Используем try/except для совместимости с БД без колонки breakdown_json
     try:
         cursor = db.conn.execute("""
             SELECT username, score, verdict, trust_factor, members,
                    category, category_secondary, scanned_at, status,
-                   photo_url, breakdown_json, title
+                   photo_url, breakdown_json, title, avg_views
             FROM channels
             WHERE LOWER(username) = ?
         """, (username,))
     except Exception:
-        # Fallback для старых БД без колонки breakdown_json/title
+        # Fallback для старых БД без колонки breakdown_json/title/avg_views
         cursor = db.conn.execute("""
             SELECT username, score, verdict, trust_factor, members,
                    category, category_secondary, scanned_at, status
@@ -1592,9 +1635,11 @@ async def get_channel(username: str):
 
     # v23.0: Пытаемся получить реальный breakdown из БД
     # v59.3: Добавлен title
+    # v59.6: Добавлен avg_views
     breakdown_json_str = row[10] if len(row) > 10 else None
     photo_url = row[9] if len(row) > 9 else None
     title = row[11] if len(row) > 11 else None
+    db_avg_views = safe_int(row[12], 0) if len(row) > 12 else None  # v59.6
 
     # Парсим breakdown_json или используем fallback
     real_breakdown_data = None
@@ -1663,17 +1708,21 @@ async def get_channel(username: str):
         trust_penalties = estimate_trust_penalties(trust_factor, score)
 
     # v13.0: Рассчитываем цену с ВСЕМИ мультипликаторами
+    # v59.6: Передаём реальное avg_views из БД
     price_min, price_max = calculate_post_price(
         category, members, trust_factor, score,
         breakdown=breakdown,
-        trust_penalties=trust_penalties
+        trust_penalties=trust_penalties,
+        avg_views=db_avg_views
     )
 
     # v13.0: Детальная структура price_estimate с ВСЕМИ мультипликаторами
+    # v59.6: Передаём реальное avg_views из БД
     price_estimate = calculate_post_price_details(
         category, members, trust_factor, score,
         breakdown=breakdown,
-        trust_penalties=trust_penalties
+        trust_penalties=trust_penalties,
+        avg_views=db_avg_views
     )
 
     # v15.0: calculate_post_price_details всегда возвращает dict (fallback не нужен)
@@ -1963,6 +2012,55 @@ async def get_scan_requests(limit: int = 5):
         )
         for r in requests
     ]
+
+
+# ============================================================================
+# v59.8: QUEUE SYNC FOR LOCAL CRAWLER
+# ============================================================================
+
+@app.get("/api/queue/pending")
+async def get_pending_queue():
+    """
+    v59.8: Возвращает каналы в очереди с приоритетом (пользовательские запросы).
+    Используется локальным краулером для синхронизации.
+    """
+    cursor = db.conn.cursor()
+    cursor.execute("""
+        SELECT username, priority, created_at
+        FROM channels
+        WHERE status = 'WAITING' AND priority > 0
+        ORDER BY priority DESC, created_at ASC
+    """)
+    rows = cursor.fetchall()
+
+    return {
+        "channels": [
+            {"username": row[0], "priority": row[1], "created_at": row[2]}
+            for row in rows
+        ],
+        "count": len(rows)
+    }
+
+
+@app.post("/api/queue/sync")
+async def mark_synced(usernames: list[str]):
+    """
+    v59.8: Помечает каналы как синхронизированные (сбрасывает priority).
+    Вызывается после того как локальный краулер забрал их в свою очередь.
+    """
+    if not usernames:
+        return {"success": True, "updated": 0}
+
+    cursor = db.conn.cursor()
+    placeholders = ','.join(['?' for _ in usernames])
+    cursor.execute(f"""
+        UPDATE channels
+        SET priority = 0
+        WHERE LOWER(username) IN ({placeholders}) AND status = 'WAITING'
+    """, [u.lower() for u in usernames])
+    db.conn.commit()
+
+    return {"success": True, "updated": cursor.rowcount}
 
 
 if __name__ == "__main__":

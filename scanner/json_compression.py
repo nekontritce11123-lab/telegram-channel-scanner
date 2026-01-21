@@ -35,6 +35,9 @@ BREAKDOWN_KEYS = {
     # v58.1: Info metrics
     'posting_frequency': 'po',
     'private_links': 'pl',
+    # v59.9: Fix collision — regularity[:2] == 're' == reach!
+    'regularity': 'rg',
+    'er_trend': 'er',
 }
 
 # Reverse mapping for decompression
@@ -44,6 +47,8 @@ BREAKDOWN_KEYS_REV['rs'] = 'reaction_stability'
 BREAKDOWN_KEYS_REV['sd'] = 'source_diversity'
 BREAKDOWN_KEYS_REV['po'] = 'posting_frequency'
 BREAKDOWN_KEYS_REV['pl'] = 'private_links'
+BREAKDOWN_KEYS_REV['rg'] = 'regularity'
+BREAKDOWN_KEYS_REV['er'] = 'er_trend'
 
 # posts_raw_json: field index positions
 # [id, timestamp, views, forwards, reactions]

@@ -153,6 +153,9 @@ class CrawlerDB:
         # v59.5: Миграция - приоритет для пользовательских запросов
         self._migrate_v59_priority()
 
+        # v59.6: Миграция - триггеры для нормализации username к lowercase
+        self._migrate_v59_username_triggers()
+
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category_secondary ON channels(category_secondary)')
@@ -342,6 +345,56 @@ class CrawlerDB:
                 print("Миграция v59.5: добавлена колонка priority")
             except sqlite3.OperationalError as e:
                 logger.debug(f"Migration v59.5 priority: {e}")
+
+        self.conn.commit()
+
+    def _migrate_v59_username_triggers(self):
+        """v59.6: Триггеры для автоматической нормализации username к lowercase.
+
+        Предотвращает создание дубликатов с разным регистром (TheFactChain vs thefactchain).
+        """
+        cursor = self.conn.cursor()
+
+        # 1. Нормализовать существующие записи
+        cursor.execute('SELECT username FROM channels WHERE username != LOWER(username)')
+        non_lower = cursor.fetchall()
+        if non_lower:
+            for (uname,) in non_lower:
+                cursor.execute('UPDATE channels SET username = LOWER(username) WHERE username = ?', (uname,))
+            print(f"Миграция v59.6: нормализовано {len(non_lower)} username к lowercase")
+
+        # 2. Триггер для INSERT в channels
+        cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS normalize_username_insert
+            AFTER INSERT ON channels
+            FOR EACH ROW
+            WHEN NEW.username != LOWER(NEW.username)
+            BEGIN
+                UPDATE channels SET username = LOWER(NEW.username) WHERE rowid = NEW.rowid;
+            END
+        ''')
+
+        # 3. Триггер для UPDATE username в channels
+        cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS normalize_username_update
+            AFTER UPDATE OF username ON channels
+            FOR EACH ROW
+            WHEN NEW.username != LOWER(NEW.username)
+            BEGIN
+                UPDATE channels SET username = LOWER(NEW.username) WHERE rowid = NEW.rowid;
+            END
+        ''')
+
+        # 4. Триггер для INSERT в scan_requests
+        cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS normalize_scan_request_insert
+            AFTER INSERT ON scan_requests
+            FOR EACH ROW
+            WHEN NEW.username != LOWER(NEW.username)
+            BEGIN
+                UPDATE scan_requests SET username = LOWER(NEW.username) WHERE rowid = NEW.rowid;
+            END
+        ''')
 
         self.conn.commit()
 

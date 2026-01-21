@@ -285,7 +285,7 @@ export function useScan() {
   // v59.5: Only check database, no live scan
   // Live scan was creating incomplete records (no title, no LLM, no category)
   // Now channels must go through queue for full processing
-  const scanChannel = useCallback(async (username: string) => {
+  const scanChannel = useCallback(async (username: string, checkFullyProcessed = false) => {
     setLoading(true)
     setError(null)
     setResult(null)
@@ -294,14 +294,14 @@ export function useScan() {
       // Only check database - if not found, return null (will be queued)
       const data = await fetchAPI<ChannelDetail>(`/api/channels/${username}`)
 
-      // v59.5: Only return if fully processed (has score > 0 and status GOOD/BAD)
-      if (data.score > 0 && (data.status === 'GOOD' || data.status === 'BAD')) {
-        setResult(data)
-        return data
+      // v59.5: For search - only return if fully processed (score > 0 and status GOOD/BAD)
+      // For card clicks - always return data if found
+      if (checkFullyProcessed && !(data.score > 0 && (data.status === 'GOOD' || data.status === 'BAD'))) {
+        return null  // Not fully processed - will be queued
       }
 
-      // Channel exists but not fully processed - treat as not found
-      return null
+      setResult(data)
+      return data
     } catch {
       // Not in database - return null (will be queued by caller)
       return null
