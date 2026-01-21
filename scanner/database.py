@@ -150,6 +150,9 @@ class CrawlerDB:
         # v56.0: Миграция - полное хранение данных сканирования (30 новых колонок)
         self._migrate_v56_full_data()
 
+        # v59.5: Миграция - приоритет для пользовательских запросов
+        self._migrate_v59_priority()
+
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category_secondary ON channels(category_secondary)')
@@ -325,6 +328,23 @@ class CrawlerDB:
 
         self.conn.commit()
 
+    def _migrate_v59_priority(self):
+        """v59.5: Приоритет для пользовательских запросов."""
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(channels)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if 'priority' not in columns:
+            try:
+                cursor.execute("ALTER TABLE channels ADD COLUMN priority INTEGER DEFAULT 0")
+                # Индекс для быстрой сортировки по приоритету
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_priority_created ON channels(priority DESC, created_at ASC)")
+                print("Миграция v59.5: добавлена колонка priority")
+            except sqlite3.OperationalError as e:
+                logger.debug(f"Migration v59.5 priority: {e}")
+
+        self.conn.commit()
+
     def add_channel(self, username: str, parent: str = "") -> bool:
         """
         Добавляет канал в очередь.
@@ -387,11 +407,11 @@ class CrawlerDB:
     def get_next(self) -> Optional[str]:
         """
         Возвращает следующий канал для проверки (WAITING).
-        Самый старый по времени добавления.
+        v59.5: Сначала приоритетные (от пользователей), потом по времени.
         """
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT username FROM channels WHERE status = 'WAITING' ORDER BY created_at LIMIT 1"
+            "SELECT username FROM channels WHERE status = 'WAITING' ORDER BY priority DESC, created_at ASC LIMIT 1"
         )
         row = cursor.fetchone()
         return row['username'] if row else None
@@ -419,13 +439,14 @@ class CrawlerDB:
             username канала или None если очередь пуста
         """
         cursor = self.conn.cursor()
+        # v59.5: Сначала приоритетные (от пользователей), потом по времени
         cursor.execute("""
             UPDATE channels
             SET status = 'PROCESSING', scanned_at = datetime('now')
             WHERE username = (
                 SELECT username FROM channels
                 WHERE status = 'WAITING'
-                ORDER BY created_at ASC
+                ORDER BY priority DESC, created_at ASC
                 LIMIT 1
             )
             RETURNING username
@@ -451,10 +472,11 @@ class CrawlerDB:
             username канала или None если очередь пуста
         """
         cursor = self.conn.cursor()
+        # v59.5: Сначала приоритетные (от пользователей), потом по времени
         cursor.execute("""
             SELECT username FROM channels
             WHERE status = 'WAITING'
-            ORDER BY created_at ASC
+            ORDER BY priority DESC, created_at ASC
             LIMIT 1
         """)
         row = cursor.fetchone()
@@ -1043,11 +1065,22 @@ class CrawlerDB:
 
     def add_scan_request(self, username: str) -> int:
         """
-        Добавляет запрос на сканирование в очередь.
-        Returns: ID созданного запроса
+        v59.5: Добавляет запрос на сканирование в очередь.
+        Также добавляет в channels с priority=1 для приоритетной обработки.
+        Returns: ID созданного запроса (или существующего)
         """
         username = username.lower().lstrip('@')
         cursor = self.conn.cursor()
+
+        # v59.5: СНАЧАЛА добавляем в channels с приоритетом
+        # ON CONFLICT — если канал уже есть, повышаем priority
+        cursor.execute("""
+            INSERT INTO channels (username, status, priority, found_via)
+            VALUES (?, 'WAITING', 1, 'user_request')
+            ON CONFLICT(username) DO UPDATE SET
+                priority = 1,
+                status = CASE WHEN status IN ('GOOD', 'BAD') THEN status ELSE 'WAITING' END
+        """, (username,))
 
         # Проверяем нет ли уже pending запроса на этот канал
         cursor.execute(
@@ -1056,8 +1089,10 @@ class CrawlerDB:
         )
         existing = cursor.fetchone()
         if existing:
+            self.conn.commit()
             return existing[0]  # Возвращаем существующий ID
 
+        # Добавляем в scan_requests для отслеживания
         cursor.execute(
             "INSERT INTO scan_requests (username, status) VALUES (?, 'pending')",
             (username,)
