@@ -3199,6 +3199,7 @@
 .unifiedCard {
   background: var(--section-bg);
   border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
   margin-bottom: 12px;
 }

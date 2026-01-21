@@ -32,6 +32,9 @@ BREAKDOWN_KEYS = {
     'premium': 'pr',
     'source_diversity': 'sd',
     'source': 'sd',           # Alias
+    # v58.1: Info metrics
+    'posting_frequency': 'po',
+    'private_links': 'pl',
 }
 
 # Reverse mapping for decompression
@@ -39,6 +42,8 @@ BREAKDOWN_KEYS_REV = {v: k for k, v in BREAKDOWN_KEYS.items() if k not in ('stab
 # Prefer canonical names
 BREAKDOWN_KEYS_REV['rs'] = 'reaction_stability'
 BREAKDOWN_KEYS_REV['sd'] = 'source_diversity'
+BREAKDOWN_KEYS_REV['po'] = 'posting_frequency'
+BREAKDOWN_KEYS_REV['pl'] = 'private_links'
 
 # posts_raw_json: field index positions
 # [id, timestamp, views, forwards, reactions]
