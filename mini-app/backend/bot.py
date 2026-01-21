@@ -7,12 +7,16 @@ Reklamshik Bot - Telegram бот для Mini App.
 
 import asyncio
 import os
+import re
 import sys
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.enums import ParseMode
 from dotenv import load_dotenv
+
+# v48.0: Regex для валидации Telegram username (5-32 символа, буквы/цифры/underscore)
+USERNAME_REGEX = re.compile(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$')
 
 # Добавляем путь к scanner
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -79,6 +83,14 @@ async def cmd_check(message: Message):
         return
 
     channel = args[1].strip().lstrip("@")
+
+    # v48.0: Валидация username для безопасности
+    if not USERNAME_REGEX.match(channel):
+        await message.answer(
+            "Некорректное имя канала.\n"
+            "Username должен быть 5-32 символа (буквы, цифры, _)"
+        )
+        return
 
     # Отправляем статус
     status_msg = await message.answer(f"Сканирую @{channel}...")
@@ -214,7 +226,7 @@ dp.include_router(router)
 
 async def main():
     """Запуск бота."""
-    print(f"Бот запущен: {BOT_TOKEN[:20]}...")
+    print("Бот запущен")
     print(f"Mini App URL: {WEBAPP_URL}")
     await dp.start_polling(bot)
 

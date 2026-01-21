@@ -1079,8 +1079,19 @@ def safe_float(value, default=1.0) -> float:
 
 
 # v22.0: Кэш для фото каналов (in-memory, до 1000 каналов)
-_photo_cache: dict = {}
+# v48.0: Добавлен TTL для автоочистки старых записей
+import time
+_photo_cache: dict = {}  # {username: (bytes, timestamp)}
 _PHOTO_CACHE_MAX = 1000
+_PHOTO_CACHE_TTL = 3600  # 1 час
+
+
+def _cache_cleanup():
+    """Удаляет записи старше TTL."""
+    now = time.time()
+    expired = [k for k, (_, ts) in _photo_cache.items() if now - ts > _PHOTO_CACHE_TTL]
+    for k in expired:
+        del _photo_cache[k]
 
 
 @app.get("/api/photo/{username}")
@@ -1093,9 +1104,14 @@ async def get_channel_photo(username: str):
     """
     username = username.lower().lstrip('@')
 
-    # Проверяем кэш
+    # v48.0: Очищаем старые записи перед проверкой
+    _cache_cleanup()
+
+    # Проверяем кэш (с TTL)
     if username in _photo_cache:
-        return Response(content=_photo_cache[username], media_type="image/jpeg")
+        photo_bytes, ts = _photo_cache[username]
+        if time.time() - ts < _PHOTO_CACHE_TTL:
+            return Response(content=photo_bytes, media_type="image/jpeg")
 
     # Пробуем получить из БД (старые каналы с photo_url)
     if db:
@@ -1107,9 +1123,9 @@ async def get_channel_photo(username: str):
                 b64_data = channel.photo_url.split(',')[1]
                 photo_bytes = base64.b64decode(b64_data)
 
-                # Кэшируем
+                # Кэшируем с TTL
                 if len(_photo_cache) < _PHOTO_CACHE_MAX:
-                    _photo_cache[username] = photo_bytes
+                    _photo_cache[username] = (photo_bytes, time.time())
 
                 return Response(content=photo_bytes, media_type="image/jpeg")
             except Exception:
@@ -1169,9 +1185,9 @@ async def get_channel_photo(username: str):
 
             photo_bytes = photo_resp.content
 
-            # Кэшируем
+            # Кэшируем с TTL
             if len(_photo_cache) < _PHOTO_CACHE_MAX:
-                _photo_cache[username] = photo_bytes
+                _photo_cache[username] = (photo_bytes, time.time())
 
             return Response(content=photo_bytes, media_type="image/jpeg")
 
@@ -1252,9 +1268,12 @@ async def get_channels(
         FROM channels {where_clause}
     """
 
-    # Add sorting and pagination
-    query += f" ORDER BY {sort_by} {'DESC' if sort_order == 'desc' else 'ASC'}"
-    query += f" LIMIT ? OFFSET ?"
+    # Add sorting and pagination (whitelist approach to prevent SQL injection)
+    ALLOWED_SORT_COLUMNS = {"score", "members", "scanned_at", "trust_factor"}
+    safe_sort_by = sort_by if sort_by in ALLOWED_SORT_COLUMNS else "score"
+    safe_sort_order = "DESC" if sort_order == "desc" else "ASC"
+    query += f" ORDER BY {safe_sort_by} {safe_sort_order}"
+    query += " LIMIT ? OFFSET ?"
     params.extend([page_size, (page - 1) * page_size])
 
     cursor = db.conn.execute(query, params)
