@@ -666,7 +666,7 @@ def calculate_trust_factor(
     # 7. HOLLOW VIEWS - V47.4 "No-Mercy Edition"
     # Reach > 300% = Презумпция Виновности
     # Алиби 1: forward_rate > 3.0% (виральность через репосты)
-    # Алиби 2: avg_comments > порог AND comment_trust > 70 (живая дискуссия)
+    # Алиби 2: avg_comments > порог AND comment_trust >= 70 (живая дискуссия)
     # Реакции НЕ спасают (накручиваются за 5 секунд)
     HOLLOW_THRESHOLD = 300  # Унифицированный порог для всех размеров
 
@@ -683,7 +683,7 @@ def calculate_trust_factor(
             comments_threshold = 2.0
         else:
             comments_threshold = 5.0
-        has_comments_alibi = avg_comments > comments_threshold and comment_trust > 70
+        has_comments_alibi = avg_comments > comments_threshold and comment_trust >= 70
 
         if not has_virality_alibi and not has_comments_alibi:
             multipliers.append(0.6)

@@ -70,7 +70,7 @@ class FraudConvictionSystem:
         F1: Reach слишком высокий для размера канала (вес 30).
         v47.4: "No-Mercy Edition" — алиби снимают обвинение:
         - Алиби 1: forward_rate > 3.0% (виральность через репосты)
-        - Алиби 2: avg_comments > 5 AND comment_trust > 70 (живая дискуссия)
+        - Алиби 2: avg_comments > 5 AND comment_trust >= 70 (живая дискуссия)
         """
         size = self.get_size_category()
         threshold = self.REACH_THRESHOLDS[size]
@@ -87,7 +87,7 @@ class FraudConvictionSystem:
             'medium': 2.0,  # 100 комментов
             'large': 5.0    # 250 комментов
         }.get(size, 5.0)
-        has_comments_alibi = avg_comments > comments_threshold and self.comment_trust > 70
+        has_comments_alibi = avg_comments > comments_threshold and self.comment_trust >= 70
 
         # Если есть алиби — reach не считается подозрительным
         if has_virality_alibi or has_comments_alibi:
