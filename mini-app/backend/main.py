@@ -120,6 +120,7 @@ class Recommendation(BaseModel):
 
 class ChannelSummary(BaseModel):
     username: str
+    title: Optional[str] = None  # v58.2: Название канала
     score: int
     verdict: str
     trust_factor: float
@@ -818,6 +819,22 @@ def format_breakdown_for_ui(breakdown_data: dict, llm_analysis: dict = None) -> 
                         value = f"{int(days / 30)} мес."
                     else:
                         value = f"{int(days)} дн."
+                elif metric_key == 'reaction_stability':
+                    # v58.2: CV (коэф. вариации) - чем ниже, тем стабильнее
+                    # Не показываем числовое значение (257.8% вводит в заблуждение)
+                    cv = raw_value if isinstance(raw_value, (int, float)) else 0
+                    if cv < 0.5:
+                        value = 'высокая'
+                    elif cv < 1.0:
+                        value = 'средняя'
+                    else:
+                        value = 'низкая'
+                elif metric_key == 'premium':
+                    # v58.2: premium_ratio показываем как процент аудитории
+                    if isinstance(raw_value, (int, float)) and raw_value > 0:
+                        value = f"{raw_value:.1f}%"
+                    else:
+                        value = '0%'
                 elif isinstance(raw_value, float):
                     value = f"{raw_value:.1f}%"
 
@@ -1448,10 +1465,11 @@ async def get_channels(
     total = safe_int(cursor.fetchone()[0], 0)
 
     # Main query - v34.0: добавлен breakdown_json для is_verified
+    # v58.2: добавлен title для отображения названия канала
     query = f"""
         SELECT username, score, verdict, trust_factor, members,
                category, category_secondary, scanned_at, photo_url, category_percent,
-               breakdown_json
+               breakdown_json, title
         FROM channels {where_clause}
     """
 
@@ -1500,6 +1518,7 @@ async def get_channels(
 
         channels.append(ChannelSummary(
             username=str(row[0]) if row[0] else "",
+            title=str(row[11]) if row[11] else None,  # v58.2
             score=score,
             verdict=str(row[2]) if row[2] else "",
             trust_factor=trust_factor,

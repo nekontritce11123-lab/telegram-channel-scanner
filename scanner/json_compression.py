@@ -71,13 +71,20 @@ def _get_max_values() -> dict:
         for category, metrics in RAW_WEIGHTS.items():
             if isinstance(metrics, dict):
                 result.update(metrics)
+        # v58.2: Add aliases for long names used in breakdown
+        if 'stability' in result:
+            result['reaction_stability'] = result['stability']
+        if 'source' in result:
+            result['source_diversity'] = result['source']
         return result
     except ImportError:
         # Fallback if import fails (e.g., circular import)
         return {
             'cv_views': 15, 'reach': 7, 'views_decay': 5, 'forward_rate': 13,
-            'comments': 15, 'reaction_rate': 15, 'er_variation': 5, 'stability': 5,
-            'verified': 0, 'age': 7, 'premium': 7, 'source': 6,
+            'comments': 15, 'reaction_rate': 15, 'er_variation': 5,
+            'stability': 5, 'reaction_stability': 5,  # v58.2: both aliases
+            'verified': 0, 'age': 7, 'premium': 7,
+            'source': 6, 'source_diversity': 6,  # v58.2: both aliases
         }
 
 
@@ -175,6 +182,12 @@ def decompress_breakdown(compressed: dict) -> dict:
         # Restore long key
         long_key = BREAKDOWN_KEYS_REV.get(key, key)
 
+        # v58.2: Handle legacy bug where private_links was saved as 'pr' (collision with premium)
+        # Detect by checking if dict has private_ratio key
+        if key == 'pr' and isinstance(data, dict) and 'private_ratio' in data:
+            result['private_links'] = data
+            continue
+
         if isinstance(data, list) and len(data) == 2:
             # Compressed metric: [value, points] -> {value, points, max}
             value, points = data
@@ -186,7 +199,7 @@ def decompress_breakdown(compressed: dict) -> dict:
                 'max': max_val,
             }
         else:
-            # Non-standard data
+            # Non-standard data (posting_frequency dict, er dict, etc.)
             result[long_key] = data
 
     return result

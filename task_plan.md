@@ -1,119 +1,300 @@
-# Task Plan: v52.0 Complete Metrics Display + Compact Header
+# Task Plan: v59.0 Desktop Adaptation + Swap Quality/Reputation
 
 ## Goal
-1. **Уменьшить верхнее меню** - Score Card, Flags, Stats Row занимают слишком много места
-2. **Показать ВСЕ метрики** - включая Trust Factor penalties (сейчас скрыты в v51.3)
+Сделать UI хорошо выглядящим на ПК (сейчас мелко) и поменять местами блоки Качество/Репутация.
 
-## Current State (v51.5)
-- Score Card: два крупных блока (Score + Trust)
-- Flags: 3 чипа на всю ширину
-- Stats Row: 3 карточки (Цена, Подписчики, ER)
-- Trust Penalties: **СКРЫТЫ** (line 948: "REMOVED per user feedback")
-- Info Metrics: ad_load, regularity, er_trend — показаны как info
+## Current Phase
+Phase 1
 
-## Target State (v52.0)
-- Score Card: **компактнее** (меньше padding, меньше шрифты)
-- Flags: **в одну строку, меньше**
-- Stats Row: **компактнее**
-- Trust Penalties: **ПОКАЗАТЬ** новую секцию под метриками
-- Все метрики видны
+## Проблема
+
+### Текущее состояние:
+- **clamp()** ограничивает размеры: `clamp(15px, 2.5vw, 17px)` → на ПК max 17px (мелко!)
+- **Только 3 media queries** на 600px — минимальные изменения
+- **Нет desktop breakpoint** (768px, 1024px)
+- **Порядок блоков**: Quality → Engagement → Reputation
+
+### Что нужно:
+1. На ПК (>768px) увеличить шрифты, отступы, элементы
+2. Центрировать контент с max-width (не растягивать на весь экран)
+3. Поменять порядок: **Reputation → Engagement → Quality**
 
 ---
 
 ## Phases
 
-### Phase 1: Compact Score Card ⬜
-**Status:** pending
-**File:** App.module.css
-**Changes:**
-- Уменьшить scoreValue: 36px → 28px
-- Уменьшить padding: 16px → 10px
-- Уменьшить scoreBadge: 12px → 10px
-- Gap между блоками: 8px → 6px
+### Phase 1: Analysis ✅
+- [x] Найти все media queries → только 3 на 600px
+- [x] Найти CSS переменные → clamp() с маленькими max значениями
+- [x] Найти порядок блоков → lines 807-861 в App.tsx
+- **Status:** complete
 
-### Phase 2: Compact Flags ⬜
-**Status:** pending
-**File:** App.module.css
-**Changes:**
-- Уменьшить flagItem padding: 8px → 6px
-- Уменьшить иконки: 16px → 14px
-- Уменьшить шрифт: 12px → 11px
-- Убрать flagsSectionTitle или сделать меньше
+### Phase 2: CSS Desktop Variables
+- [ ] Добавить @media (min-width: 768px) для :root
+- [ ] Увеличить --font-* переменные на 30-50%
+- [ ] Увеличить --spacing-* переменные
+- **Status:** pending
 
-### Phase 3: Compact Stats Row ⬜
-**Status:** pending
-**File:** App.module.css
-**Changes:**
-- Уменьшить statCard padding
-- Уменьшить шрифты statValue, statLabel
-- Gap: 8px → 6px
+### Phase 3: CSS Desktop Layout
+- [ ] Добавить max-width: 600px для .app на desktop
+- [ ] Центрировать контейнер с margin: 0 auto
+- [ ] Добавить боковые границы для визуального отделения
+- **Status:** pending
 
-### Phase 4: Add Trust Penalties Section ⬜
-**Status:** pending
-**File:** App.tsx
-**Changes:**
-- Добавить новую секцию после metricsGrid
-- Показать selectedChannel.trust_penalties (если есть)
-- Формат: список штрафов с множителем и причиной
+### Phase 4: CSS Desktop Components
+- [ ] Увеличить карточки каналов (avatar, score circle)
+- [ ] Увеличить шапку детальной страницы (avatar, title)
+- [ ] Увеличить спидометр
+- [ ] Увеличить метрики и цены
+- **Status:** pending
 
-```tsx
-{/* Trust Penalties */}
-{selectedChannel.trust_penalties && selectedChannel.trust_penalties.length > 0 && (
-  <div className={styles.trustPenaltiesSection}>
-    <div className={styles.trustPenaltiesTitle}>Штрафы доверия</div>
-    {selectedChannel.trust_penalties.map((penalty, i) => (
-      <div key={i} className={styles.trustPenaltyItem}>
-        <span className={styles.penaltyName}>{penalty.name}</span>
-        <span className={styles.penaltyMult}>×{penalty.multiplier}</span>
-      </div>
-    ))}
-  </div>
-)}
-```
+### Phase 5: TSX - Swap Blocks
+- [ ] Поменять порядок блоков Quality ↔ Reputation
+- **Status:** pending
 
-### Phase 5: CSS for Trust Penalties ⬜
-**Status:** pending
-**File:** App.module.css
-**Changes:**
-- trustPenaltiesSection: background, border-radius
-- trustPenaltiesTitle: small header
-- trustPenaltyItem: flex row, justify-between
-- penaltyMult: red/orange color
-
-### Phase 6: Backend - ensure trust_penalties returned ⬜
-**Status:** pending
-**File:** mini-app/backend/server.py
-**Changes:**
-- Проверить что trust_penalties передаётся в API response
-- Формат: `[{name: str, multiplier: float, reason: str}]`
-
-### Phase 7: Test & Deploy ⬜
-**Status:** pending
+### Phase 6: Build & Test
+- [ ] npm run build
+- [ ] Проверить на мобильном (DevTools)
+- [ ] Проверить на desktop
+- [ ] Deploy frontend
+- **Status:** pending
 
 ---
 
-## Trust Penalties List (from scorer.py)
+## Детальный план CSS изменений
 
-| Penalty | Mult | Condition |
-|---------|------|-----------|
-| ID Clustering FATALITY | ×0.0 | >30% соседних ID |
-| ID Clustering Suspicious | ×0.5 | >15% соседних ID |
-| Geo/DC Mismatch | ×0.2 | >75% foreign DC |
-| Ghost Channel | ×0.5 | >20K members, <0.1% online |
-| Zombie Audience | ×0.7 | >5K members, <0.3% online |
-| Hollow Views | ×0.6 | Высокие просмотры без реакций |
-| Zombie Engagement | ×0.7 | Reach >50% + Reaction <0.1% |
-| Bot Wall | ×0.6 | Decay 0.98-1.02 (плоские просмотры) |
-| Budget Cliff | ×0.6 | Decay <0.2 (обрыв просмотров) |
-| Satellite | ×0.8 | Source share >50% + avg_comments <1 |
-| Ad Load Spam | ×0.4 | >50% рекламы |
-| Hidden Comments | ×0.85 | Комментарии скрыты |
-| Private Links | ×0.85 | Много приватных ссылок |
-| Low Posting | ×0.9 | Редкий постинг |
+### 1. Desktop Variables Override (после :root)
+
+```css
+@media (min-width: 768px) {
+  :root {
+    /* Desktop: увеличенные шрифты (+50%) */
+    --font-title: 36px;
+    --font-body: 20px;
+    --font-secondary: 17px;
+    --font-meta: 15px;
+
+    /* Desktop: увеличенные отступы (+50%) */
+    --spacing-xs: 10px;
+    --spacing-sm: 14px;
+    --spacing-md: 22px;
+    --spacing-lg: 32px;
+    --spacing-xl: 40px;
+
+    /* Desktop: увеличенные радиусы */
+    --radius-sm: 12px;
+    --radius-md: 16px;
+    --radius-lg: 24px;
+  }
+}
+```
+
+### 2. App Container (max-width)
+
+```css
+@media (min-width: 768px) {
+  .app {
+    max-width: 540px;
+    margin: 0 auto;
+    border-left: 1px solid rgba(255,255,255,0.08);
+    border-right: 1px solid rgba(255,255,255,0.08);
+    min-height: 100vh;
+  }
+}
+```
+
+### 3. Channel Cards
+
+```css
+@media (min-width: 768px) {
+  .channelCard {
+    padding: 20px;
+  }
+
+  .cardAvatar {
+    width: 60px;
+    height: 60px;
+  }
+
+  .cardName {
+    font-size: 20px;
+  }
+
+  .scoreCircle {
+    width: 60px;
+    height: 60px;
+  }
+
+  .scoreNumber {
+    font-size: 22px;
+  }
+}
+```
+
+### 4. Detail Page Header
+
+```css
+@media (min-width: 768px) {
+  .channelHeader {
+    padding: 28px 20px;
+  }
+
+  .headerAvatar {
+    width: 88px;
+    height: 88px;
+  }
+
+  .headerTitle {
+    font-size: 28px;
+  }
+
+  .headerUsername {
+    font-size: 17px;
+  }
+}
+```
+
+### 5. Speedometer
+
+```css
+@media (min-width: 768px) {
+  .speedometerContainer {
+    padding: 28px;
+  }
+
+  .speedometer {
+    width: 220px;
+    height: 220px;
+  }
+
+  .speedometerScore {
+    font-size: 48px;
+  }
+
+  .speedometerLabel {
+    font-size: 17px;
+  }
+}
+```
+
+### 6. Metrics Grid
+
+```css
+@media (min-width: 768px) {
+  .metricsGrid {
+    gap: 16px;
+  }
+
+  .metricsBlock {
+    padding: 16px;
+  }
+
+  .metricsBlockTitle {
+    font-size: 15px;
+  }
+
+  .metricRow {
+    padding: 12px 0;
+  }
+
+  .metricLabel {
+    font-size: 16px;
+  }
+
+  .metricValue {
+    font-size: 16px;
+  }
+
+  .metricBar {
+    height: 10px;
+  }
+}
+```
+
+### 7. Price Card
+
+```css
+@media (min-width: 768px) {
+  .priceCard {
+    padding: 24px;
+  }
+
+  .priceMain {
+    font-size: 36px;
+  }
+
+  .priceLabel {
+    font-size: 15px;
+  }
+}
+```
+
+---
+
+## TSX Change: Swap Blocks
+
+**Файл:** `mini-app/frontend/src/App.tsx`
+**Строки:** 806-870
+
+**Текущий порядок:**
+1. Quality Block (line 807)
+2. Engagement Block (line 831)
+3. Reputation Block (line 847)
+
+**Новый порядок:**
+1. Reputation Block ← ПЕРВЫЙ
+2. Engagement Block
+3. Quality Block ← ПОСЛЕДНИЙ
+
+Просто вырезать блок Reputation и вставить перед Quality.
+
+---
+
+## Files to Modify
+
+| # | File | Changes |
+|---|------|---------|
+| 1 | mini-app/frontend/src/App.module.css | Desktop media queries (~100 lines) |
+| 2 | mini-app/frontend/src/App.tsx | Swap blocks (~20 lines move) |
+
+---
+
+## Verification
+
+```bash
+# 1. Build
+cd mini-app/frontend && npm run build
+
+# 2. Local test
+npm run dev
+# DevTools → Toggle device → iPhone → должно выглядеть как раньше
+# Full window desktop → должно быть крупнее, центрировано
+
+# 3. Deploy
+cd ../deploy && python deploy_frontend.py
+
+# 4. Live test
+# Open https://ads.factchain-traker.online on:
+# - Phone → без изменений
+# - Desktop → крупнее, центрировано
+```
+
+---
+
+## Decisions Made
+
+| Decision | Rationale |
+|----------|-----------|
+| Breakpoint 768px | Стандартный порог tablet/desktop |
+| max-width: 540px | Немного меньше 600px для визуального комфорта |
+| Font increase +50% | Заметно крупнее, но не гигантское |
+| Spacing increase +50% | Пропорционально шрифтам |
+| Border subtle | Визуально отделить контент от фона |
 
 ---
 
 ## Errors Encountered
+
 | Error | Attempt | Resolution |
 |-------|---------|------------|
 | - | - | - |

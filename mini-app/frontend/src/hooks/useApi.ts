@@ -11,6 +11,7 @@ export interface Recommendation {
 
 export interface Channel {
   username: string
+  title?: string  // v58.2: Название канала (отображается вместо username)
   score: number
   verdict: string
   trust_factor: number

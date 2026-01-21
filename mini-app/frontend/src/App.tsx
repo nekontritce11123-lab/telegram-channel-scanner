@@ -519,7 +519,6 @@ function App() {
   const [showWatchlistSheet, setShowWatchlistSheet] = useState(false)  // v55.0: Watchlist sheet
 
   // v58.0: Scan on Demand UI state
-  const [scanProgress, setScanProgress] = useState(0)
   const [toast, setToast] = useState<{type: 'success' | 'error', text: string} | null>(null)
 
   const gridRef = useRef<HTMLDivElement>(null)
@@ -603,21 +602,18 @@ function App() {
     if (!query) return
 
     hapticMedium()
-    setScanProgress(0)
 
     // First try to get from DB
     const result = await scanChannel(query)
 
     if (result) {
       // Found in DB - show channel detail
-      setScanProgress(100)
       return
     }
 
     // Not found in DB - submit to queue
     const queueResult = await submitRequest(query)
     if (queueResult?.success) {
-      setScanProgress(100)
       showToast('success', `@${query} добавлен в очередь`)
     } else {
       showToast('error', queueResult?.message || 'Ошибка добавления')
@@ -638,17 +634,6 @@ function App() {
       handleSearch()
     }
   }, [handleSearch])
-
-  // v58.0: Progress simulation for scan/submit
-  useEffect(() => {
-    if (!scanning && !submitting) {
-      return
-    }
-    const interval = setInterval(() => {
-      setScanProgress(p => p < 90 ? p + (90 - p) * 0.08 : p)
-    }, 400)
-    return () => clearInterval(interval)
-  }, [scanning, submitting])
 
   // Infinite scroll
   const handleScroll = useCallback(() => {
@@ -817,24 +802,24 @@ function App() {
           )}
 
           {/* v51.0: Metrics Grid - всегда показываем если есть данные */}
+          {/* v59.0: Порядок изменён: Репутация → Вовлечённость → Качество */}
           {breakdown ? (
             <div className={styles.metricsGrid}>
-              {/* Quality Block */}
+              {/* v59.0: Reputation Block - ПЕРВЫЙ */}
               <div className={styles.metricsBlock}>
                 <div className={styles.metricsBlockHeader}>
-                  <span className={styles.metricsBlockTitle}>Качество</span>
-                  <span className={styles.metricsBlockScore}>{breakdown.quality.total}/{breakdown.quality.max}</span>
+                  <span className={styles.metricsBlockTitle}>Репутация</span>
+                  <span className={styles.metricsBlockScore}>{breakdown.reputation.total}/{breakdown.reputation.max}</span>
                 </div>
-                {breakdown.quality.items && Object.entries(breakdown.quality.items).map(([key, item]) => (
+                {breakdown.reputation.items && Object.entries(breakdown.reputation.items).map(([key, item]) => (
                   <MetricItem
                     key={key}
                     item={item}
                     onClick={() => setSelectedMetric(key)}
                   />
                 ))}
-                {/* v25.0: Info Metrics (ad_load, activity) */}
-                {/* v39.0: ad_load теперь интегрирует LLM ad_percentage (если есть) — показывает "(AI)" в label */}
-                {breakdown.quality.info_metrics && Object.entries(breakdown.quality.info_metrics).map(([key, item]) => (
+                {/* v25.0: Info Metrics (private_links) */}
+                {breakdown.reputation.info_metrics && Object.entries(breakdown.reputation.info_metrics).map(([key, item]) => (
                   <MetricItem
                     key={key}
                     item={item as { score: number; max: number; label: string; disabled?: boolean; value?: string; status?: 'good' | 'warning' | 'bad' }}
@@ -859,21 +844,22 @@ function App() {
                 ))}
               </div>
 
-              {/* v12.1: Reputation Block */}
+              {/* v59.0: Quality Block - ПОСЛЕДНИЙ */}
               <div className={styles.metricsBlock}>
                 <div className={styles.metricsBlockHeader}>
-                  <span className={styles.metricsBlockTitle}>Репутация</span>
-                  <span className={styles.metricsBlockScore}>{breakdown.reputation.total}/{breakdown.reputation.max}</span>
+                  <span className={styles.metricsBlockTitle}>Качество</span>
+                  <span className={styles.metricsBlockScore}>{breakdown.quality.total}/{breakdown.quality.max}</span>
                 </div>
-                {breakdown.reputation.items && Object.entries(breakdown.reputation.items).map(([key, item]) => (
+                {breakdown.quality.items && Object.entries(breakdown.quality.items).map(([key, item]) => (
                   <MetricItem
                     key={key}
                     item={item}
                     onClick={() => setSelectedMetric(key)}
                   />
                 ))}
-                {/* v25.0: Info Metrics (private_links) */}
-                {breakdown.reputation.info_metrics && Object.entries(breakdown.reputation.info_metrics).map(([key, item]) => (
+                {/* v25.0: Info Metrics (ad_load, activity) */}
+                {/* v39.0: ad_load теперь интегрирует LLM ad_percentage (если есть) — показывает "(AI)" в label */}
+                {breakdown.quality.info_metrics && Object.entries(breakdown.quality.info_metrics).map(([key, item]) => (
                   <MetricItem
                     key={key}
                     item={item as { score: number; max: number; label: string; disabled?: boolean; value?: string; status?: 'good' | 'warning' | 'bad' }}
@@ -1025,17 +1011,6 @@ function App() {
             )}
           </button>
         </div>
-        {/* v58.0: Scan Progress Bar */}
-        {(scanning || submitting) && (
-          <div className={styles.scanProgress}>
-            <div className={styles.scanProgressFill} style={{ width: `${scanProgress}%` }} />
-            <span className={styles.scanProgressText}>
-              {submitting ? 'Добавление в очередь...' :
-               scanProgress < 50 ? 'Поиск в базе...' :
-               'Загрузка данных...'}
-            </span>
-          </div>
-        )}
       </div>
 
       {/* v9.0: UNIFIED Filter Bottom Sheet with categories */}
@@ -1197,7 +1172,7 @@ function App() {
                       {/* Name + Category в одной строке */}
                       <div className={styles.cardNameLine}>
                         <span className={styles.cardName}>
-                          {channel.username.charAt(0).toUpperCase() + channel.username.slice(1).replace(/_/g, ' ')}
+                          {channel.title || (channel.username.charAt(0).toUpperCase() + channel.username.slice(1).replace(/_/g, ' '))}
                         </span>
                         {channel.category && (
                           <span className={styles.categoryBadge}>

@@ -54,6 +54,32 @@
 }
 
 /* ============================================
+   v59.0 DESKTOP ADAPTATION
+   На ПК (>768px) увеличиваем размеры на 50%
+   ============================================ */
+@media (min-width: 768px) {
+  :root {
+    /* Desktop: увеличенные шрифты */
+    --font-title: 36px;
+    --font-body: 20px;
+    --font-secondary: 17px;
+    --font-meta: 15px;
+
+    /* Desktop: увеличенные отступы */
+    --spacing-xs: 10px;
+    --spacing-sm: 14px;
+    --spacing-md: 22px;
+    --spacing-lg: 32px;
+    --spacing-xl: 40px;
+
+    /* Desktop: увеличенные радиусы */
+    --radius-sm: 12px;
+    --radius-md: 16px;
+    --radius-lg: 24px;
+  }
+}
+
+/* ============================================
    2. APP CONTAINER - NO BOTTOM TABS!
    ============================================ */
 .app {
@@ -63,6 +89,17 @@
   background-color: var(--bg-color);
   /* v6.0: No bottom tabs = no padding-bottom! */
   padding-bottom: var(--safe-bottom);
+}
+
+/* v59.0: Desktop - центрированный контейнер */
+@media (min-width: 768px) {
+  .app {
+    max-width: 540px;
+    margin: 0 auto;
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    min-height: 100vh;
+  }
 }
 
 /* ============================================
@@ -4606,4 +4643,186 @@
 
 .watchlistSheetRemove:active {
   opacity: 1;
+}
+
+/* ============================================
+   v59.0 DESKTOP COMPONENT OVERRIDES
+   ============================================ */
+@media (min-width: 768px) {
+  /* Channel Cards */
+  .channelCard {
+    padding: 20px;
+  }
+
+  .cardAvatar {
+    width: 60px;
+    height: 60px;
+  }
+
+  .cardName {
+    font-size: 20px;
+  }
+
+  .cardMeta {
+    font-size: 15px;
+  }
+
+  .scoreCircle {
+    width: 60px;
+    height: 60px;
+  }
+
+  .scoreNumber {
+    font-size: 22px;
+  }
+
+  /* Detail Page Header */
+  .channelHeader {
+    padding: 28px 20px;
+  }
+
+  .headerAvatar {
+    width: 88px;
+    height: 88px;
+  }
+
+  .headerTitle {
+    font-size: 28px;
+  }
+
+  .headerUsername {
+    font-size: 17px;
+  }
+
+  /* Speedometer */
+  .speedometerContainer {
+    padding: 28px;
+  }
+
+  .speedometer {
+    width: 220px;
+    height: 220px;
+  }
+
+  .speedometerScore {
+    font-size: 48px;
+  }
+
+  .speedometerLabel {
+    font-size: 17px;
+  }
+
+  /* Stats Row */
+  .statsRow {
+    gap: 16px;
+    padding: 0 20px;
+  }
+
+  .statCard {
+    padding: 16px;
+  }
+
+  .statValue {
+    font-size: 20px;
+  }
+
+  .statLabel {
+    font-size: 14px;
+  }
+
+  /* Metrics Grid */
+  .metricsGrid {
+    gap: 16px;
+    padding: 0 20px;
+  }
+
+  .metricsBlock {
+    padding: 16px;
+  }
+
+  .metricsBlockTitle {
+    font-size: 16px;
+  }
+
+  .metricsBlockScore {
+    font-size: 15px;
+  }
+
+  .metricRow {
+    padding: 12px 0;
+  }
+
+  .metricLabel {
+    font-size: 16px;
+  }
+
+  .metricValue {
+    font-size: 16px;
+  }
+
+  .metricBar {
+    height: 10px;
+  }
+
+  /* Price Card */
+  .priceCard {
+    padding: 24px;
+    margin: 20px;
+  }
+
+  .priceMain {
+    font-size: 36px;
+  }
+
+  .priceLabel {
+    font-size: 16px;
+  }
+
+  .priceRange {
+    font-size: 15px;
+  }
+
+  /* Search Bar */
+  .searchBar {
+    height: 48px;
+  }
+
+  .searchInput {
+    font-size: 18px;
+  }
+
+  /* Filter button */
+  .filtersButtonNew {
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  /* Category badges */
+  .categoryBadge {
+    font-size: 13px;
+    padding: 5px 10px;
+  }
+
+  /* Back button */
+  .backButton {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* Recommendations */
+  .recommendationItem {
+    padding: 16px;
+    font-size: 16px;
+  }
+
+  /* Trust penalties */
+  .trustPenaltiesSection {
+    padding: 20px;
+    margin: 20px;
+  }
+
+  .trustPenaltyItem {
+    padding: 14px 0;
+    font-size: 16px;
+  }
 }
