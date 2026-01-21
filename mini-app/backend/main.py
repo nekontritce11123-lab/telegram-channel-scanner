@@ -20,8 +20,18 @@ from pydantic import BaseModel
 from typing import Optional, List
 from dotenv import load_dotenv
 
-# Добавляем путь к scanner
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Добавляем путь к scanner (на сервере: /root/reklamshik/)
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(backend_dir)  # mini-app -> project root
+sys.path.insert(0, backend_dir)
+sys.path.insert(0, project_root)
+
+# v58.0: Импорт декомпрессии для breakdown
+try:
+    from scanner.json_compression import decompress_breakdown
+except ImportError:
+    # Fallback если scanner не найден (legacy)
+    decompress_breakdown = lambda x: x
 
 load_dotenv()
 
@@ -1586,8 +1596,12 @@ async def get_channel(username: str):
 
     # v23.0: Если есть реальный breakdown - форматируем его для UI
     # v39.0: Передаём LLM данные для интеграции в метрики
+    # v58.0: Декомпрессия сжатых ключей (cv -> cv_views, etc.)
     # Иначе используем estimate_breakdown() как fallback
     if real_breakdown_data and real_breakdown_data.get('breakdown'):
+        # v58.0: Декомпрессируем сжатый breakdown
+        decompressed = decompress_breakdown(real_breakdown_data.get('breakdown', {}))
+        real_breakdown_data['breakdown'] = decompressed
         breakdown = format_breakdown_for_ui(real_breakdown_data, raw_llm_analysis)
         breakdown_source = "database"
     else:
