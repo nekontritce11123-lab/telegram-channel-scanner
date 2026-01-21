@@ -454,8 +454,10 @@ async def _get_users_from_reactions(
         # FloodWait всегда пробрасываем наверх
         raise
     except RPCError as e:
-        # Ошибки Telegram API - логируем, но не прерываем
-        logger.warning(f"GetMessageReactionsList RPC error: {e}")
+        # v47.1: BROADCAST_FORBIDDEN — ожидаемо для broadcast-каналов, молча пропускаем
+        # Telegram запрещает GetMessageReactionsList для защиты анонимности реагировавших
+        if "BROADCAST_FORBIDDEN" not in str(e):
+            logger.warning(f"GetMessageReactionsList RPC error: {e}")
 
     return users
 
@@ -534,6 +536,17 @@ async def smart_scan_safe(client: Client, channel: str, max_retries: int = 3) ->
                 comments_data={},
                 users=[],
                 channel_health={'status': 'error', 'reason': f'RPC: {e}'}
+            )
+
+        except (OSError, ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
+            # v47.1: Сетевые ошибки (обрыв TCP, таймаут соединения)
+            logger.warning(f"Network error for {channel}: {type(e).__name__}")
+            return ScanResult(
+                chat=None,
+                messages=[],
+                comments_data={},
+                users=[],
+                channel_health={'status': 'error', 'reason': f'Network: {type(e).__name__}'}
             )
 
     # Все попытки исчерпаны
