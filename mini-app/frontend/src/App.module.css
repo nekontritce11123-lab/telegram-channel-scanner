@@ -930,43 +930,43 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* v12.3: Redesigned header buttons */
+/* v59.3: Back button - icon style matching watchlistBtn */
 .backButton {
-  min-height: 36px;
-  padding: 0 var(--spacing-sm);
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
   background: transparent;
-  border: none;
-  color: var(--hint-color);
-  font-size: var(--font-secondary);
-  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-sm);
+  color: var(--text-color);
   cursor: pointer;
-  transition: color 150ms, opacity 150ms;
+  transition: all 150ms;
 }
 
 .backButton:hover {
-  color: var(--text-color);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 .backButton:active {
-  opacity: 0.7;
+  transform: scale(0.95);
 }
 
+/* v59.3: Open link - icon style matching watchlistBtn */
 .openLink {
-  min-height: 32px;
-  padding: 0 var(--spacing-md);
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
   background: transparent;
   color: var(--text-color);
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: var(--radius-sm);
-  font-size: var(--font-secondary);
-  font-weight: 500;
   text-decoration: none;
+  cursor: pointer;
   transition: all 150ms;
 }
 
@@ -976,7 +976,7 @@
 }
 
 .openLink:active {
-  transform: scale(0.97);
+  transform: scale(0.95);
 }
 
 .detailContent {
@@ -4816,8 +4816,10 @@
     padding: 5px 10px;
   }
 
-  /* Back button */
-  .backButton {
+  /* v59.3: Header buttons - consistent size on desktop */
+  .backButton,
+  .watchlistBtn,
+  .openLink {
     width: 44px;
     height: 44px;
   }

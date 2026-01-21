@@ -710,10 +710,12 @@ function App() {
   if (selectedChannel) {
     return (
       <div className={styles.detailPage}>
-        {/* Header */}
+        {/* Header - v59.3: Icon buttons */}
         <header className={styles.detailHeader}>
-          <button className={styles.backButton} onClick={closeChannelDetail}>
-            ← Назад
+          <button className={styles.backButton} onClick={closeChannelDetail} title="Назад">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
           </button>
           <div className={styles.headerActions}>
             {/* v49.0: Watchlist toggle button */}
@@ -727,6 +729,7 @@ function App() {
                   addToWatchlist(selectedChannel)
                 }
               }}
+              title="В избранное"
             >
               <svg viewBox="0 0 24 24" fill={isInWatchlist(selectedChannel.username) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
                 <path d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"/>
@@ -737,8 +740,11 @@ function App() {
               target="_blank"
               rel="noopener noreferrer"
               className={styles.openLink}
+              title="Открыть в Telegram"
             >
-              Открыть →
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/>
+              </svg>
             </a>
           </div>
         </header>
@@ -751,7 +757,7 @@ function App() {
               <Avatar username={selectedChannel.username} size={48} />
               <div className={styles.unifiedInfo}>
                 <div className={styles.unifiedNameRow}>
-                  <span className={styles.unifiedName}>{formatChannelName(selectedChannel.username)}</span>
+                  <span className={styles.unifiedName}>{selectedChannel.title || formatChannelName(selectedChannel.username)}</span>
                   {selectedChannel.category && (
                     <span className={styles.categoryBadge}>
                       <span className={styles.categoryIcon}>{getCategoryIcon(selectedChannel.category)}</span>
@@ -994,22 +1000,6 @@ function App() {
               <span className={styles.watchlistBadge}>{watchlist.length}</span>
             )}
           </button>
-          {/* v58.0: Scan Button */}
-          <button
-            className={`${styles.scanBtn} ${(scanning || submitting) ? styles.scanning : ''}`}
-            onClick={handleSearch}
-            disabled={!searchQuery.trim() || scanning || submitting}
-            title="Сканировать канал"
-          >
-            {(scanning || submitting) ? (
-              <div className={styles.scanBtnSpinner} />
-            ) : (
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M2 12c0-3.771 0-5.657 1.172-6.828C4.343 4 6.229 4 10 4h4c3.771 0 5.657 0 6.828 1.172C22 6.343 22 8.229 22 12c0 3.771 0 5.657-1.172 6.828C19.657 20 17.771 20 14 20h-4c-3.771 0-5.657 0-6.828-1.172C2 17.657 2 15.771 2 12Z"/>
-                <path d="M17 8V5M7 8V5M7 19v-3M17 19v-3M5 9h1M5 12h1M5 15h1M18 9h1M18 12h1M18 15h1"/>
-              </svg>
-            )}
-          </button>
         </div>
       </div>
 
@@ -1189,11 +1179,12 @@ function App() {
                         {channel.scanned_at && ` • ${formatRelativeDate(channel.scanned_at)}`}
                       </span>
                     </div>
-                    {/* v34.0: Score Ring с verified badge и SCAM badge */}
+                    {/* v59.3: Score Ring small - синхронизирован с детальной страницей */}
                     <ScoreRing
                       score={channel.score}
                       verdict={channel.verdict}
                       verified={channel.is_verified}
+                      small
                     />
                   </div>
                 </button>

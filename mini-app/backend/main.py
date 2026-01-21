@@ -1559,23 +1559,24 @@ async def get_channel(username: str):
         raise HTTPException(status_code=400, detail="Invalid username format")
 
     # v23.0: Читаем breakdown_json из БД (если колонка существует)
+    # v59.3: Добавлен title
+    # v59.4: LOWER() для case-insensitive поиска (в БД могут быть mixed-case)
     # Используем try/except для совместимости с БД без колонки breakdown_json
     try:
-        # v56.1: Убрали LOWER() - username уже lowercase (line 1526), в БД тоже хранится в lowercase
         cursor = db.conn.execute("""
             SELECT username, score, verdict, trust_factor, members,
                    category, category_secondary, scanned_at, status,
-                   photo_url, breakdown_json
+                   photo_url, breakdown_json, title
             FROM channels
-            WHERE username = ?
+            WHERE LOWER(username) = ?
         """, (username,))
     except Exception:
-        # Fallback для старых БД без колонки breakdown_json
+        # Fallback для старых БД без колонки breakdown_json/title
         cursor = db.conn.execute("""
             SELECT username, score, verdict, trust_factor, members,
                    category, category_secondary, scanned_at, status
             FROM channels
-            WHERE username = ?
+            WHERE LOWER(username) = ?
         """, (username,))
 
     row = cursor.fetchone()
@@ -1590,8 +1591,10 @@ async def get_channel(username: str):
     category = row[5]
 
     # v23.0: Пытаемся получить реальный breakdown из БД
+    # v59.3: Добавлен title
     breakdown_json_str = row[10] if len(row) > 10 else None
     photo_url = row[9] if len(row) > 9 else None
+    title = row[11] if len(row) > 11 else None
 
     # Парсим breakdown_json или используем fallback
     real_breakdown_data = None
@@ -1689,6 +1692,7 @@ async def get_channel(username: str):
 
     return {
         "username": str(row[0]) if row[0] else "",
+        "title": title,  # v59.3: название канала
         "score": score,
         "verdict": verdict,
         "trust_factor": trust_factor,
@@ -1915,14 +1919,16 @@ async def create_scan_request(request: ScanRequestCreate):
     if not USERNAME_REGEX.match(username):
         return ScanRequestResponse(success=False, message="Invalid username format")
 
-    # Проверяем не отсканирован ли уже канал (с баллами > 0)
+    # v59.4: Проверяем не отсканирован ли уже канал (с баллами > 0)
+    # LOWER() для case-insensitive поиска
     cursor = db.conn.cursor()
     cursor.execute(
-        "SELECT score, status FROM channels WHERE username = ?",
+        "SELECT score, status FROM channels WHERE LOWER(username) = ?",
         (username,)
     )
     existing = cursor.fetchone()
-    if existing and existing[0] > 0 and existing[1] in ('GOOD', 'BAD'):
+    # v59.4: Защита от None — score может быть NULL в БД
+    if existing and existing[0] is not None and existing[0] > 0 and existing[1] in ('GOOD', 'BAD'):
         return ScanRequestResponse(
             success=True,
             request_id=0,
