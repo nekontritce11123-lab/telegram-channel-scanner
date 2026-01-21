@@ -6,8 +6,12 @@ Reklamshik API - FastAPI backend для Mini App.
 import os
 import sys
 import json
+import re
 import httpx
 from io import BytesIO
+
+# v48.1: Regex для валидации Telegram username
+USERNAME_REGEX = re.compile(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$')
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response
@@ -1103,6 +1107,10 @@ async def get_channel_photo(username: str):
     Если бот не может получить фото — возвращает 404.
     """
     username = username.lower().lstrip('@')
+
+    # v48.1: Валидация username
+    if not USERNAME_REGEX.match(username):
+        raise HTTPException(status_code=400, detail="Invalid username format")
 
     # v48.0: Очищаем старые записи перед проверкой
     _cache_cleanup()
