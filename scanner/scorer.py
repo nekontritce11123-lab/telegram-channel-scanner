@@ -544,6 +544,8 @@ def calculate_trust_factor(
     decay_ratio: float = 0.7,
     # v15.2: Satellite Parameters
     avg_comments: float = 0,
+    # v47.4: Comment Trust из LLM анализа (0-100)
+    comment_trust: int = 0,
     # v15.0: New Penalties
     posting_data: dict = None,
     network_data: dict = None,
@@ -661,25 +663,34 @@ def calculate_trust_factor(
     # Детекция накрутки по математическим аномалиям
     # =========================================================================
 
-    # 7. HOLLOW VIEWS - Накрученные просмотры без активности
-    # v15.2: Адаптивные пороги по размеру канала
-    # v23.0: использует SIZE_THRESHOLDS из config.py
-    # Маленькие каналы могут иметь высокий reach если растут (аудитория с YouTube и т.д.)
-    if members < SIZE_THRESHOLDS['micro'] * 2.5:  # < 500
-        hollow_threshold = 400   # Микроканалы — мягче
-    elif members < SIZE_THRESHOLDS['small'] * 2:  # < 2000
-        hollow_threshold = 300   # Маленькие — средне
-    elif members < SIZE_THRESHOLDS['medium'] * 2:  # < 10000
-        hollow_threshold = 225   # Средние — строже
-    else:
-        hollow_threshold = 200   # Большие — очень строго
+    # 7. HOLLOW VIEWS - V47.4 "No-Mercy Edition"
+    # Reach > 300% = Презумпция Виновности
+    # Алиби 1: forward_rate > 3.0% (виральность через репосты)
+    # Алиби 2: avg_comments > порог AND comment_trust > 80 (живая дискуссия)
+    # Реакции НЕ спасают (накручиваются за 5 секунд)
+    HOLLOW_THRESHOLD = 300  # Унифицированный порог для всех размеров
 
-    if reach > hollow_threshold and forward_rate < 0.5:
-        multipliers.append(0.6)
-        details['hollow_views'] = {
-            'multiplier': 0.6,
-            'reason': f'Reach {reach:.0f}% > {hollow_threshold}% при Forward {forward_rate:.2f}%'
-        }
+    if reach > HOLLOW_THRESHOLD:
+        # Алиби 1: Виральность через репосты
+        has_virality_alibi = forward_rate > 3.0
+
+        # Алиби 2: Живая дискуссия (адаптивный порог по размеру)
+        if members < SIZE_THRESHOLDS['micro']:  # < 200
+            comments_threshold = 0.5
+        elif members < SIZE_THRESHOLDS['small']:  # < 1000
+            comments_threshold = 1.0
+        elif members < SIZE_THRESHOLDS['medium']:  # < 5000
+            comments_threshold = 2.0
+        else:
+            comments_threshold = 5.0
+        has_comments_alibi = avg_comments > comments_threshold and comment_trust > 80
+
+        if not has_virality_alibi and not has_comments_alibi:
+            multipliers.append(0.6)
+            details['hollow_views'] = {
+                'multiplier': 0.6,
+                'reason': f'Reach {reach:.0f}% > 300% без алиби (forward {forward_rate:.1f}%, comments {avg_comments:.1f}, trust {comment_trust})'
+            }
 
     # 8. ZOMBIE ENGAGEMENT - Высокий охват, никто не реагирует
     # Reach >50% + Reaction <0.1% = боты смотрят, но не ставят реакции
@@ -1056,7 +1067,9 @@ def calculate_final_score(
     scoring_mode = adaptive_weights['mode']
 
     # ===== SCAM CHECK =====
-    is_scam, scam_reason, conviction_details, is_insufficient_data = check_instant_scam(chat, messages, comments_data)
+    # v47.4: Передаём comment_trust для алиби в impossible_reach
+    comment_trust = llm_result.comments.trust_score if llm_result and llm_result.comments else 0
+    is_scam, scam_reason, conviction_details, is_insufficient_data = check_instant_scam(chat, messages, comments_data, comment_trust)
 
     # v37.2: Новые/маленькие каналы получают NEW_CHANNEL вместо SCAM
     if is_insufficient_data:
@@ -1413,6 +1426,8 @@ def calculate_final_score(
         decay_ratio=decay_ratio,
         # v15.2: Satellite Parameters
         avg_comments=comments_data.get('avg_comments', 0),
+        # v47.4: Comment Trust из LLM анализа (переменная вычислена выше)
+        comment_trust=comment_trust,
         # v15.0: New Penalties
         posting_data=posting_data,
         network_data=network_data,

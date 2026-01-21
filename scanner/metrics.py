@@ -40,15 +40,21 @@ class FraudConvictionSystem:
         'large': 130     # > 5000
     }
 
-    def __init__(self, chat: Any, messages: list, comments_data: dict = None):
+    def __init__(self, chat: Any, messages: list, comments_data: dict = None, comment_trust: int = 0):
         self.chat = chat
         self.messages = messages
         self.comments_data = comments_data or {'enabled': False, 'avg_comments': 0}
+        self.comment_trust = comment_trust  # v47.4: Trust score из LLM (0-100)
         self.members = getattr(chat, 'members_count', 0) or 1
         self.factors: list[FraudFactor] = []
 
         self.views = [m.views for m in messages if hasattr(m, 'views') and m.views]
         self.avg_views = sum(self.views) / len(self.views) if self.views else 0
+
+        # v47.4: Вычисляем forward_rate для алиби
+        total_forwards = sum(m.forwards or 0 for m in messages if hasattr(m, 'forwards'))
+        total_views = sum(m.views or 0 for m in messages if hasattr(m, 'views'))
+        self.forward_rate = (total_forwards / total_views * 100) if total_views > 0 else 0
 
     def get_size_category(self) -> str:
         if self.members < 200:
@@ -60,10 +66,40 @@ class FraudConvictionSystem:
         return 'large'
 
     def check_f1_impossible_reach(self) -> FraudFactor:
-        """F1: Reach слишком высокий для размера канала (вес 30)."""
+        """
+        F1: Reach слишком высокий для размера канала (вес 30).
+        v47.4: "No-Mercy Edition" — алиби снимают обвинение:
+        - Алиби 1: forward_rate > 3.0% (виральность через репосты)
+        - Алиби 2: avg_comments > 5 AND comment_trust > 80 (живая дискуссия)
+        """
         size = self.get_size_category()
         threshold = self.REACH_THRESHOLDS[size]
         reach = (self.avg_views / self.members) * 100 if self.members > 0 else 0
+
+        # v47.4: Проверяем алиби
+        avg_comments = self.comments_data.get('avg_comments', 0)
+        has_virality_alibi = self.forward_rate > 3.0
+
+        # Адаптивный порог для комментариев (микро-каналы могут иметь меньше)
+        comments_threshold = {
+            'micro': 0.5,   # 25 комментов на 50 постов
+            'small': 1.0,   # 50 комментов
+            'medium': 2.0,  # 100 комментов
+            'large': 5.0    # 250 комментов
+        }.get(size, 5.0)
+        has_comments_alibi = avg_comments > comments_threshold and self.comment_trust > 80
+
+        # Если есть алиби — reach не считается подозрительным
+        if has_virality_alibi or has_comments_alibi:
+            alibi_type = "virality" if has_virality_alibi else "comments"
+            return FraudFactor(
+                name='impossible_reach',
+                weight=0,
+                triggered=False,
+                value=round(reach, 1),
+                threshold=threshold,
+                description=f"Reach {reach:.1f}% > {threshold}%, но есть алиби ({alibi_type})"
+            )
 
         triggered = reach > threshold
         # Экстремальный reach получает больше веса
@@ -629,12 +665,13 @@ class FraudConvictionSystem:
         }
 
 
-def check_instant_scam(chat: Any, messages: list, comments_data: dict = None) -> tuple[bool, str, dict, bool]:
+def check_instant_scam(chat: Any, messages: list, comments_data: dict = None, comment_trust: int = 0) -> tuple[bool, str, dict, bool]:
     """
     Проверяет накрутку через систему совокупных факторов.
     Возвращает (is_scam, reason, conviction_details, is_insufficient_data).
 
     v37.2: Добавлен флаг is_insufficient_data для отличия новых каналов от скама.
+    v47.4: Добавлен comment_trust для алиби в F1 (impossible_reach).
     """
     # Минимальные требования для оценки (v37.2)
     MIN_POSTS = 10
@@ -672,7 +709,7 @@ def check_instant_scam(chat: Any, messages: list, comments_data: dict = None) ->
             'avg_comments': 0.0
         }
 
-    system = FraudConvictionSystem(chat, messages, comments_data)
+    system = FraudConvictionSystem(chat, messages, comments_data, comment_trust)
     result = system.calculate_conviction()
 
     return result['is_scam'], result['reason'], result, False
