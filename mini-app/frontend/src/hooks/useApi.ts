@@ -280,54 +280,42 @@ export function useScan() {
   const [result, setResult] = useState<ChannelDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isLiveScan, setIsLiveScan] = useState(false)
+  const [isLiveScan] = useState(false)  // v59.5: Always false, no more live scan
 
-  const scanChannel = useCallback(async (username: string, forceLive = false) => {
+  // v59.5: Only check database, no live scan
+  // Live scan was creating incomplete records (no title, no LLM, no category)
+  // Now channels must go through queue for full processing
+  const scanChannel = useCallback(async (username: string) => {
     setLoading(true)
     setError(null)
     setResult(null)
-    setIsLiveScan(false)
 
     try {
-      // v49.0: Сначала пробуем получить из базы (если не forceLive)
-      if (!forceLive) {
-        try {
-          const data = await fetchAPI<ChannelDetail>(`/api/channels/${username}`)
-          setResult(data)
-          return data
-        } catch {
-          // Не в базе — пробуем live scan
-        }
+      // Only check database - if not found, return null (will be queued)
+      const data = await fetchAPI<ChannelDetail>(`/api/channels/${username}`)
+
+      // v59.5: Only return if fully processed (has score > 0 and status GOOD/BAD)
+      if (data.score > 0 && (data.status === 'GOOD' || data.status === 'BAD')) {
+        setResult(data)
+        return data
       }
 
-      // v49.0: Live scan через новый endpoint
-      setIsLiveScan(true)
-      const scanData = await fetchAPI<ScanResponse>('/api/scan', {
-        method: 'POST',
-        body: JSON.stringify({ username }),
-      })
-
-      if (!scanData.success) {
-        throw new Error(scanData.error || 'Scan failed')
-      }
-
-      setResult(scanData.channel || null)
-      return scanData.channel
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка сканирования')
+      // Channel exists but not fully processed - treat as not found
+      return null
+    } catch {
+      // Not in database - return null (will be queued by caller)
       return null
     } finally {
       setLoading(false)
-      setIsLiveScan(false)
     }
   }, [])
 
   const reset = useCallback(() => {
     setResult(null)
     setError(null)
-    setIsLiveScan(false)
   }, [])
 
+  // v59.5: isLiveScan always false (kept for API compatibility)
   return { result, loading, error, isLiveScan, scanChannel, reset }
 }
 
