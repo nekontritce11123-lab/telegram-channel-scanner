@@ -1201,8 +1201,9 @@ async def get_channel_photo(username: str):
 
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching photo: {str(e)}")
+    except Exception:
+        # v48.2: Не раскрываем детали ошибки (information disclosure)
+        raise HTTPException(status_code=500, detail="Internal error")
 
 
 @app.get("/api/health")
@@ -1355,6 +1356,10 @@ async def get_channel(username: str):
     Поддержка Info Metrics (ad_load, regularity, posting_frequency, private_links).
     """
     username = username.lower().lstrip("@")
+
+    # v48.2: Валидация username (консистентность с get_channel_photo)
+    if not USERNAME_REGEX.match(username):
+        raise HTTPException(status_code=400, detail="Invalid username format")
 
     # v23.0: Читаем breakdown_json из БД (если колонка существует)
     # Используем try/except для совместимости с БД без колонки breakdown_json
