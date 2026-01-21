@@ -2870,8 +2870,8 @@
 .statsRow {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-md);
+  gap: 8px;
+  padding: 0 0 16px;
 }
 
 .statCard {
@@ -2880,10 +2880,10 @@
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: var(--spacing-md);
+  padding: 12px 8px;
   background: var(--section-bg);
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .statLabel {
@@ -2985,22 +2985,31 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.metricsBlockTitle {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: var(--spacing-sm);
+/* v50.0: Metrics Block Header - clean style without icons */
+.metricsBlockHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.metricsBlockTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-color);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .metricsBlockScore {
-  font-size: 12px;
-  color: var(--text-color);
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb, 33, 150, 243), 0.15);
+  padding: 2px 8px;
+  border-radius: 4px;
 }
 
 /* Metric Item with progress bar */
@@ -3028,6 +3037,9 @@
 .metricItemValue {
   font-size: 13px;
   color: var(--hint-color);
+  min-width: 42px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .metricBar {
@@ -3116,6 +3128,290 @@
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+/* ============================================
+   v50.0: TRUST PENALTIES SECTION
+   ============================================ */
+
+.penaltiesSection {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: rgba(255, 59, 48, 0.08);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 59, 48, 0.2);
+}
+
+.penaltiesTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #FF6B6B;
+  margin-bottom: 12px;
+}
+
+.penaltyItem {
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.penaltyItem:last-child {
+  margin-bottom: 0;
+}
+
+.penaltyHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.penaltyName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.penaltyMult {
+  font-size: 12px;
+  font-weight: 600;
+  color: #FF6B6B;
+  background: rgba(255, 59, 48, 0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.penaltyDesc {
+  font-size: 12px;
+  color: var(--hint-color);
+  line-height: 1.4;
+}
+
+/* ============================================
+   v51.0: CHANNEL DETAIL REDESIGN
+   ============================================ */
+
+/* Hero Section - Avatar + Name */
+.heroSection {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 0 12px;
+}
+
+.heroInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+/* v51.5: Name + Category badge on same row */
+.heroNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.heroSection .heroName {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.heroMeta {
+  font-size: 13px;
+  color: var(--hint-color);
+  margin-top: 2px;
+}
+
+/* Score Card - два блока рядом */
+.scoreCard {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 12px;
+}
+
+.scoreBlock,
+.trustBlock {
+  flex: 1;
+  background: var(--section-bg);
+  border-radius: 10px;
+  padding: 14px 12px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.scoreValue {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--text-color);
+  line-height: 1;
+}
+
+.scoreLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hint-color);
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+
+.scoreBadge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.scoreBadge.verdict_excellent {
+  background: rgba(52, 199, 89, 0.15);
+  color: #34C759;
+}
+
+.scoreBadge.verdict_good {
+  background: rgba(52, 199, 89, 0.15);
+  color: #34C759;
+}
+
+.scoreBadge.verdict_medium {
+  background: rgba(255, 149, 0, 0.15);
+  color: #FF9500;
+}
+
+.scoreBadge.verdict_high_risk {
+  background: rgba(255, 59, 48, 0.15);
+  color: #FF3B30;
+}
+
+.scoreBadge.verdict_scam {
+  background: rgba(255, 59, 48, 0.15);
+  color: #FF3B30;
+}
+
+.trustValue {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--text-color);
+  line-height: 1;
+}
+
+.trustLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hint-color);
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+
+.trustWarning {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 8px;
+  background: rgba(255, 59, 48, 0.15);
+  color: #FF3B30;
+}
+
+.trustOk {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 8px;
+  background: rgba(52, 199, 89, 0.15);
+  color: #34C759;
+}
+
+/* Channel Flags Section */
+.flagsSection {
+  padding: 0 0 12px;
+}
+
+.flagsSectionTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hint-color);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.flagsGrid {
+  display: flex;
+  gap: 8px;
+}
+
+.flagItem {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 4px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.flagItem svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.flagItem span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.flagActive {
+  background: rgba(52, 199, 89, 0.1);
+  color: #34C759;
+  border-color: rgba(52, 199, 89, 0.25);
+}
+
+.flagInactive {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--hint-color);
+}
+
+/* SCAM Banner */
+.scamBanner {
+  margin: 0 16px 16px;
+  padding: 16px;
+  background: rgba(255, 59, 48, 0.1);
+  border: 1px solid rgba(255, 59, 48, 0.3);
+  border-radius: 12px;
+}
+
+.scamTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: #FF3B30;
+  margin-bottom: 4px;
+}
+
+.scamDesc {
+  font-size: 13px;
+  color: var(--hint-color);
+  line-height: 1.4;
 }
 
 /* v12.1: Recommendations Section */
@@ -3389,4 +3685,262 @@
   color: var(--verdict-high-risk);
   border-radius: var(--radius-sm);
   font-size: var(--font-meta);
+}
+
+/* ============================================
+   v49.0: HISTORY, WATCHLIST, PROFILE PAGES
+   ============================================ */
+
+/* Page Header */
+.pageHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing-md);
+}
+
+.pageTitle {
+  font-size: var(--font-title);
+  font-weight: 600;
+  color: var(--text-color);
+  margin: 0;
+}
+
+.pageCount {
+  padding: 4px 10px;
+  background: var(--section-bg);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-meta);
+  color: var(--hint-color);
+}
+
+.clearBtn {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-sm);
+  color: var(--hint-color);
+  font-size: var(--font-secondary);
+  cursor: pointer;
+  transition: all 150ms;
+}
+
+.clearBtn:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Empty State */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.emptyIcon {
+  font-size: 48px;
+  margin-bottom: var(--spacing-md);
+  opacity: 0.5;
+}
+
+.emptyTitle {
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text-color);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.emptyText {
+  font-size: var(--font-secondary);
+  color: var(--hint-color);
+  margin: 0;
+}
+
+/* Watchlist Item with Remove Button */
+.watchlistItem {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.watchlistItem .channelCardNew {
+  flex: 1;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.removeBtn {
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 59, 48, 0.1);
+  border: none;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--verdict-scam);
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.removeBtn:active {
+  background: rgba(255, 59, 48, 0.2);
+}
+
+.removeBtn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ============================================
+   v49.0: PROFILE PAGE
+   ============================================ */
+
+.profileSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+}
+
+.profileCard {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+}
+
+.profileAvatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--button-color);
+  color: var(--button-text-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.profileInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.profileName {
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.profileUsername {
+  font-size: var(--font-secondary);
+  color: var(--hint-color);
+  margin-top: 2px;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-sm);
+}
+
+.statItem {
+  padding: var(--spacing-md);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.statItem .statValue {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-color);
+}
+
+.statItem .statLabel {
+  display: block;
+  font-size: var(--font-meta);
+  color: var(--hint-color);
+  margin-top: 4px;
+}
+
+.appInfoSection {
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.infoRow {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--spacing-md);
+  font-size: var(--font-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.infoRow:last-child {
+  border-bottom: none;
+}
+
+.infoRow span:first-child {
+  color: var(--hint-color);
+}
+
+.infoRow span:last-child {
+  color: var(--text-color);
+}
+
+/* ============================================
+   v49.0: WATCHLIST BUTTON IN DETAIL VIEW
+   ============================================ */
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.watchlistBtn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-sm);
+  color: var(--hint-color);
+  cursor: pointer;
+  transition: all 150ms;
+}
+
+.watchlistBtn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.watchlistBtn.active {
+  background: var(--button-color);
+  border-color: var(--button-color);
+  color: var(--button-text-color);
+}
+
+.watchlistBtn:active {
+  transform: scale(0.95);
+}
+
+/* ============================================
+   v49.0: LIVE SCAN INDICATOR
+   ============================================ */
+
+.scanningIndicator {
+  font-size: var(--font-meta);
+  color: var(--accent);
+  animation: pulse 1s infinite;
 }

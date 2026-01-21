@@ -153,6 +153,17 @@ class CategoryStatsResponse(BaseModel):
     uncategorized: int
 
 
+# v49.0: Live Scan models
+class ScanRequest(BaseModel):
+    username: str
+
+
+class ScanResponse(BaseModel):
+    success: bool
+    channel: Optional[dict] = None
+    error: Optional[str] = None
+
+
 # Глобальные переменные
 db = None
 
@@ -1545,6 +1556,122 @@ async def get_category_stats():
         total_categorized=total_categorized,
         uncategorized=uncategorized,
     )
+
+
+# ============================================================================
+# v49.0: LIVE SCAN ENDPOINT
+# ============================================================================
+
+@app.post("/api/scan", response_model=ScanResponse)
+async def live_scan_channel(request: ScanRequest):
+    """
+    v49.0: Live scan канала через scanner.
+
+    Сканирует канал в реальном времени через Pyrogram.
+    Время выполнения: 10-30 секунд.
+    """
+    username = request.username.lower().lstrip('@')
+
+    # v48.1: Валидация username
+    if not USERNAME_REGEX.match(username):
+        return ScanResponse(success=False, error="Invalid username format")
+
+    try:
+        # Импортируем scanner модуль
+        from scanner.client import smart_scan_safe, get_client
+        from scanner.scorer import calculate_final_score
+
+        # Получаем Pyrogram клиент
+        client = get_client()
+        if not client.is_connected:
+            await client.start()
+
+        # Сканируем канал
+        scan_result = await smart_scan_safe(client, username)
+
+        if scan_result.chat is None:
+            error_reason = scan_result.channel_health.get("reason", "Channel not found")
+            return ScanResponse(success=False, error=error_reason)
+
+        # Рассчитываем score
+        result = calculate_final_score(
+            scan_result.chat,
+            scan_result.messages,
+            scan_result.comments_data,
+            scan_result.users,
+            scan_result.channel_health
+        )
+
+        score = result.get('score', 0)
+        verdict = result.get('verdict', 'UNKNOWN')
+        trust_factor = result.get('trust_factor', 1.0)
+        members = result.get('members', 0)
+        categories = result.get('categories', {})
+        breakdown = result.get('breakdown', {})
+        flags = result.get('flags', {})
+
+        # Формируем breakdown_json
+        breakdown_data = {
+            'breakdown': breakdown,
+            'categories': categories,
+            'flags': flags,
+        }
+        breakdown_json = json.dumps(breakdown_data, ensure_ascii=False)
+
+        # Сохраняем в БД (upsert)
+        from datetime import datetime
+        db.conn.execute("""
+            INSERT OR REPLACE INTO channels
+            (username, score, verdict, trust_factor, members,
+             status, scanned_at, breakdown_json)
+            VALUES (?, ?, ?, ?, ?, 'GOOD', datetime('now'), ?)
+        """, (username, score, verdict, trust_factor, members, breakdown_json))
+        db.conn.commit()
+
+        # Формируем ответ (как get_channel)
+        is_verified = flags.get('is_verified', False)
+
+        # Форматируем breakdown для UI
+        ui_breakdown = format_breakdown_for_ui(breakdown_data, None)
+
+        price_min, price_max = calculate_post_price(
+            None, members, trust_factor, score,
+            breakdown=ui_breakdown
+        )
+
+        recommendations = generate_recommendations(
+            score=score, verdict=verdict, trust_factor=trust_factor,
+            category=None, members=members,
+            cpm_min=price_min, cpm_max=price_max,
+            breakdown=ui_breakdown
+        )
+
+        channel_data = {
+            "username": username,
+            "score": score,
+            "verdict": verdict,
+            "trust_factor": trust_factor,
+            "members": members,
+            "category": None,
+            "category_secondary": None,
+            "category_percent": 100,
+            "scanned_at": datetime.now().isoformat(),
+            "cpm_min": price_min,
+            "cpm_max": price_max,
+            "recommendations": [r.dict() for r in recommendations],
+            "breakdown": ui_breakdown,
+            "trust_penalties": estimate_trust_penalties(trust_factor, score),
+            "is_verified": is_verified,
+            "source": "live_scan",
+        }
+
+        return ScanResponse(success=True, channel=channel_data)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        # v48.2: Не раскрываем детали ошибки
+        return ScanResponse(success=False, error="Scan failed")
 
 
 if __name__ == "__main__":

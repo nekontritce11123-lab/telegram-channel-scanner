@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 
 export const API_BASE = import.meta.env.VITE_API_BASE || 'https://ads-api.factchain-traker.online'
 
@@ -66,6 +66,10 @@ export interface Breakdown {
   quality: BreakdownCategory
   engagement: BreakdownCategory
   reputation: BreakdownCategory
+  // v51.0: Flags for channel features
+  comments_enabled?: boolean
+  reactions_enabled?: boolean
+  floating_weights?: boolean
 }
 
 // Legacy simple breakdown (for backwards compatibility)
@@ -145,6 +149,24 @@ export interface CategoryStatsResponse {
   categories: CategoryStat[]
   total_categorized: number
   uncategorized: number
+}
+
+// v49.0: Live Scan types
+export interface ScanResponse {
+  success: boolean
+  channel?: ChannelDetail
+  error?: string
+}
+
+// v49.0: History/Watchlist stored channel
+export interface StoredChannel {
+  username: string
+  score: number
+  verdict: string
+  members: number
+  category: string | null
+  viewedAt?: string  // For history
+  addedAt?: string   // For watchlist
 }
 
 export interface ChannelFilters {
@@ -257,29 +279,179 @@ export function useScan() {
   const [result, setResult] = useState<ChannelDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isLiveScan, setIsLiveScan] = useState(false)
 
-  const scanChannel = useCallback(async (username: string) => {
+  const scanChannel = useCallback(async (username: string, forceLive = false) => {
     setLoading(true)
     setError(null)
     setResult(null)
+    setIsLiveScan(false)
 
     try {
-      // Сначала пробуем получить из базы
-      const data = await fetchAPI<ChannelDetail>(`/api/channels/${username}`)
-      setResult(data)
-    } catch {
-      // Если нет в базе - пока показываем ошибку
-      // В будущем можно добавить live scan
-      setError('Канал не найден в базе')
+      // v49.0: Сначала пробуем получить из базы (если не forceLive)
+      if (!forceLive) {
+        try {
+          const data = await fetchAPI<ChannelDetail>(`/api/channels/${username}`)
+          setResult(data)
+          return data
+        } catch {
+          // Не в базе — пробуем live scan
+        }
+      }
+
+      // v49.0: Live scan через новый endpoint
+      setIsLiveScan(true)
+      const scanData = await fetchAPI<ScanResponse>('/api/scan', {
+        method: 'POST',
+        body: JSON.stringify({ username }),
+      })
+
+      if (!scanData.success) {
+        throw new Error(scanData.error || 'Scan failed')
+      }
+
+      setResult(scanData.channel || null)
+      return scanData.channel
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка сканирования')
+      return null
     } finally {
       setLoading(false)
+      setIsLiveScan(false)
     }
   }, [])
 
   const reset = useCallback(() => {
     setResult(null)
     setError(null)
+    setIsLiveScan(false)
   }, [])
 
-  return { result, loading, error, scanChannel, reset }
+  return { result, loading, error, isLiveScan, scanChannel, reset }
+}
+
+
+// ============================================================================
+// v49.0: HISTORY HOOK
+// ============================================================================
+
+const HISTORY_KEY = 'reklamshik_history'
+const MAX_HISTORY = 50
+
+export function useHistory() {
+  const [history, setHistory] = useState<StoredChannel[]>([])
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem(HISTORY_KEY)
+    if (stored) {
+      try {
+        setHistory(JSON.parse(stored))
+      } catch {
+        setHistory([])
+      }
+    }
+  }, [])
+
+  const addToHistory = useCallback((channel: Channel | ChannelDetail | StoredChannel) => {
+    setHistory(prev => {
+      // Remove if already exists (move to top)
+      const filtered = prev.filter(c => c.username !== channel.username)
+
+      const newItem: StoredChannel = {
+        username: channel.username,
+        score: channel.score,
+        verdict: channel.verdict,
+        members: channel.members,
+        category: channel.category,
+        viewedAt: new Date().toISOString(),
+      }
+
+      // Add to beginning, limit to MAX_HISTORY
+      const updated = [newItem, ...filtered].slice(0, MAX_HISTORY)
+
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(updated))
+      return updated
+    })
+  }, [])
+
+  const clearHistory = useCallback(() => {
+    localStorage.removeItem(HISTORY_KEY)
+    setHistory([])
+  }, [])
+
+  const removeFromHistory = useCallback((username: string) => {
+    setHistory(prev => {
+      const updated = prev.filter(c => c.username !== username)
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(updated))
+      return updated
+    })
+  }, [])
+
+  return { history, addToHistory, clearHistory, removeFromHistory }
+}
+
+
+// ============================================================================
+// v49.0: WATCHLIST HOOK
+// ============================================================================
+
+const WATCHLIST_KEY = 'reklamshik_watchlist'
+const MAX_WATCHLIST = 100
+
+export function useWatchlist() {
+  const [watchlist, setWatchlist] = useState<StoredChannel[]>([])
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem(WATCHLIST_KEY)
+    if (stored) {
+      try {
+        setWatchlist(JSON.parse(stored))
+      } catch {
+        setWatchlist([])
+      }
+    }
+  }, [])
+
+  const isInWatchlist = useCallback((username: string) => {
+    return watchlist.some(c => c.username === username)
+  }, [watchlist])
+
+  const addToWatchlist = useCallback((channel: Channel | ChannelDetail | StoredChannel) => {
+    setWatchlist(prev => {
+      // Don't add if already exists
+      if (prev.some(c => c.username === channel.username)) {
+        return prev
+      }
+
+      const newItem: StoredChannel = {
+        username: channel.username,
+        score: channel.score,
+        verdict: channel.verdict,
+        members: channel.members,
+        category: channel.category,
+        addedAt: new Date().toISOString(),
+      }
+
+      const updated = [newItem, ...prev].slice(0, MAX_WATCHLIST)
+      localStorage.setItem(WATCHLIST_KEY, JSON.stringify(updated))
+      return updated
+    })
+  }, [])
+
+  const removeFromWatchlist = useCallback((username: string) => {
+    setWatchlist(prev => {
+      const updated = prev.filter(c => c.username !== username)
+      localStorage.setItem(WATCHLIST_KEY, JSON.stringify(updated))
+      return updated
+    })
+  }, [])
+
+  const clearWatchlist = useCallback(() => {
+    localStorage.removeItem(WATCHLIST_KEY)
+    setWatchlist([])
+  }, [])
+
+  return { watchlist, isInWatchlist, addToWatchlist, removeFromWatchlist, clearWatchlist }
 }
