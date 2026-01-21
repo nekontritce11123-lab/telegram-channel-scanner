@@ -54,6 +54,37 @@ class ChannelRecord:
     content_json: str = None  # v22.0: Тексты постов для переклассификации
     scanned_at: datetime = None
     created_at: datetime = None
+    # v56.0: Полное хранение данных сканирования
+    raw_score: int = None
+    is_scam: bool = False
+    scam_reason: str = None
+    tier: str = None
+    trust_penalties_json: str = None
+    conviction_score: int = None
+    conviction_factors_json: str = None
+    forensics_json: str = None
+    online_count: int = None
+    participants_count: int = None
+    channel_age_days: int = None
+    avg_views: float = None
+    reach_percent: float = None
+    forward_rate: float = None
+    reaction_rate: float = None
+    avg_comments: float = None
+    comments_enabled: bool = True
+    reactions_enabled: bool = True
+    decay_ratio: float = None
+    decay_zone: str = None
+    er_trend: float = None
+    er_trend_status: str = None
+    ad_percentage: int = None
+    bot_percentage: int = None
+    comment_trust: int = None
+    safety_json: str = None
+    posts_raw_json: str = None
+    user_ids_json: str = None
+    linked_chat_id: int = None
+    linked_chat_title: str = None
 
 
 class CrawlerDB:
@@ -116,9 +147,22 @@ class CrawlerDB:
         # v22.0: Миграция - добавляем колонки для переклассификации
         self._migrate_v22_content_storage()
 
+        # v56.0: Миграция - полное хранение данных сканирования (30 новых колонок)
+        self._migrate_v56_full_data()
+
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category_secondary ON channels(category_secondary)')
+
+        # v57.0: Composite индексы для ускорения запросов
+        # get_next() + peek_next() — ORDER BY created_at WHERE status='WAITING'
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status_created ON channels(status, created_at)')
+        # API фильтрация — WHERE status IN (...) AND score >= X
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status_score ON channels(status, score)')
+        # Фильтрация с trust_factor
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status_score_trust ON channels(status, score, trust_factor)')
+        # Категории
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status_category ON channels(status, category)')
 
         self.conn.commit()
 
@@ -209,6 +253,61 @@ class CrawlerDB:
                     logger.debug(f"Migration v22.0 {col}: column already exists or table issue: {e}")
                 except sqlite3.Error as e:
                     logger.error(f"Migration v22.0 {col} failed: {e}")
+
+        self.conn.commit()
+
+    def _migrate_v56_full_data(self):
+        """v56.0: Полное хранение данных сканирования (30 новых колонок)."""
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(channels)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        new_columns = [
+            ('raw_score', 'INTEGER DEFAULT NULL'),
+            ('is_scam', 'INTEGER DEFAULT 0'),
+            ('scam_reason', 'TEXT DEFAULT NULL'),
+            ('tier', 'TEXT DEFAULT NULL'),
+            ('trust_penalties_json', 'TEXT DEFAULT NULL'),
+            ('conviction_score', 'INTEGER DEFAULT NULL'),
+            ('conviction_factors_json', 'TEXT DEFAULT NULL'),
+            ('forensics_json', 'TEXT DEFAULT NULL'),
+            ('online_count', 'INTEGER DEFAULT NULL'),
+            ('participants_count', 'INTEGER DEFAULT NULL'),
+            ('channel_age_days', 'INTEGER DEFAULT NULL'),
+            ('avg_views', 'REAL DEFAULT NULL'),
+            ('reach_percent', 'REAL DEFAULT NULL'),
+            ('forward_rate', 'REAL DEFAULT NULL'),
+            ('reaction_rate', 'REAL DEFAULT NULL'),
+            ('avg_comments', 'REAL DEFAULT NULL'),
+            ('comments_enabled', 'INTEGER DEFAULT 1'),
+            ('reactions_enabled', 'INTEGER DEFAULT 1'),
+            ('decay_ratio', 'REAL DEFAULT NULL'),
+            ('decay_zone', 'TEXT DEFAULT NULL'),
+            ('er_trend', 'REAL DEFAULT NULL'),
+            ('er_trend_status', 'TEXT DEFAULT NULL'),
+            ('ad_percentage', 'INTEGER DEFAULT NULL'),
+            ('bot_percentage', 'INTEGER DEFAULT NULL'),
+            ('comment_trust', 'INTEGER DEFAULT NULL'),
+            ('safety_json', 'TEXT DEFAULT NULL'),
+            ('posts_raw_json', 'TEXT DEFAULT NULL'),
+            ('user_ids_json', 'TEXT DEFAULT NULL'),
+            ('linked_chat_id', 'INTEGER DEFAULT NULL'),
+            ('linked_chat_title', 'TEXT DEFAULT NULL'),
+        ]
+
+        added = []
+        for col_name, col_def in new_columns:
+            if col_name not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE channels ADD COLUMN {col_name} {col_def}")
+                    added.append(col_name)
+                except sqlite3.OperationalError as e:
+                    logger.debug(f"Migration v56.0 {col_name}: column already exists or table issue: {e}")
+                except sqlite3.Error as e:
+                    logger.error(f"Migration v56.0 {col_name} failed: {e}")
+
+        if added:
+            print(f"Миграция v56.0: добавлено {len(added)} колонок: {', '.join(added[:5])}...")
 
         self.conn.commit()
 
@@ -333,10 +432,42 @@ class CrawlerDB:
         llm_analysis: dict = None,
         title: str = None,
         description: str = None,
-        content_json: str = None
+        content_json: str = None,
+        # v56.0: Новые поля для полного хранения данных
+        raw_score: int = None,
+        is_scam: bool = False,
+        scam_reason: str = None,
+        tier: str = None,
+        trust_penalties: list = None,
+        conviction_score: int = None,
+        conviction_factors: list = None,
+        forensics: dict = None,
+        online_count: int = None,
+        participants_count: int = None,
+        channel_age_days: int = None,
+        avg_views: float = None,
+        reach_percent: float = None,
+        forward_rate: float = None,
+        reaction_rate: float = None,
+        avg_comments: float = None,
+        comments_enabled: bool = True,
+        reactions_enabled: bool = True,
+        decay_ratio: float = None,
+        decay_zone: str = None,
+        er_trend: float = None,
+        er_trend_status: str = None,
+        ad_percentage: int = None,
+        bot_percentage: int = None,
+        comment_trust: int = None,
+        safety: dict = None,
+        posts_raw: list = None,
+        user_ids: list = None,
+        linked_chat_id: int = None,
+        linked_chat_title: str = None
     ) -> bool:
         """
         v43.0: Атомарно записывает результат ТОЛЬКО если канал в WAITING.
+        v56.0: Расширено для полного хранения данных сканирования.
 
         Реализует "всё или ничего" семантику:
         - Если канал в WAITING → записываем ВСЕ данные, возвращаем True
@@ -360,6 +491,14 @@ class CrawlerDB:
                 'llm_analysis': llm_analysis
             }, ensure_ascii=False)
 
+        # v56.0: Сериализуем новые JSON поля
+        trust_penalties_json = json.dumps(trust_penalties, ensure_ascii=False) if trust_penalties else None
+        conviction_factors_json = json.dumps(conviction_factors, ensure_ascii=False) if conviction_factors else None
+        forensics_json = json.dumps(forensics, ensure_ascii=False) if forensics else None
+        safety_json = json.dumps(safety, ensure_ascii=False) if safety else None
+        posts_raw_json = json.dumps(posts_raw, ensure_ascii=False) if posts_raw else None
+        user_ids_json = json.dumps(user_ids, ensure_ascii=False) if user_ids else None
+
         cursor = self.conn.cursor()
         # v43.1: Используем LOWER() для case-insensitive поиска
         # (в БД могут быть usernames с разным регистром из старых версий)
@@ -377,12 +516,51 @@ class CrawlerDB:
                 title = ?,
                 description = ?,
                 content_json = ?,
+                raw_score = ?,
+                is_scam = ?,
+                scam_reason = ?,
+                tier = ?,
+                trust_penalties_json = ?,
+                conviction_score = ?,
+                conviction_factors_json = ?,
+                forensics_json = ?,
+                online_count = ?,
+                participants_count = ?,
+                channel_age_days = ?,
+                avg_views = ?,
+                reach_percent = ?,
+                forward_rate = ?,
+                reaction_rate = ?,
+                avg_comments = ?,
+                comments_enabled = ?,
+                reactions_enabled = ?,
+                decay_ratio = ?,
+                decay_zone = ?,
+                er_trend = ?,
+                er_trend_status = ?,
+                ad_percentage = ?,
+                bot_percentage = ?,
+                comment_trust = ?,
+                safety_json = ?,
+                posts_raw_json = ?,
+                user_ids_json = ?,
+                linked_chat_id = ?,
+                linked_chat_title = ?,
                 scanned_at = datetime('now')
             WHERE LOWER(username) = ? AND status = 'WAITING'
             RETURNING username
         """, (status, score, verdict, trust_factor, members, ad_links_json,
               category, category_secondary, breakdown_json,
-              title, description, content_json, username))
+              title, description, content_json,
+              raw_score, 1 if is_scam else 0, scam_reason, tier,
+              trust_penalties_json, conviction_score, conviction_factors_json,
+              forensics_json, online_count, participants_count, channel_age_days,
+              avg_views, reach_percent, forward_rate, reaction_rate, avg_comments,
+              1 if comments_enabled else 0, 1 if reactions_enabled else 0,
+              decay_ratio, decay_zone, er_trend, er_trend_status,
+              ad_percentage, bot_percentage, comment_trust,
+              safety_json, posts_raw_json, user_ids_json,
+              linked_chat_id, linked_chat_title, username))
 
         row = cursor.fetchone()
         self.conn.commit()
@@ -428,10 +606,42 @@ class CrawlerDB:
         llm_analysis: dict = None,  # v38.0: LLM анализ (tier, brand_safety, etc.)
         title: str = None,  # v22.0: название канала
         description: str = None,  # v22.0: описание канала
-        content_json: str = None  # v22.0: тексты постов (JSON)
+        content_json: str = None,  # v22.0: тексты постов (JSON)
+        # v56.0: Новые поля для полного хранения данных
+        raw_score: int = None,
+        is_scam: bool = False,
+        scam_reason: str = None,
+        tier: str = None,
+        trust_penalties: list = None,
+        conviction_score: int = None,
+        conviction_factors: list = None,
+        forensics: dict = None,
+        online_count: int = None,
+        participants_count: int = None,
+        channel_age_days: int = None,
+        avg_views: float = None,
+        reach_percent: float = None,
+        forward_rate: float = None,
+        reaction_rate: float = None,
+        avg_comments: float = None,
+        comments_enabled: bool = True,
+        reactions_enabled: bool = True,
+        decay_ratio: float = None,
+        decay_zone: str = None,
+        er_trend: float = None,
+        er_trend_status: str = None,
+        ad_percentage: int = None,
+        bot_percentage: int = None,
+        comment_trust: int = None,
+        safety: dict = None,
+        posts_raw: list = None,
+        user_ids: list = None,
+        linked_chat_id: int = None,
+        linked_chat_title: str = None
     ):
         """
         Помечает канал как проверенный.
+        v56.0: Расширено для полного хранения данных сканирования.
 
         Args:
             status: GOOD, BAD, ERROR, PRIVATE
@@ -449,6 +659,36 @@ class CrawlerDB:
             title: v22.0 - название канала для переклассификации
             description: v22.0 - описание канала для переклассификации
             content_json: v22.0 - тексты постов (JSON) для переклассификации
+            raw_score: v56.0 - сырой score до применения trust_factor
+            is_scam: v56.0 - флаг SCAM
+            scam_reason: v56.0 - причина SCAM вердикта
+            tier: v56.0 - tier канала (от LLM)
+            trust_penalties: v56.0 - список примененных штрафов trust
+            conviction_score: v56.0 - score из FraudConvictionSystem
+            conviction_factors: v56.0 - факторы fraud conviction
+            forensics: v56.0 - результаты forensics анализа
+            online_count: v56.0 - число онлайн участников
+            participants_count: v56.0 - общее число участников
+            channel_age_days: v56.0 - возраст канала в днях
+            avg_views: v56.0 - среднее просмотров
+            reach_percent: v56.0 - процент охвата
+            forward_rate: v56.0 - процент пересылок
+            reaction_rate: v56.0 - процент реакций
+            avg_comments: v56.0 - среднее комментариев
+            comments_enabled: v56.0 - флаг включенных комментариев
+            reactions_enabled: v56.0 - флаг включенных реакций
+            decay_ratio: v56.0 - коэффициент затухания просмотров
+            decay_zone: v56.0 - зона затухания (ORGANIC/BOT_WALL/etc.)
+            er_trend: v56.0 - тренд engagement rate
+            er_trend_status: v56.0 - статус тренда (GROWING/STABLE/DECLINING)
+            ad_percentage: v56.0 - процент рекламы
+            bot_percentage: v56.0 - процент ботов
+            comment_trust: v56.0 - trust score комментариев
+            safety: v56.0 - brand safety данные
+            posts_raw: v56.0 - сырые данные постов
+            user_ids: v56.0 - IDs пользователей для forensics
+            linked_chat_id: v56.0 - ID связанного чата
+            linked_chat_title: v56.0 - название связанного чата
         """
         username = username.lower().lstrip('@')
         ad_links_json = json.dumps(ad_links or [])
@@ -462,9 +702,18 @@ class CrawlerDB:
                 'llm_analysis': llm_analysis  # v38.0
             }, ensure_ascii=False)
 
+        # v56.0: Сериализуем новые JSON поля
+        trust_penalties_json = json.dumps(trust_penalties, ensure_ascii=False) if trust_penalties else None
+        conviction_factors_json = json.dumps(conviction_factors, ensure_ascii=False) if conviction_factors else None
+        forensics_json = json.dumps(forensics, ensure_ascii=False) if forensics else None
+        safety_json = json.dumps(safety, ensure_ascii=False) if safety else None
+        posts_raw_json = json.dumps(posts_raw, ensure_ascii=False) if posts_raw else None
+        user_ids_json = json.dumps(user_ids, ensure_ascii=False) if user_ids else None
+
         cursor = self.conn.cursor()
         # v24.0: COALESCE чтобы не перезаписывать category/category_secondary если NULL
         # v22.0: photo_url больше не сохраняем, title/description/content_json добавлены
+        # v56.0: Добавлены 30 новых колонок для полного хранения данных
         cursor.execute('''
             UPDATE channels SET
                 status = ?,
@@ -479,11 +728,50 @@ class CrawlerDB:
                 title = ?,
                 description = ?,
                 content_json = ?,
+                raw_score = ?,
+                is_scam = ?,
+                scam_reason = ?,
+                tier = ?,
+                trust_penalties_json = ?,
+                conviction_score = ?,
+                conviction_factors_json = ?,
+                forensics_json = ?,
+                online_count = ?,
+                participants_count = ?,
+                channel_age_days = ?,
+                avg_views = ?,
+                reach_percent = ?,
+                forward_rate = ?,
+                reaction_rate = ?,
+                avg_comments = ?,
+                comments_enabled = ?,
+                reactions_enabled = ?,
+                decay_ratio = ?,
+                decay_zone = ?,
+                er_trend = ?,
+                er_trend_status = ?,
+                ad_percentage = ?,
+                bot_percentage = ?,
+                comment_trust = ?,
+                safety_json = ?,
+                posts_raw_json = ?,
+                user_ids_json = ?,
+                linked_chat_id = ?,
+                linked_chat_title = ?,
                 scanned_at = ?
             WHERE username = ?
         ''', (status, score, verdict, trust_factor, members, ad_links_json,
               category, category_secondary, breakdown_json,
-              title, description, content_json, datetime.now(), username))
+              title, description, content_json,
+              raw_score, 1 if is_scam else 0, scam_reason, tier,
+              trust_penalties_json, conviction_score, conviction_factors_json,
+              forensics_json, online_count, participants_count, channel_age_days,
+              avg_views, reach_percent, forward_rate, reaction_rate, avg_comments,
+              1 if comments_enabled else 0, 1 if reactions_enabled else 0,
+              decay_ratio, decay_zone, er_trend, er_trend_status,
+              ad_percentage, bot_percentage, comment_trust,
+              safety_json, posts_raw_json, user_ids_json,
+              linked_chat_id, linked_chat_title, datetime.now(), username))
         self.conn.commit()
 
     def set_category(self, username: str, category: str, category_secondary: str = None, percent: int = 100):
@@ -515,6 +803,11 @@ class CrawlerDB:
             return None
 
         keys = row.keys()
+
+        def get_col(name, default=None):
+            """Безопасно получает значение колонки."""
+            return row[name] if name in keys else default
+
         return ChannelRecord(
             username=row['username'],
             status=row['status'],
@@ -524,16 +817,47 @@ class CrawlerDB:
             members=row['members'],
             found_via=row['found_via'],
             ad_links=json.loads(row['ad_links']) if row['ad_links'] else [],
-            category=row['category'] if 'category' in keys else None,
-            category_secondary=row['category_secondary'] if 'category_secondary' in keys else None,
-            category_percent=row['category_percent'] if 'category_percent' in keys else 100,
-            photo_url=row['photo_url'] if 'photo_url' in keys else None,
-            breakdown_json=row['breakdown_json'] if 'breakdown_json' in keys else None,
-            title=row['title'] if 'title' in keys else None,  # v22.0
-            description=row['description'] if 'description' in keys else None,  # v22.0
-            content_json=row['content_json'] if 'content_json' in keys else None,  # v22.0
+            category=get_col('category'),
+            category_secondary=get_col('category_secondary'),
+            category_percent=get_col('category_percent', 100),
+            photo_url=get_col('photo_url'),
+            breakdown_json=get_col('breakdown_json'),
+            title=get_col('title'),  # v22.0
+            description=get_col('description'),  # v22.0
+            content_json=get_col('content_json'),  # v22.0
             scanned_at=row['scanned_at'],
-            created_at=row['created_at']
+            created_at=row['created_at'],
+            # v56.0: Новые поля для полного хранения данных
+            raw_score=get_col('raw_score'),
+            is_scam=bool(get_col('is_scam', 0)),
+            scam_reason=get_col('scam_reason'),
+            tier=get_col('tier'),
+            trust_penalties_json=get_col('trust_penalties_json'),
+            conviction_score=get_col('conviction_score'),
+            conviction_factors_json=get_col('conviction_factors_json'),
+            forensics_json=get_col('forensics_json'),
+            online_count=get_col('online_count'),
+            participants_count=get_col('participants_count'),
+            channel_age_days=get_col('channel_age_days'),
+            avg_views=get_col('avg_views'),
+            reach_percent=get_col('reach_percent'),
+            forward_rate=get_col('forward_rate'),
+            reaction_rate=get_col('reaction_rate'),
+            avg_comments=get_col('avg_comments'),
+            comments_enabled=bool(get_col('comments_enabled', 1)),
+            reactions_enabled=bool(get_col('reactions_enabled', 1)),
+            decay_ratio=get_col('decay_ratio'),
+            decay_zone=get_col('decay_zone'),
+            er_trend=get_col('er_trend'),
+            er_trend_status=get_col('er_trend_status'),
+            ad_percentage=get_col('ad_percentage'),
+            bot_percentage=get_col('bot_percentage'),
+            comment_trust=get_col('comment_trust'),
+            safety_json=get_col('safety_json'),
+            posts_raw_json=get_col('posts_raw_json'),
+            user_ids_json=get_col('user_ids_json'),
+            linked_chat_id=get_col('linked_chat_id'),
+            linked_chat_title=get_col('linked_chat_title'),
         )
 
     def get_stats(self) -> dict:
