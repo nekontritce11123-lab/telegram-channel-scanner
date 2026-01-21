@@ -959,6 +959,65 @@ def estimate_trust_penalties(trust_factor: float, score: int) -> list:
     return penalties
 
 
+# v52.2: Названия штрафов на русском
+PENALTY_NAMES = {
+    'id_clustering': 'Кластеризация ID',
+    'geo_dc': 'Географическое несоответствие',
+    'premium': 'Нет премиумов',
+    'hidden_comments': 'Скрытые комментарии',
+    'conviction': 'Подозрительные сигналы',
+    'hollow_views': 'Пустые просмотры',
+    'zombie_engagement': 'Мёртвая вовлечённость',
+    'satellite': 'Канал-сателлит',
+    'ghost_channel': 'Канал-призрак',
+    'zombie_audience': 'Зомби-аудитория',
+    'member_discrepancy': 'Несоответствие подписчиков',
+    'bot_wall': 'Bot Wall',
+    'budget_cliff': 'Обрыв бюджета',
+    'dying_engagement': 'Умирающая вовлечённость',
+    'posting_frequency': 'Частота постинга',
+    'private_links': 'Приватные ссылки',
+    'reaction_flatness': 'Плоские реакции',
+}
+
+
+def extract_trust_penalties_from_details(trust_details: dict) -> list:
+    """
+    v52.2: Конвертирует trust_details из scorer.py в формат trust_penalties для UI.
+
+    Args:
+        trust_details: dict вида {'penalty_key': {'multiplier': X, 'reason': '...'}, ...}
+
+    Returns:
+        list of {'name': str, 'multiplier': float, 'description': str}
+    """
+    if not trust_details:
+        return []
+
+    penalties = []
+    for key, details in trust_details.items():
+        if not isinstance(details, dict):
+            continue
+
+        multiplier = details.get('multiplier', 1.0)
+        if multiplier >= 1.0:
+            continue  # Не штраф
+
+        name = PENALTY_NAMES.get(key, key.replace('_', ' ').title())
+        reason = details.get('reason', '')
+
+        penalties.append({
+            'name': name,
+            'multiplier': multiplier,
+            'description': reason
+        })
+
+    # Сортируем по multiplier (самые серьёзные первые)
+    penalties.sort(key=lambda x: x['multiplier'])
+
+    return penalties
+
+
 def generate_recommendations(
     score: int,
     verdict: str,
@@ -979,9 +1038,13 @@ def generate_recommendations(
 
     # 2. Анализ breakdown — сильные стороны
     if breakdown:
-        quality_pct = (breakdown['quality']['total'] / breakdown['quality']['max']) * 100 if breakdown.get('quality') else 0
-        engagement_pct = (breakdown['engagement']['total'] / breakdown['engagement']['max']) * 100 if breakdown.get('engagement') else 0
-        reputation_pct = (breakdown['reputation']['total'] / breakdown['reputation']['max']) * 100 if breakdown.get('reputation') else 0
+        # v54.1: Защита от деления на 0
+        q = breakdown.get('quality', {})
+        e = breakdown.get('engagement', {})
+        r = breakdown.get('reputation', {})
+        quality_pct = (q['total'] / q['max']) * 100 if q.get('max', 0) > 0 else 0
+        engagement_pct = (e['total'] / e['max']) * 100 if e.get('max', 0) > 0 else 0
+        reputation_pct = (r['total'] / r['max']) * 100 if r.get('max', 0) > 0 else 0
 
         strengths = []
         if quality_pct >= 70:
@@ -1217,6 +1280,100 @@ async def get_channel_photo(username: str):
         raise HTTPException(status_code=500, detail="Internal error")
 
 
+# v54.0: Кэш фото пользователей
+_user_photo_cache: dict[int, tuple[bytes, float]] = {}
+
+
+@app.get("/api/user/photo/{user_id}")
+async def get_user_photo(user_id: int):
+    """
+    v54.0: Загружает аватарку пользователя из Telegram.
+
+    Использует getUserProfilePhotos API.
+    Фото кэшируются в памяти для быстрого доступа.
+    """
+    # Валидация user_id
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+
+    # Проверяем кэш
+    if user_id in _user_photo_cache:
+        photo_bytes, ts = _user_photo_cache[user_id]
+        if time.time() - ts < _PHOTO_CACHE_TTL:
+            return Response(content=photo_bytes, media_type="image/jpeg")
+
+    # Загружаем через Telegram Bot API
+    bot_token = os.getenv("BOT_TOKEN")
+    if not bot_token:
+        raise HTTPException(status_code=500, detail="BOT_TOKEN not configured")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # 1. Получаем список фото пользователя
+            photos_resp = await client.get(
+                f"https://api.telegram.org/bot{bot_token}/getUserProfilePhotos",
+                params={"user_id": user_id, "limit": 1},
+                timeout=10.0
+            )
+            photos_data = photos_resp.json()
+
+            if not photos_data.get("ok"):
+                raise HTTPException(status_code=404, detail="Cannot get user photos")
+
+            photos = photos_data.get("result", {}).get("photos", [])
+            if not photos:
+                raise HTTPException(status_code=404, detail="User has no photo")
+
+            # 2. Берём самое большое фото из первого набора
+            photo_sizes = photos[0]
+            if not photo_sizes:
+                raise HTTPException(status_code=404, detail="No photo sizes")
+
+            # Выбираем самое большое
+            big_photo = max(photo_sizes, key=lambda x: x.get("width", 0) * x.get("height", 0))
+            file_id = big_photo.get("file_id")
+
+            if not file_id:
+                raise HTTPException(status_code=404, detail="No file_id")
+
+            # 3. Получаем file_path
+            file_resp = await client.get(
+                f"https://api.telegram.org/bot{bot_token}/getFile",
+                params={"file_id": file_id},
+                timeout=10.0
+            )
+            file_data = file_resp.json()
+
+            if not file_data.get("ok"):
+                raise HTTPException(status_code=404, detail="Cannot get file info")
+
+            file_path = file_data.get("result", {}).get("file_path")
+            if not file_path:
+                raise HTTPException(status_code=404, detail="No file_path")
+
+            # 4. Скачиваем фото
+            photo_resp = await client.get(
+                f"https://api.telegram.org/file/bot{bot_token}/{file_path}",
+                timeout=30.0
+            )
+
+            if photo_resp.status_code != 200:
+                raise HTTPException(status_code=404, detail="Cannot download photo")
+
+            photo_bytes = photo_resp.content
+
+            # Кэшируем с TTL
+            if len(_user_photo_cache) < _PHOTO_CACHE_MAX:
+                _user_photo_cache[user_id] = (photo_bytes, time.time())
+
+            return Response(content=photo_bytes, media_type="image/jpeg")
+
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint с проверкой БД."""
@@ -1375,6 +1532,7 @@ async def get_channel(username: str):
     # v23.0: Читаем breakdown_json из БД (если колонка существует)
     # Используем try/except для совместимости с БД без колонки breakdown_json
     try:
+        # v56.1: Убрали LOWER() - username уже lowercase (line 1526), в БД тоже хранится в lowercase
         cursor = db.conn.execute("""
             SELECT username, score, verdict, trust_factor, members,
                    category, category_secondary, scanned_at, status,
@@ -1456,8 +1614,17 @@ async def get_channel(username: str):
         if 'is_verified' in flags:
             is_verified = flags.get('is_verified', False)
 
-    # v7.0: Trust penalties (риски)
-    trust_penalties = estimate_trust_penalties(trust_factor, score)
+    # v52.2: Trust penalties - сначала пытаемся использовать реальные trust_details
+    trust_penalties = []
+    if real_breakdown_data:
+        bd = real_breakdown_data.get('breakdown', real_breakdown_data)
+        trust_details = bd.get('trust_details', {})
+        if trust_details:
+            trust_penalties = extract_trust_penalties_from_details(trust_details)
+
+    # Fallback на estimate если нет реальных данных
+    if not trust_penalties and trust_factor < 1.0:
+        trust_penalties = estimate_trust_penalties(trust_factor, score)
 
     # v13.0: Рассчитываем цену с ВСЕМИ мультипликаторами
     price_min, price_max = calculate_post_price(
@@ -1609,6 +1776,11 @@ async def live_scan_channel(request: ScanRequest):
         categories = result.get('categories', {})
         breakdown = result.get('breakdown', {})
         flags = result.get('flags', {})
+        trust_details = result.get('trust_details', {})  # v52.2
+
+        # v52.2: Добавляем trust_details в breakdown
+        if trust_details:
+            breakdown['trust_details'] = trust_details
 
         # Формируем breakdown_json
         breakdown_data = {
@@ -1660,7 +1832,8 @@ async def live_scan_channel(request: ScanRequest):
             "cpm_max": price_max,
             "recommendations": [r.dict() for r in recommendations],
             "breakdown": ui_breakdown,
-            "trust_penalties": estimate_trust_penalties(trust_factor, score),
+            # v52.2: Используем реальные trust_details если есть
+            "trust_penalties": extract_trust_penalties_from_details(trust_details) if trust_details else estimate_trust_penalties(trust_factor, score),
             "is_verified": is_verified,
             "source": "live_scan",
         }

@@ -340,6 +340,36 @@ class CrawlerDB:
             logger.error(f"Database error adding channel {username}: {e}")
             return False
 
+    def add_channels_batch(self, channels: list[tuple[str, str]]) -> int:
+        """Batch добавление каналов в одной транзакции.
+
+        Args:
+            channels: List of (username, parent) tuples
+        Returns:
+            Количество добавленных (без дубликатов)
+        """
+        if not channels:
+            return 0
+
+        normalized = [
+            (username.lower().lstrip('@'), parent)
+            for username, parent in channels
+        ]
+
+        cursor = self.conn.cursor()
+        try:
+            cursor.executemany(
+                "INSERT OR IGNORE INTO channels (username, found_via) VALUES (?, ?)",
+                normalized
+            )
+            added = cursor.rowcount
+            self.conn.commit()
+            return added
+        except sqlite3.Error as e:
+            logger.error(f"Batch insert failed: {e}")
+            self.conn.rollback()
+            return 0
+
     def get_next(self) -> Optional[str]:
         """
         Возвращает следующий канал для проверки (WAITING).
@@ -500,8 +530,7 @@ class CrawlerDB:
         user_ids_json = json.dumps(user_ids, ensure_ascii=False) if user_ids else None
 
         cursor = self.conn.cursor()
-        # v43.1: Используем LOWER() для case-insensitive поиска
-        # (в БД могут быть usernames с разным регистром из старых версий)
+        # v57.0: username нормализован на входе (line 483), LOWER() не нужен
         cursor.execute("""
             UPDATE channels SET
                 status = ?,
@@ -547,7 +576,7 @@ class CrawlerDB:
                 linked_chat_id = ?,
                 linked_chat_title = ?,
                 scanned_at = datetime('now')
-            WHERE LOWER(username) = ? AND status = 'WAITING'
+            WHERE username = ? AND status = 'WAITING'
             RETURNING username
         """, (status, score, verdict, trust_factor, members, ad_links_json,
               category, category_secondary, breakdown_json,
@@ -579,10 +608,10 @@ class CrawlerDB:
         """
         username = username.lower().lstrip('@')
         cursor = self.conn.cursor()
-        # v43.1: Используем LOWER() для case-insensitive поиска
+        # v56.1: Убрали LOWER() - username уже хранится в lowercase (см. line 311, 347, 473, 683)
         cursor.execute("""
             DELETE FROM channels
-            WHERE LOWER(username) = ? AND status = 'WAITING'
+            WHERE username = ? AND status = 'WAITING'
         """, (username,))
         self.conn.commit()
         return cursor.rowcount > 0
