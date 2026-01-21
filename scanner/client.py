@@ -516,8 +516,8 @@ async def smart_scan_safe(client: Client, channel: str, max_retries: int = 3) ->
 
             await asyncio.sleep(wait_time)
 
-        except (ChannelPrivate, ChannelInvalid, UsernameNotOccupied, UsernameInvalid) as e:
-            # Канал приватный, не существует или username невалидный
+        except (ChannelPrivate, ChannelInvalid, UsernameNotOccupied, UsernameInvalid, KeyError) as e:
+            # Канал приватный, не существует, username невалидный, или не найден в кэше Pyrogram
             logger.debug(f"Channel access error for {channel}: {type(e).__name__}")
             return ScanResult(
                 chat=None,
