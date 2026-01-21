@@ -114,18 +114,6 @@ function getVerdictColor(verdict: string): string {
   }
 }
 
-// v51.0: Verdict text for Score Card
-function getVerdictText(verdict?: string): string {
-  switch (verdict) {
-    case 'EXCELLENT': return 'Отлично'
-    case 'GOOD': return 'Хорошо'
-    case 'MEDIUM': return 'Средне'
-    case 'HIGH_RISK': return 'Риск'
-    case 'SCAM': return 'Скам'
-    default: return '—'
-  }
-}
-
 // Avatar colors
 function getAvatarColor(username: string): string {
   const colors = [
@@ -133,49 +121,6 @@ function getAvatarColor(username: string): string {
     '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
   ]
   return colors[username.charCodeAt(0) % colors.length]
-}
-
-// v11.3: Estimate ER based on score and channel size
-// ER = Views / Members * 100
-// Small channels: higher ER (15-30%), Large: lower (3-8%)
-function estimateER(members: number, score: number): number {
-  // Base ER by channel size
-  let baseER: number
-  if (members < 5000) {
-    baseER = 25 // micro channels ~25%
-  } else if (members < 20000) {
-    baseER = 15 // small channels ~15%
-  } else if (members < 50000) {
-    baseER = 10 // medium channels ~10%
-  } else if (members < 100000) {
-    baseER = 6 // large channels ~6%
-  } else {
-    baseER = 4 // mega channels ~4%
-  }
-
-  // Adjust by score (quality affects engagement)
-  // Score 80+ = +30%, Score 60-80 = +0%, Score <60 = -30%
-  const scoreMult = score >= 80 ? 1.3 : score >= 60 ? 1.0 : 0.7
-
-  const er = baseER * scoreMult
-  // Round to 1 decimal place
-  return Math.round(er * 10) / 10
-}
-
-// v12.0: Members size label
-function getMembersSizeLabel(members: number): string {
-  if (members < 5000) return 'Микро'
-  if (members < 20000) return 'Малый'
-  if (members < 50000) return 'Средний'
-  if (members < 100000) return 'Большой'
-  return 'Крупный'
-}
-
-// v12.0: ER quality label
-function getERLabel(er: number): string {
-  if (er >= 15) return 'Высокий'
-  if (er >= 5) return 'Норма'
-  return 'Низкий'
 }
 
 // v12.0: Format channel name (capitalize, replace underscores)
@@ -208,12 +153,13 @@ function getMetricColorClass(score: number, max: number): string {
 }
 
 // v11.5: ScoreRing компонент для карточек (SVG circle с прогрессом)
-// large: для детального просмотра (90px), обычный: 64px
+// v53.0: Добавлен small размер (36px) для Unified Card
+// large: 90px, medium: 48px, small: 36px, default: 64px
 // v34.0: Галочка для Telegram верифицированных каналов, SCAM бейдж для score=0
-function ScoreRing({ score, verdict, verified, large }: { score: number; verdict: string; verified?: boolean; large?: boolean }) {
-  // Большой размер для детального просмотра
-  const size = large ? 90 : 64
-  const radius = large ? 36 : 26
+function ScoreRing({ score, verdict, verified, large, medium, small }: { score: number; verdict: string; verified?: boolean; large?: boolean; medium?: boolean; small?: boolean }) {
+  // Размеры: large=90px, medium=48px, small=36px, default=64px
+  const size = large ? 90 : medium ? 48 : small ? 36 : 64
+  const radius = large ? 36 : medium ? 19 : small ? 14 : 26
   const center = size / 2
   const circumference = 2 * Math.PI * radius
   const progress = (score / 100) * circumference
@@ -546,13 +492,13 @@ function MetricItem({ item, onClick }: { item: { score: number; max: number; lab
 }
 
 function App() {
-  const { webApp, user, platform, colorScheme, hapticLight, hapticMedium, hapticSuccess, hapticError } = useTelegram()
+  const { webApp, hapticLight, hapticMedium, hapticSuccess, hapticError } = useTelegram()
   const { channels, total, loading, error, hasMore, fetchChannels, reset } = useChannels()
   const { fetchStats } = useStats()  // v9.0: stats removed from UI
   const { result: scanResult, loading: scanning, error: scanError, isLiveScan, scanChannel, reset: resetScan } = useScan()
 
-  // v49.0: History & Watchlist hooks
-  const { history, addToHistory, clearHistory } = useHistory()
+  // v55.0: History & Watchlist hooks (history removed from UI, kept for future)
+  const { addToHistory } = useHistory()
   const { watchlist, isInWatchlist, addToWatchlist, removeFromWatchlist } = useWatchlist()
 
   // State
@@ -569,7 +515,11 @@ function App() {
   const [selectedChannel, setSelectedChannel] = useState<ChannelDetail | null>(null)
   const [showFilterSheet, setShowFilterSheet] = useState(false)  // v9.0: single unified filter sheet
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null)  // v8.0: Modal state
-  const [activeTab, setActiveTab] = useState<'search' | 'history' | 'watchlist' | 'profile'>('search')  // v11.0: Bottom Nav
+  const [showWatchlistSheet, setShowWatchlistSheet] = useState(false)  // v55.0: Watchlist sheet
+
+  // v58.0: Scan on Demand UI state
+  const [scanProgress, setScanProgress] = useState(0)
+  const [toast, setToast] = useState<{type: 'success' | 'error', text: string} | null>(null)
 
   const gridRef = useRef<HTMLDivElement>(null)
   const isInitialized = useRef(false)
@@ -639,14 +589,29 @@ function App() {
 
   // v9.0: Category selection now happens in filter sheet, applied on "Показать"
 
+  // v58.0: Toast helper
+  const showToast = useCallback((type: 'success' | 'error', text: string) => {
+    setToast({ type, text })
+    setTimeout(() => setToast(null), 3000)
+  }, [])
+
   // Handle search
   const handleSearch = useCallback(async () => {
     const query = searchQuery.trim().replace('@', '')
     if (!query) return
 
     hapticMedium()
-    await scanChannel(query)
-  }, [searchQuery, hapticMedium, scanChannel])
+    setScanProgress(0)
+    const result = await scanChannel(query)
+
+    // v58.0: Show toast based on result
+    if (result) {
+      setScanProgress(100)
+      showToast('success', `@${query} добавлен в базу`)
+    } else {
+      showToast('error', scanError || 'Канал не найден')
+    }
+  }, [searchQuery, hapticMedium, scanChannel, scanError, showToast])
 
   // Handle search result
   useEffect(() => {
@@ -662,6 +627,17 @@ function App() {
       handleSearch()
     }
   }, [handleSearch])
+
+  // v58.0: Progress simulation for live scan
+  useEffect(() => {
+    if (!scanning || !isLiveScan) {
+      return
+    }
+    const interval = setInterval(() => {
+      setScanProgress(p => p < 90 ? p + (90 - p) * 0.08 : p)
+    }, 400)
+    return () => clearInterval(interval)
+  }, [scanning, isLiveScan])
 
   // Infinite scroll
   const handleScroll = useCallback(() => {
@@ -734,9 +710,6 @@ function App() {
     return selectedChannel.breakdown || null
   }, [selectedChannel])
 
-  // v12.0: Compute ER
-  const channelER = selectedChannel ? estimateER(selectedChannel.members, selectedChannel.score) : 0
-
   // Channel Detail Page - v12.0 NEW LAYOUT
   if (selectedChannel) {
     return (
@@ -776,92 +749,49 @@ function App() {
 
         {/* Content */}
         <div className={styles.detailContent}>
-          {/* v51.5: Hero Section - Avatar + Name + Category (small badge like main list) */}
-          <div className={styles.heroSection}>
-            <Avatar username={selectedChannel.username} size={72} />
-            <div className={styles.heroInfo}>
-              <div className={styles.heroNameRow}>
-                <span className={styles.heroName}>{formatChannelName(selectedChannel.username)}</span>
-                {selectedChannel.category && (
-                  <span className={styles.categoryBadge}>
-                    <span className={styles.categoryIcon}>{getCategoryIcon(selectedChannel.category)}</span>
-                    {getCategoryName(selectedChannel.category)}
+          {/* v53.0: Unified Card - Avatar + Name + Flags + Price */}
+          <div className={styles.unifiedCard}>
+            <div className={styles.unifiedTop}>
+              <Avatar username={selectedChannel.username} size={48} />
+              <div className={styles.unifiedInfo}>
+                <div className={styles.unifiedNameRow}>
+                  <span className={styles.unifiedName}>{formatChannelName(selectedChannel.username)}</span>
+                  {selectedChannel.category && (
+                    <span className={styles.categoryBadge}>
+                      <span className={styles.categoryIcon}>{getCategoryIcon(selectedChannel.category)}</span>
+                      {getCategoryName(selectedChannel.category)}
+                    </span>
+                  )}
+                </div>
+                <div className={styles.unifiedMeta}>
+                  @{selectedChannel.username} · {formatNumber(selectedChannel.members)} подп.
+                </div>
+                <div className={styles.unifiedFlags}>
+                  <span className={selectedChannel.is_verified ? styles.flagActive : styles.flagInactive} title="Верификация">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
                   </span>
+                  <span className={breakdown?.comments_enabled !== false ? styles.flagActive : styles.flagInactive} title="Комментарии">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M21 6h-2v9H6v2c0 .55.45 1 1 1h11l4 4V7c0-.55-.45-1-1-1zm-4 6V3c0-.55-.45-1-1-1H3c-.55 0-1 .45-1 1v14l4-4h10c.55 0 1-.45 1-1z"/></svg>
+                  </span>
+                  <span className={breakdown?.reactions_enabled !== false ? styles.flagActive : styles.flagInactive} title="Реакции">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                  </span>
+                </div>
+              </div>
+              {/* v53.1: Score + Price column */}
+              <div className={styles.unifiedScore}>
+                <ScoreRing
+                  score={selectedChannel.score}
+                  verdict={selectedChannel.verdict}
+                  verified={selectedChannel.is_verified}
+                  small
+                />
+                {selectedChannel.cpm_min && selectedChannel.cpm_max && (
+                  <div className={styles.scorePrice}>
+                    {formatPrice(selectedChannel.cpm_min, selectedChannel.cpm_max)}
+                  </div>
                 )}
               </div>
-              <div className={styles.heroMeta}>
-                @{selectedChannel.username} · {formatNumber(selectedChannel.members)} подписчиков
-              </div>
-            </div>
-          </div>
-
-          {/* v51.0: Score Card - два блока рядом */}
-          <div className={styles.scoreCard}>
-            <div className={styles.scoreBlock}>
-              <div className={styles.scoreValue}>{selectedChannel.score}</div>
-              <div className={styles.scoreLabel}>SCORE</div>
-              <div className={`${styles.scoreBadge} ${styles[`verdict_${selectedChannel.verdict?.toLowerCase()}`]}`}>
-                {getVerdictText(selectedChannel.verdict)}
-              </div>
-            </div>
-            <div className={styles.trustBlock}>
-              <div className={styles.trustValue}>{selectedChannel.trust_factor?.toFixed(2) || '1.00'}</div>
-              <div className={styles.trustLabel}>TRUST</div>
-              {selectedChannel.trust_factor && selectedChannel.trust_factor < 1 ? (
-                <div className={styles.trustWarning}>
-                  -{Math.round((1 - selectedChannel.trust_factor) * 100)}%
-                </div>
-              ) : (
-                <div className={styles.trustOk}>норма</div>
-              )}
-            </div>
-          </div>
-
-          {/* v51.0: Channel Flags */}
-          <div className={styles.flagsSection}>
-            <div className={styles.flagsSectionTitle}>Возможности канала</div>
-            <div className={styles.flagsGrid}>
-              <div className={`${styles.flagItem} ${selectedChannel.is_verified ? styles.flagActive : styles.flagInactive}`}>
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
-                </svg>
-                <span>Верификация</span>
-              </div>
-              <div className={`${styles.flagItem} ${breakdown?.comments_enabled !== false ? styles.flagActive : styles.flagInactive}`}>
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                  <path d="M21 6h-2v9H6v2c0 .55.45 1 1 1h11l4 4V7c0-.55-.45-1-1-1zm-4 6V3c0-.55-.45-1-1-1H3c-.55 0-1 .45-1 1v14l4-4h10c.55 0 1-.45 1-1z"/>
-                </svg>
-                <span>Комментарии</span>
-              </div>
-              <div className={`${styles.flagItem} ${breakdown?.reactions_enabled !== false ? styles.flagActive : styles.flagInactive}`}>
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                  <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-                </svg>
-                <span>Реакции</span>
-              </div>
-            </div>
-          </div>
-
-          {/* v12.0: Stats Row - 3 cards */}
-          <div className={styles.statsRow}>
-            <div className={styles.statCard}>
-              <span className={styles.statLabel}>ЦЕНА</span>
-              <span className={styles.statValue}>
-                {selectedChannel.cpm_min && selectedChannel.cpm_max
-                  ? formatPrice(selectedChannel.cpm_min, selectedChannel.cpm_max)
-                  : '—'}
-              </span>
-              <span className={styles.statSubtext}>за пост</span>
-            </div>
-            <div className={styles.statCard}>
-              <span className={styles.statLabel}>ПОДПИСЧИКИ</span>
-              <span className={styles.statValue}>{formatNumber(selectedChannel.members)}</span>
-              <span className={styles.statSubtext}>{getMembersSizeLabel(selectedChannel.members)}</span>
-            </div>
-            <div className={styles.statCard}>
-              <span className={styles.statLabel}>ER</span>
-              <span className={styles.statValue}>{channelER}%</span>
-              <span className={styles.statSubtext}>{getERLabel(channelER)}</span>
             </div>
           </div>
 
@@ -945,7 +875,36 @@ function App() {
             <div className={styles.noPrice}>Данные загружаются...</div>
           )}
 
-          {/* v51.3: Trust Penalties and Recommendations sections REMOVED per user feedback */}
+          {/* v52.1: Trust Penalties section with icons */}
+          {selectedChannel.trust_penalties && selectedChannel.trust_penalties.length > 0 && (
+            <div className={styles.trustPenaltiesSection}>
+              <div className={styles.trustPenaltiesHeader}>
+                <div className={styles.trustPenaltiesTitleRow}>
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="#FF9500">
+                    <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+                  </svg>
+                  <span className={styles.trustPenaltiesTitle}>Штрафы доверия</span>
+                </div>
+                <span className={styles.trustPenaltiesTotal}>×{selectedChannel.trust_factor?.toFixed(2) || '1.00'}</span>
+              </div>
+              <div className={styles.trustPenaltiesList}>
+                {selectedChannel.trust_penalties.map((penalty, i) => (
+                  <div key={i} className={styles.trustPenaltyItem}>
+                    <div className={styles.penaltyIcon}>
+                      <svg viewBox="0 0 24 24" width="20" height="20" fill="#FF3B30">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                      </svg>
+                    </div>
+                    <div className={styles.penaltyInfo}>
+                      <span className={styles.penaltyName}>{penalty.name}</span>
+                      <span className={styles.penaltyDesc}>{penalty.description}</span>
+                    </div>
+                    <span className={styles.penaltyMult}>×{penalty.multiplier.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* v12.0: Footer with v20.0 category percentages */}
           <div className={styles.detailFooter}>
@@ -980,226 +939,14 @@ function App() {
     )
   }
 
-  // v49.0: Bottom Navigation component (reused across pages)
-  const BottomNav = () => (
-    <nav className={styles.bottomNav}>
-      {[
-        { id: 'search' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21 21-5.197-5.197M10.5 18a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Z"/></svg>, label: 'Поиск' },
-        { id: 'history' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>, label: 'История' },
-        { id: 'watchlist' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"/></svg>, label: 'Избранное' },
-        { id: 'profile' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"/></svg>, label: 'Профиль' },
-      ].map(tab => (
-        <button
-          key={tab.id}
-          className={`${styles.navItem} ${activeTab === tab.id ? styles.active : ''}`}
-          onClick={() => { hapticLight(); setActiveTab(tab.id) }}
-        >
-          <span className={styles.navIcon}>{tab.icon}</span>
-          <span className={styles.navLabel}>{tab.label}</span>
-        </button>
-      ))}
-    </nav>
-  )
 
-  // v49.0: History Page
-  if (activeTab === 'history') {
-    return (
-      <div className={styles.app}>
-        <div className={styles.stickyHeader}>
-          <div className={styles.pageHeader}>
-            <h1 className={styles.pageTitle}>История</h1>
-            {history.length > 0 && (
-              <button
-                className={styles.clearBtn}
-                onClick={() => { hapticMedium(); clearHistory() }}
-              >
-                Очистить
-              </button>
-            )}
-          </div>
-        </div>
 
-        <main className={`${styles.content} ${styles.contentWithNav}`}>
-          {history.length === 0 ? (
-            <div className={styles.emptyState}>
-              <span className={styles.emptyIcon}>📋</span>
-              <p className={styles.emptyTitle}>История пуста</p>
-              <p className={styles.emptyText}>Просмотренные каналы появятся здесь</p>
-            </div>
-          ) : (
-            <div className={styles.channelList}>
-              {history.map((channel, index) => (
-                <button
-                  key={channel.username}
-                  className={styles.channelCardNew}
-                  onClick={() => handleChannelClick(channel)}
-                  style={{ animationDelay: `${Math.min(index, 5) * 20}ms` }}
-                >
-                  <div className={styles.cardRow1}>
-                    <Avatar username={channel.username} size={54} />
-                    <div className={styles.cardInfo}>
-                      <div className={styles.cardNameLine}>
-                        <span className={styles.cardName}>{formatChannelName(channel.username)}</span>
-                        {channel.category && (
-                          <span className={styles.categoryBadge}>
-                            <span className={styles.categoryIcon}>{getCategoryIcon(channel.category)}</span>
-                            {getCategoryName(channel.category)}
-                          </span>
-                        )}
-                      </div>
-                      <span className={styles.cardMeta}>
-                        @{channel.username} • {formatNumber(channel.members)} подп.
-                      </span>
-                    </div>
-                    <ScoreRing score={channel.score} verdict={channel.verdict} />
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </main>
 
-        <BottomNav />
-      </div>
-    )
-  }
 
-  // v49.0: Watchlist Page
-  if (activeTab === 'watchlist') {
-    return (
-      <div className={styles.app}>
-        <div className={styles.stickyHeader}>
-          <div className={styles.pageHeader}>
-            <h1 className={styles.pageTitle}>Избранное</h1>
-            <span className={styles.pageCount}>{watchlist.length}</span>
-          </div>
-        </div>
-
-        <main className={`${styles.content} ${styles.contentWithNav}`}>
-          {watchlist.length === 0 ? (
-            <div className={styles.emptyState}>
-              <span className={styles.emptyIcon}>⭐</span>
-              <p className={styles.emptyTitle}>Нет избранных</p>
-              <p className={styles.emptyText}>Добавляйте каналы из детального просмотра</p>
-            </div>
-          ) : (
-            <div className={styles.channelList}>
-              {watchlist.map((channel, index) => (
-                <div key={channel.username} className={styles.watchlistItem}>
-                  <button
-                    className={styles.channelCardNew}
-                    onClick={() => handleChannelClick(channel)}
-                    style={{ animationDelay: `${Math.min(index, 5) * 20}ms` }}
-                  >
-                    <div className={styles.cardRow1}>
-                      <Avatar username={channel.username} size={54} />
-                      <div className={styles.cardInfo}>
-                        <div className={styles.cardNameLine}>
-                          <span className={styles.cardName}>{formatChannelName(channel.username)}</span>
-                          {channel.category && (
-                            <span className={styles.categoryBadge}>
-                              <span className={styles.categoryIcon}>{getCategoryIcon(channel.category)}</span>
-                              {getCategoryName(channel.category)}
-                            </span>
-                          )}
-                        </div>
-                        <span className={styles.cardMeta}>
-                          @{channel.username} • {formatNumber(channel.members)} подп.
-                        </span>
-                      </div>
-                      <ScoreRing score={channel.score} verdict={channel.verdict} />
-                    </div>
-                  </button>
-                  <button
-                    className={styles.removeBtn}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      hapticLight()
-                      removeFromWatchlist(channel.username)
-                    }}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M18 6L6 18M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </main>
-
-        <BottomNav />
-      </div>
-    )
-  }
-
-  // v49.0: Profile Page
-  if (activeTab === 'profile') {
-    return (
-      <div className={styles.app}>
-        <div className={styles.stickyHeader}>
-          <div className={styles.pageHeader}>
-            <h1 className={styles.pageTitle}>Профиль</h1>
-          </div>
-        </div>
-
-        <main className={`${styles.content} ${styles.contentWithNav}`}>
-          <div className={styles.profileSection}>
-            {/* User Info */}
-            <div className={styles.profileCard}>
-              <div className={styles.profileAvatar}>
-                {user?.first_name?.charAt(0) || '?'}
-              </div>
-              <div className={styles.profileInfo}>
-                <div className={styles.profileName}>
-                  {user?.first_name || 'Гость'}
-                  {user?.last_name ? ` ${user.last_name}` : ''}
-                </div>
-                {user?.username && (
-                  <div className={styles.profileUsername}>@{user.username}</div>
-                )}
-              </div>
-            </div>
-
-            {/* Stats */}
-            <div className={styles.statsGrid}>
-              <div className={styles.statItem}>
-                <span className={styles.statValue}>{history.length}</span>
-                <span className={styles.statLabel}>Просмотрено</span>
-              </div>
-              <div className={styles.statItem}>
-                <span className={styles.statValue}>{watchlist.length}</span>
-                <span className={styles.statLabel}>В избранном</span>
-              </div>
-            </div>
-
-            {/* App Info */}
-            <div className={styles.appInfoSection}>
-              <div className={styles.infoRow}>
-                <span>Платформа</span>
-                <span>{platform}</span>
-              </div>
-              <div className={styles.infoRow}>
-                <span>Тема</span>
-                <span>{colorScheme === 'dark' ? 'Тёмная' : 'Светлая'}</span>
-              </div>
-              <div className={styles.infoRow}>
-                <span>Версия</span>
-                <span>v51.5</span>
-              </div>
-            </div>
-          </div>
-        </main>
-
-        <BottomNav />
-      </div>
-    )
-  }
-
-  // Main List View - v11.0 with Bottom Nav
+  // v55.0: Main List View - No Bottom Nav
   return (
     <div className={styles.app}>
-      {/* Sticky Header - v11.1: Search + Quick Categories */}
+      {/* v55.0: Sticky Header - Search + Filters + Watchlist */}
       <div className={styles.stickyHeader}>
         <div className={styles.searchRow}>
           {/* Search Bar */}
@@ -1228,7 +975,7 @@ function App() {
               </button>
             )}
           </div>
-          {/* Filter button with funnel SVG icon */}
+          {/* Filter button */}
           <button
             className={`${styles.filtersButtonNew} ${activeFilterCount > 0 ? styles.hasFilters : ''}`}
             onClick={() => { hapticLight(); setShowFilterSheet(true) }}
@@ -1236,11 +983,49 @@ function App() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
             </svg>
-            Фильтры
             {activeFilterCount > 0 && <span className={styles.filterBadge}>{activeFilterCount}</span>}
           </button>
+          {/* v55.0: Watchlist button */}
+          <button
+            className={styles.watchlistBtn}
+            onClick={() => { hapticLight(); setShowWatchlistSheet(true) }}
+          >
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"/>
+            </svg>
+            {watchlist.length > 0 && (
+              <span className={styles.watchlistBadge}>{watchlist.length}</span>
+            )}
+          </button>
+          {/* v58.0: Scan Button */}
+          <button
+            className={`${styles.scanBtn} ${scanning ? styles.scanning : ''}`}
+            onClick={handleSearch}
+            disabled={!searchQuery.trim() || scanning}
+            title="Сканировать канал"
+          >
+            {scanning ? (
+              <div className={styles.scanBtnSpinner} />
+            ) : (
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M2 12c0-3.771 0-5.657 1.172-6.828C4.343 4 6.229 4 10 4h4c3.771 0 5.657 0 6.828 1.172C22 6.343 22 8.229 22 12c0 3.771 0 5.657-1.172 6.828C19.657 20 17.771 20 14 20h-4c-3.771 0-5.657 0-6.828-1.172C2 17.657 2 15.771 2 12Z"/>
+                <path d="M17 8V5M7 8V5M7 19v-3M17 19v-3M5 9h1M5 12h1M5 15h1M18 9h1M18 12h1M18 15h1"/>
+              </svg>
+            )}
+          </button>
         </div>
-
+        {/* v58.0: Scan Progress Bar */}
+        {scanning && isLiveScan && (
+          <div className={styles.scanProgress}>
+            <div className={styles.scanProgressFill} style={{ width: `${scanProgress}%` }} />
+            <span className={styles.scanProgressText}>
+              {scanProgress < 20 ? 'Подключение...' :
+               scanProgress < 50 ? 'Сканирование постов...' :
+               scanProgress < 80 ? 'Анализ метрик...' :
+               'Сохранение...'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* v9.0: UNIFIED Filter Bottom Sheet with categories */}
@@ -1347,9 +1132,9 @@ function App() {
         </>
       )}
 
-      {/* Content - v11.0: with padding for Bottom Nav */}
+      {/* v55.0: Content - full height */}
       <main
-        className={`${styles.content} ${styles.contentWithNav}`}
+        className={styles.content}
         ref={gridRef}
         onScroll={handleScroll}
       >
@@ -1438,24 +1223,84 @@ function App() {
         )}
       </main>
 
-      {/* v11.0: Bottom Navigation Bar - v12.3: SVG Heroicons */}
-      <nav className={styles.bottomNav}>
-        {[
-          { id: 'search' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21 21-5.197-5.197M10.5 18a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Z"/></svg>, label: 'Поиск' },
-          { id: 'history' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>, label: 'История' },
-          { id: 'watchlist' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"/></svg>, label: 'Избранное' },
-          { id: 'profile' as const, icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"/></svg>, label: 'Профиль' },
-        ].map(tab => (
-          <button
-            key={tab.id}
-            className={`${styles.navItem} ${activeTab === tab.id ? styles.active : ''}`}
-            onClick={() => { hapticLight(); setActiveTab(tab.id) }}
-          >
-            <span className={styles.navIcon}>{tab.icon}</span>
-            <span className={styles.navLabel}>{tab.label}</span>
-          </button>
-        ))}
-      </nav>
+      {/* v55.0: Watchlist Sheet */}
+      {showWatchlistSheet && (
+        <div className={styles.sheetOverlay} onClick={() => setShowWatchlistSheet(false)}>
+          <div className={styles.watchlistSheet} onClick={e => e.stopPropagation()}>
+            <div className={styles.sheetHandle} />
+            <div className={styles.watchlistSheetHeader}>
+              <h2 className={styles.watchlistSheetTitle}>Избранное ({watchlist.length})</h2>
+              <button
+                className={styles.sheetCloseBtn}
+                onClick={() => setShowWatchlistSheet(false)}
+              >
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+            <div className={styles.watchlistSheetContent}>
+              {watchlist.length === 0 ? (
+                <div className={styles.emptyState}>
+                  <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="var(--hint-color)" strokeWidth="1">
+                    <path d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"/>
+                  </svg>
+                  <p className={styles.emptyTitle}>Нет сохранённых каналов</p>
+                  <p className={styles.emptyText}>Нажми ★ на канале чтобы добавить</p>
+                </div>
+              ) : (
+                watchlist.map(channel => (
+                  <div
+                    key={channel.username}
+                    className={styles.watchlistSheetItem}
+                    onClick={() => {
+                      hapticLight()
+                      setShowWatchlistSheet(false)
+                      handleChannelClick(channel)
+                    }}
+                  >
+                    <Avatar username={channel.username} size={44} />
+                    <div className={styles.watchlistSheetInfo}>
+                      <span className={styles.watchlistSheetName}>{formatChannelName(channel.username)}</span>
+                      <span className={styles.watchlistSheetMeta}>
+                        @{channel.username} • {formatNumber(channel.members)} подп.
+                      </span>
+                    </div>
+                    <span
+                      className={styles.watchlistSheetScore}
+                      style={{
+                        backgroundColor: `${getVerdictColor(channel.verdict)}20`,
+                        color: getVerdictColor(channel.verdict)
+                      }}
+                    >
+                      {channel.score}
+                    </span>
+                    <button
+                      className={styles.watchlistSheetRemove}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        hapticMedium()
+                        removeFromWatchlist(channel.username)
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M6 18L18 6M6 6l12 12"/>
+                      </svg>
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v58.0: Toast Notifications */}
+      {toast && (
+        <div className={`${styles.toast} ${styles[`toast_${toast.type}`]}`}>
+          {toast.type === 'success' ? '✓' : '✕'} {toast.text}
+        </div>
+      )}
     </div>
   )
 }

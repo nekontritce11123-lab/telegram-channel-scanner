@@ -2866,12 +2866,12 @@
   color: var(--text-color);
 }
 
-/* Stats Row - 3 карточки */
+/* v52.0: Compact Stats Row - 3 карточки */
 .statsRow {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  padding: 0 0 16px;
+  gap: 6px;
+  padding: 0 0 12px;
 }
 
 .statCard {
@@ -2880,14 +2880,14 @@
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 12px 8px;
+  padding: 8px 6px;
   background: var(--section-bg);
-  border-radius: 10px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .statLabel {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   color: var(--hint-color);
   text-transform: uppercase;
@@ -2895,26 +2895,26 @@
 }
 
 .statValue {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text-color);
-  margin: 4px 0 2px;
+  margin: 2px 0 1px;
   white-space: nowrap;
 }
 
 /* v12.2: Уменьшить шрифт цены на мобильных чтобы влезало */
 .statCard:first-child .statValue {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 @media (min-width: 600px) {
   .statCard:first-child .statValue {
-    font-size: 18px;
+    font-size: 16px;
   }
 }
 
 .statSubtext {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--hint-color);
 }
 
@@ -2978,25 +2978,25 @@
   }
 }
 
+/* v53.0: Compact Metrics Block */
 .metricsBlock {
-  padding: var(--spacing-md);
+  padding: 8px;
   background: var(--section-bg);
   border-radius: var(--radius-md);
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-/* v50.0: Metrics Block Header - clean style without icons */
 .metricsBlockHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  padding-bottom: 8px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .metricsBlockTitle {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-color);
   text-transform: uppercase;
@@ -3004,17 +3004,17 @@
 }
 
 .metricsBlockScore {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent);
   background: rgba(var(--accent-rgb, 33, 150, 243), 0.15);
-  padding: 2px 8px;
+  padding: 2px 6px;
   border-radius: 4px;
 }
 
-/* Metric Item with progress bar */
+/* v53.0: Compact Metric Item */
 .metricItem {
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   cursor: pointer;
 }
 
@@ -3026,26 +3026,26 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .metricItemLabel {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-color);
 }
 
 .metricItemValue {
-  font-size: 13px;
+  font-size: 11px;
   color: var(--hint-color);
-  min-width: 42px;
+  min-width: 36px;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
 .metricBar {
-  height: 6px;
+  height: 4px;
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -3195,7 +3195,97 @@
    v51.0: CHANNEL DETAIL REDESIGN
    ============================================ */
 
-/* Hero Section - Avatar + Name */
+/* v53.0: Unified Card - Hero + Flags + Price в одной карточке */
+.unifiedCard {
+  background: var(--section-bg);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.unifiedTop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+}
+
+.unifiedInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.unifiedNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.unifiedName {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.unifiedMeta {
+  font-size: 12px;
+  color: var(--hint-color);
+  margin-top: 2px;
+}
+
+.unifiedFlags {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.unifiedFlags span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.3;
+  transition: opacity 0.2s;
+  color: var(--hint-color);
+}
+
+.unifiedFlags span.flagActive {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* v53.1: Score + Price column */
+.unifiedScore {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.scorePrice {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--hint-color);
+  white-space: nowrap;
+}
+
+.unifiedPrice {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 10px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.priceValue {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--verdict-good);
+}
+
+/* OLD: Hero Section - kept for compatibility */
 .heroSection {
   display: flex;
   align-items: center;
@@ -3208,7 +3298,6 @@
   min-width: 0;
 }
 
-/* v51.5: Name + Category badge on same row */
 .heroNameRow {
   display: flex;
   align-items: center;
@@ -3228,6 +3317,11 @@
   margin-top: 2px;
 }
 
+.heroScoreRing {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 /* Score Card - два блока рядом */
 .scoreCard {
   display: flex;
@@ -3235,39 +3329,40 @@
   padding: 0 0 12px;
 }
 
+/* v52.0: Compact Score Card */
 .scoreBlock,
 .trustBlock {
   flex: 1;
   background: var(--section-bg);
   border-radius: 10px;
-  padding: 14px 12px;
+  padding: 10px 8px;
   text-align: center;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .scoreValue {
-  font-size: 36px;
+  font-size: 28px;
   font-weight: 700;
   color: var(--text-color);
   line-height: 1;
 }
 
 .scoreLabel {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--hint-color);
   letter-spacing: 0.5px;
-  margin-top: 4px;
+  margin-top: 2px;
   text-transform: uppercase;
 }
 
 .scoreBadge {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 11px;
   font-weight: 600;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .scoreBadge.verdict_excellent {
@@ -3295,61 +3390,62 @@
   color: #FF3B30;
 }
 
+/* v52.0: Compact Trust Block */
 .trustValue {
-  font-size: 32px;
+  font-size: 26px;
   font-weight: 700;
   color: var(--text-color);
   line-height: 1;
 }
 
 .trustLabel {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--hint-color);
   letter-spacing: 0.5px;
-  margin-top: 4px;
+  margin-top: 2px;
   text-transform: uppercase;
 }
 
 .trustWarning {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 11px;
   font-weight: 600;
-  margin-top: 8px;
+  margin-top: 6px;
   background: rgba(255, 59, 48, 0.15);
   color: #FF3B30;
 }
 
 .trustOk {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 11px;
   font-weight: 600;
-  margin-top: 8px;
+  margin-top: 6px;
   background: rgba(52, 199, 89, 0.15);
   color: #34C759;
 }
 
-/* Channel Flags Section */
+/* v52.0: Compact Flags Section */
 .flagsSection {
-  padding: 0 0 12px;
+  padding: 0 0 8px;
 }
 
 .flagsSectionTitle {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--hint-color);
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .flagsGrid {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .flagItem {
@@ -3359,18 +3455,18 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 10px 4px;
-  border-radius: 10px;
-  font-size: 11px;
+  gap: 3px;
+  padding: 8px 4px;
+  border-radius: 8px;
+  font-size: 10px;
   font-weight: 500;
   text-align: center;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .flagItem svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
 }
 
@@ -3507,6 +3603,97 @@
   font-size: var(--font-secondary);
   color: var(--text-color);
   line-height: 1.3;
+}
+
+/* v52.0: Trust Penalties Section */
+.trustPenaltiesSection {
+  background: var(--section-bg);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 59, 48, 0.2);
+}
+
+.trustPenaltiesHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* v52.1: Title row with icon */
+.trustPenaltiesTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trustPenaltiesTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: #FF9500;
+}
+
+.trustPenaltiesTotal {
+  font-size: 14px;
+  font-weight: 700;
+  color: #FF3B30;
+}
+
+.trustPenaltiesList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* v52.1: Penalty items with icons */
+.trustPenaltyItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 59, 48, 0.08);
+  border-radius: 10px;
+}
+
+.penaltyIcon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 59, 48, 0.15);
+  border-radius: 8px;
+}
+
+.penaltyInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.penaltyName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.penaltyDesc {
+  font-size: 11px;
+  color: var(--hint-color);
+}
+
+.penaltyMult {
+  font-size: 14px;
+  font-weight: 700;
+  color: #FF3B30;
+  flex-shrink: 0;
+  margin-left: 12px;
 }
 
 /* Detail Footer */
@@ -3897,6 +4084,197 @@
 }
 
 /* ============================================
+   v54.0: PROFILE PAGE REDESIGN
+   ============================================ */
+
+.profileHero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--spacing-lg) var(--spacing-md);
+  background: linear-gradient(180deg, var(--section-bg) 0%, transparent 100%);
+}
+
+.profilePhotoLarge {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid var(--button-color);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.profilePhotoPlaceholder {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--button-color), #5865F2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  font-weight: 600;
+  color: var(--button-text-color);
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.profileNameLarge {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-color);
+  margin-top: var(--spacing-md);
+  text-align: center;
+}
+
+.profileUsernameSmall {
+  font-size: var(--font-secondary);
+  color: var(--hint-color);
+  margin-top: 4px;
+}
+
+/* Extended Stats 2x2 */
+.statsGridExtended {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-sm);
+  padding: 0 var(--spacing-md);
+}
+
+.statItemCompact {
+  padding: var(--spacing-md);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.statValueLarge {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-color);
+}
+
+.statLabelSmall {
+  display: block;
+  font-size: var(--font-meta);
+  color: var(--hint-color);
+  margin-top: 2px;
+}
+
+/* Section Titles */
+.sectionTitle {
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text-color);
+  padding: var(--spacing-md) var(--spacing-md) var(--spacing-sm);
+}
+
+/* Recent Activity List */
+.recentList {
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  margin: 0 var(--spacing-md);
+  overflow: hidden;
+}
+
+.recentItem {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.recentItem:last-child {
+  border-bottom: none;
+}
+
+.recentItem:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.recentInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.recentName {
+  font-size: var(--font-secondary);
+  font-weight: 500;
+  color: var(--text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recentScore {
+  font-size: var(--font-meta);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+/* Quick Actions */
+.actionsSection {
+  margin: 0 var(--spacing-md);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: background 150ms;
+  background: transparent;
+  border: none;
+  width: 100%;
+  color: var(--text-color);
+  font-size: var(--font-secondary);
+  text-align: left;
+  font-family: inherit;
+}
+
+.actionRow:last-child {
+  border-bottom: none;
+}
+
+.actionRow:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.actionRow:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.actionIcon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.actionLabel {
+  flex: 1;
+}
+
+.actionArrow {
+  color: var(--hint-color);
+  font-size: 18px;
+}
+
+/* ============================================
    v49.0: WATCHLIST BUTTON IN DETAIL VIEW
    ============================================ */
 
@@ -3907,22 +4285,23 @@
 }
 
 .watchlistBtn {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: var(--radius-sm);
-  color: var(--hint-color);
+  color: var(--text-color);
   cursor: pointer;
   transition: all 150ms;
+  position: relative;
 }
 
 .watchlistBtn svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
 }
 
 .watchlistBtn.active {
@@ -3936,6 +4315,144 @@
 }
 
 /* ============================================
+   v58.0: SCAN BUTTON
+   ============================================ */
+
+.scanBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 150ms ease;
+  flex-shrink: 0;
+}
+
+.scanBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.scanBtn:not(:disabled):active {
+  transform: scale(0.95);
+}
+
+.scanBtn.scanning {
+  background: var(--section-bg);
+  border: 1px solid var(--button-color);
+  color: var(--button-color);
+}
+
+.scanBtnSpinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--button-color);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* ============================================
+   v58.0: SCAN PROGRESS BAR
+   ============================================ */
+
+.scanProgress {
+  height: 28px;
+  background: var(--section-bg);
+  border-radius: var(--radius-sm);
+  margin: var(--spacing-sm) var(--spacing-md) 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.scanProgressFill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--button-color) 0%, var(--accent) 100%);
+  border-radius: var(--radius-sm);
+  transition: width 300ms ease-out;
+}
+
+.scanProgressFill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.15) 50%,
+    transparent 100%
+  );
+  animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.scanProgressText {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: var(--font-meta);
+  font-weight: 500;
+  color: var(--text-color);
+  white-space: nowrap;
+  z-index: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================
+   v58.0: TOAST NOTIFICATIONS
+   ============================================ */
+
+.toast {
+  position: fixed;
+  bottom: calc(var(--safe-bottom) + 16px);
+  left: 16px;
+  right: 16px;
+  padding: 12px 16px;
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  font-size: var(--font-secondary);
+  text-align: center;
+  z-index: 500;
+  animation: slideUp 200ms ease-out;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.toast_success {
+  border-left: 4px solid var(--verdict-excellent);
+}
+
+.toast_error {
+  border-left: 4px solid var(--verdict-scam);
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* ============================================
    v49.0: LIVE SCAN INDICATOR
    ============================================ */
 
@@ -3943,4 +4460,149 @@
   font-size: var(--font-meta);
   color: var(--accent);
   animation: pulse 1s infinite;
+}
+
+/* ============================================
+   v55.0: HEADER WATCHLIST BUTTON
+   ============================================ */
+
+.watchlistBadge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  background: var(--accent);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+/* ============================================
+   v55.0: WATCHLIST SHEET
+   ============================================ */
+
+.watchlistSheet {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-height: 80vh;
+  background: var(--bg-color);
+  border-radius: 16px 16px 0 0;
+  animation: slideUp 200ms ease;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.watchlistSheetHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.watchlistSheetTitle {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-color);
+}
+
+.sheetCloseBtn {
+  background: transparent;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--hint-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sheetCloseBtn:active {
+  opacity: 0.7;
+}
+
+.watchlistSheetContent {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+  max-height: calc(80vh - 80px);
+}
+
+.watchlistSheetItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 100ms;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+}
+
+.watchlistSheetItem:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.watchlistSheetInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.watchlistSheetName {
+  display: block;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.watchlistSheetMeta {
+  display: block;
+  font-size: 13px;
+  color: var(--hint-color);
+}
+
+.watchlistSheetScore {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.watchlistSheetRemove {
+  background: transparent;
+  border: none;
+  padding: 8px;
+  cursor: pointer;
+  color: var(--hint-color);
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.watchlistSheetRemove:active {
+  opacity: 1;
 }
