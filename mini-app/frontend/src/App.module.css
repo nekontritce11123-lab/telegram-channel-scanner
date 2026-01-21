@@ -91,13 +91,9 @@
   padding-bottom: var(--safe-bottom);
 }
 
-/* v59.0: Desktop - центрированный контейнер */
+/* v59.1: Desktop - на всю ширину, без ограничений */
 @media (min-width: 768px) {
   .app {
-    max-width: 540px;
-    margin: 0 auto;
-    border-left: 1px solid rgba(255, 255, 255, 0.08);
-    border-right: 1px solid rgba(255, 255, 255, 0.08);
     min-height: 100vh;
   }
 }
@@ -4646,9 +4642,23 @@
 }
 
 /* ============================================
-   v59.0 DESKTOP COMPONENT OVERRIDES
+   v59.1 DESKTOP COMPONENT OVERRIDES
+   На всю ширину, равномерные отступы
    ============================================ */
 @media (min-width: 768px) {
+  /* v59.2: Detail page fills entire viewport */
+  .detailPage {
+    min-height: 100vh;
+  }
+
+  /* v59.1: Detail content fills screen, consistent padding */
+  .detailContent {
+    padding: var(--spacing-lg);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
   /* Channel Cards */
   .channelCard {
     padding: 20px;
@@ -4676,9 +4686,9 @@
     font-size: 22px;
   }
 
-  /* Detail Page Header */
+  /* Detail Page Header - без дополнительных отступов */
   .channelHeader {
-    padding: 28px 20px;
+    padding: 28px 0;
   }
 
   .headerAvatar {
@@ -4694,9 +4704,9 @@
     font-size: 17px;
   }
 
-  /* Speedometer */
+  /* Speedometer - без дополнительных margin */
   .speedometerContainer {
-    padding: 28px;
+    padding: 28px 0;
   }
 
   .speedometer {
@@ -4712,10 +4722,10 @@
     font-size: 17px;
   }
 
-  /* Stats Row */
+  /* Stats Row - без padding, наследует от detailContent */
   .statsRow {
     gap: 16px;
-    padding: 0 20px;
+    padding: 0;
   }
 
   .statCard {
@@ -4730,10 +4740,12 @@
     font-size: 14px;
   }
 
-  /* Metrics Grid */
+  /* Metrics Grid - растягивается на весь доступный экран */
   .metricsGrid {
     gap: 16px;
-    padding: 0 20px;
+    padding: 0;
+    flex: 1;
+    align-content: start;
   }
 
   .metricsBlock {
@@ -4764,10 +4776,11 @@
     height: 10px;
   }
 
-  /* Price Card */
+  /* Price Card - без margin, наследует от detailContent */
   .priceCard {
     padding: 24px;
-    margin: 20px;
+    margin: 0;
+    margin-bottom: var(--spacing-md);
   }
 
   .priceMain {
@@ -4809,20 +4822,26 @@
     height: 44px;
   }
 
-  /* Recommendations */
+  /* Recommendations - без margin */
   .recommendationItem {
     padding: 16px;
     font-size: 16px;
   }
 
-  /* Trust penalties */
+  /* Trust penalties - без margin */
   .trustPenaltiesSection {
     padding: 20px;
-    margin: 20px;
+    margin: 0;
+    margin-bottom: var(--spacing-md);
   }
 
   .trustPenaltyItem {
     padding: 14px 0;
     font-size: 16px;
+  }
+
+  /* v59.1: Footer bar fills remaining space */
+  .channelFooter {
+    margin-top: auto;
   }
 }
