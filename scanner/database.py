@@ -401,7 +401,7 @@ class CrawlerDB:
         username = username.lower().lstrip('@')
         cursor = self.conn.cursor()
         cursor.execute(
-            "UPDATE channels SET status = 'PROCESSING' WHERE username = ?",
+            "UPDATE channels SET status = 'PROCESSING' WHERE LOWER(username) = ?",
             (username,)
         )
         self.conn.commit()
@@ -590,7 +590,7 @@ class CrawlerDB:
                 linked_chat_id = ?,
                 linked_chat_title = ?,
                 scanned_at = datetime('now')
-            WHERE username = ? AND status = 'WAITING'
+            WHERE LOWER(username) = ? AND status = 'WAITING'
             RETURNING username
         """, (status, score, verdict, trust_factor, members, ad_links_json,
               category, category_secondary, breakdown_json,
@@ -622,10 +622,10 @@ class CrawlerDB:
         """
         username = username.lower().lstrip('@')
         cursor = self.conn.cursor()
-        # v56.1: Убрали LOWER() - username уже хранится в lowercase (см. line 311, 347, 473, 683)
+        # v59.4: LOWER() для case-insensitive (legacy данные могут быть mixed case)
         cursor.execute("""
             DELETE FROM channels
-            WHERE username = ? AND status = 'WAITING'
+            WHERE LOWER(username) = ? AND status = 'WAITING'
         """, (username,))
         self.conn.commit()
         return cursor.rowcount > 0
@@ -802,7 +802,7 @@ class CrawlerDB:
                 linked_chat_id = ?,
                 linked_chat_title = ?,
                 scanned_at = ?
-            WHERE username = ?
+            WHERE LOWER(username) = ?
         ''', (status, score, verdict, trust_factor, members, ad_links_json,
               category, category_secondary, breakdown_json,
               title, description, content_json,
@@ -830,7 +830,7 @@ class CrawlerDB:
         username = username.lower().lstrip('@')
         cursor = self.conn.cursor()
         cursor.execute(
-            "UPDATE channels SET category = ?, category_secondary = ?, category_percent = ? WHERE username = ?",
+            "UPDATE channels SET category = ?, category_secondary = ?, category_percent = ? WHERE LOWER(username) = ?",
             (category, category_secondary, percent, username)
         )
         self.conn.commit()
@@ -839,7 +839,7 @@ class CrawlerDB:
         """Возвращает запись о канале."""
         username = username.lower().lstrip('@')
         cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM channels WHERE username = ?", (username,))
+        cursor.execute("SELECT * FROM channels WHERE LOWER(username) = ?", (username,))
         row = cursor.fetchone()
 
         if not row:
@@ -1006,7 +1006,7 @@ class CrawlerDB:
         """
         username = username.lower().lstrip('@')
         cursor = self.conn.cursor()
-        cursor.execute("DELETE FROM channels WHERE username = ?", (username,))
+        cursor.execute("DELETE FROM channels WHERE LOWER(username) = ?", (username,))
         self.conn.commit()
         return cursor.rowcount > 0
 
@@ -1022,7 +1022,7 @@ class CrawlerDB:
         cursor.execute("""
             UPDATE channels
             SET status = 'WAITING', created_at = datetime('now')
-            WHERE username = ?
+            WHERE LOWER(username) = ?
         """, (username,))
         self.conn.commit()
         return cursor.rowcount > 0
@@ -1051,7 +1051,7 @@ class CrawlerDB:
 
         # Проверяем нет ли уже pending запроса на этот канал
         cursor.execute(
-            "SELECT id FROM scan_requests WHERE username = ? AND status = 'pending'",
+            "SELECT id FROM scan_requests WHERE LOWER(username) = ? AND status = 'pending'",
             (username,)
         )
         existing = cursor.fetchone()
