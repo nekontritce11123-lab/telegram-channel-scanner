@@ -38,6 +38,11 @@ from .scorer import calculate_final_score
 from .llm_analyzer import LLMAnalyzer, LLMAnalysisResult, OLLAMA_URL, OLLAMA_MODEL
 from .classifier import get_classifier
 from .config import ensure_ollama_running, check_ollama_available
+from .database import CrawlerDB
+from .metrics import get_message_reactions_count  # v57.0: для posts_raw
+from .json_compression import (
+    compress_breakdown, compress_posts_raw, compress_user_ids
+)  # v57.0: JSON compression
 
 
 async def scan_channel(channel: str) -> dict:
@@ -119,6 +124,26 @@ async def scan_channel(channel: str) -> dict:
         # v38.0: передаём llm_result в scorer
         result = calculate_final_score(chat, messages, comments_data, users, channel_health, llm_result=llm_result)
 
+        # v57.0: Собираем posts_raw для полного хранения
+        posts_raw = [{
+            'id': m.id if hasattr(m, 'id') else None,
+            'date': m.date.isoformat() if hasattr(m, 'date') and m.date else None,
+            'views': getattr(m, 'views', 0) or 0,
+            'forwards': getattr(m, 'forwards', 0) or 0,
+            'reactions': get_message_reactions_count(m) if hasattr(m, 'reactions') else 0,
+        } for m in messages[:50]]
+        result['posts_raw'] = compress_posts_raw(posts_raw)
+
+        # v57.0: Собираем user_ids для пересчёта forensics
+        user_ids = None
+        if users:
+            users_list = users if isinstance(users, list) else list(users.values())
+            user_ids = {
+                'ids': [u.id for u in users_list if hasattr(u, 'id') and u.id],
+                'premium_ids': [u.id for u in users_list if hasattr(u, 'id') and u.id and getattr(u, 'is_premium', False)],
+            }
+            result['user_ids'] = compress_user_ids(user_ids)
+
         # v22.0: Аватарки загружаются через /api/photo/{username}, не храним base64
         result['photo_url'] = None
 
@@ -126,6 +151,11 @@ async def scan_channel(channel: str) -> dict:
         result['scan_time'] = datetime.now().isoformat()
         result['title'] = getattr(chat, 'title', None)
         result['description'] = getattr(chat, 'description', None)
+
+        # v57.0: Добавляем channel_health и scan_result для save_to_database
+        result['channel_health'] = channel_health
+        result['linked_chat_id'] = getattr(scan_result, 'linked_chat_id', None)
+        result['linked_chat_title'] = getattr(scan_result, 'linked_chat_title', None)
 
         # v38.0: Сериализация LLM результата для сохранения в БД
         if llm_result:
@@ -493,6 +523,91 @@ def save_result(result: dict, output_path: Path) -> None:
     print(f"\nРезультат сохранён: {output_path}")
 
 
+def save_to_database(result: dict) -> None:
+    """v57.0: Сохраняет результат скана в базу данных с полными данными и compression."""
+    try:
+        db = CrawlerDB()
+        username = result.get('channel', '').lower()
+        if not username:
+            return
+
+        # Определяем статус по verdict
+        verdict = result.get('verdict', 'MEDIUM')
+        if verdict in ('EXCELLENT', 'GOOD'):
+            status = 'GOOD'
+        elif verdict == 'SCAM':
+            status = 'BAD'
+        else:
+            status = 'GOOD'  # MEDIUM, HIGH_RISK тоже сохраняем как GOOD
+
+        # Добавляем канал если не существует
+        db.add_channel(username)
+
+        # v57.0: Собираем все данные для claim_and_complete
+        breakdown = result.get('breakdown', {}) or {}
+        flags = result.get('flags', {}) or {}
+        channel_health = result.get('channel_health', {}) or {}
+        conviction = result.get('conviction', {}) or {}
+        raw_stats = result.get('raw_stats', {}) or {}
+
+        # v57.0: Compress breakdown для хранения
+        breakdown_compressed = compress_breakdown(breakdown)
+
+        # v57.0: Используем claim_and_complete с полным набором данных
+        db.claim_and_complete(
+            username=username,
+            status=status,
+            score=result.get('score', 0),
+            verdict=verdict,
+            trust_factor=result.get('trust_factor', 1.0),
+            members=result.get('members', 0),
+            ad_links=result.get('ad_links'),
+            category=result.get('category'),
+            breakdown=breakdown_compressed,
+            categories=result.get('categories'),
+            llm_analysis=breakdown.get('llm_analysis') if breakdown else None,
+            title=result.get('title'),
+            description=result.get('description'),
+            content_json=result.get('content_json'),
+            # v56.0: Новые поля
+            raw_score=result.get('raw_score'),
+            is_scam=result.get('is_scam', False),
+            scam_reason=result.get('scam_reason'),
+            tier=result.get('tier'),
+            trust_penalties=result.get('trust_details'),
+            conviction_score=conviction.get('effective_conviction') if conviction else None,
+            conviction_factors=conviction.get('factors') if conviction else None,
+            forensics=result.get('forensics'),
+            online_count=channel_health.get('online_count') if channel_health else None,
+            participants_count=channel_health.get('total_members') if channel_health else None,
+            channel_age_days=breakdown.get('age', {}).get('value') if breakdown.get('age') else None,
+            avg_views=raw_stats.get('avg_views') if raw_stats else None,
+            reach_percent=breakdown.get('reach', {}).get('value') if breakdown.get('reach') else None,
+            forward_rate=breakdown.get('forward_rate', {}).get('value') if breakdown.get('forward_rate') else None,
+            reaction_rate=breakdown.get('reaction_rate', {}).get('value') if breakdown.get('reaction_rate') else None,
+            avg_comments=breakdown.get('comments', {}).get('avg') if breakdown.get('comments') else None,
+            comments_enabled=flags.get('comments_enabled', True),
+            reactions_enabled=flags.get('reactions_enabled', True),
+            decay_ratio=breakdown.get('views_decay', {}).get('value') if breakdown.get('views_decay') else None,
+            decay_zone=breakdown.get('views_decay', {}).get('zone') if breakdown.get('views_decay') else None,
+            er_trend=breakdown.get('er_trend', {}).get('er_trend') if breakdown.get('er_trend') else None,
+            er_trend_status=breakdown.get('er_trend', {}).get('status') if breakdown.get('er_trend') else None,
+            ad_percentage=breakdown.get('llm_analysis', {}).get('ad_percentage') if breakdown.get('llm_analysis') else None,
+            bot_percentage=breakdown.get('llm_analysis', {}).get('bot_percentage') if breakdown.get('llm_analysis') else None,
+            comment_trust=breakdown.get('llm_analysis', {}).get('trust_score') if breakdown.get('llm_analysis') else None,
+            safety=result.get('safety'),
+            posts_raw=result.get('posts_raw'),
+            user_ids=result.get('user_ids'),
+            linked_chat_id=result.get('linked_chat_id'),
+            linked_chat_title=result.get('linked_chat_title'),
+        )
+
+        print(f"✓ Сохранено в БД: @{username} ({status})")
+
+    except Exception as e:
+        print(f"⚠ Ошибка сохранения в БД: {e}")
+
+
 async def main(channel: str = None):
     """Главная функция CLI."""
     if not channel:
@@ -506,11 +621,14 @@ async def main(channel: str = None):
         result = await scan_channel(channel)
         print_result(result)
 
-        # Сохраняем результат
+        # Сохраняем результат в JSON
         output_dir = Path(__file__).parent.parent / "output"
         channel_name = result['channel'] or 'unknown'
         output_path = output_dir / f"{channel_name}.json"
         save_result(result, output_path)
+
+        # v54.0: Сохраняем в базу данных
+        save_to_database(result)
 
         return result
 

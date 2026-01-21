@@ -1092,24 +1092,10 @@ def calculate_final_score(
             'raw_stats': get_raw_stats(messages)
         }
 
-    if is_scam:
-        return {
-            'channel': getattr(chat, 'username', None) or str(getattr(chat, 'id', 'unknown')),
-            'members': getattr(chat, 'members_count', 0),
-            'score': 0,
-            'verdict': 'SCAM',
-            'reason': scam_reason,
-            'conviction': conviction_details,
-            'breakdown': {},
-            'categories': {},
-            'flags': {
-                'is_scam': getattr(chat, 'is_scam', False),
-                'is_fake': getattr(chat, 'is_fake', False),
-                'is_verified': getattr(chat, 'is_verified', False),
-                'comments_enabled': comments_data.get('enabled', False)
-            },
-            'raw_stats': get_raw_stats(messages)
-        }
+    # v52.0: НЕ возвращаем сразу при SCAM! Устанавливаем флаг и продолжаем расчёт
+    # Это позволяет сохранить реальные баллы для анализа
+    scam_flag = is_scam
+    scam_reason_text = scam_reason if is_scam else None
 
     # Базовые данные
     views = [m.views for m in messages if hasattr(m, 'views') and m.views]
@@ -1133,24 +1119,10 @@ def calculate_final_score(
         forensics = UserForensics(users)
         forensics_result = forensics.analyze()
 
-        # FATALITY - обнуляет весь канал
+        # v52.0: FATALITY - НЕ возвращаем сразу! Устанавливаем флаг и продолжаем расчёт
         if forensics_result.id_clustering.get('fatality', False):
-            return {
-                'channel': channel_username or str(getattr(chat, 'id', 'unknown')),
-                'members': members,
-                'score': 0,
-                'verdict': 'SCAM',
-                'reason': 'ID Clustering FATALITY - обнаружена ферма ботов',
-                'conviction': conviction_details,
-                'breakdown': {},
-                'categories': {},
-                'forensics': {
-                    'id_clustering': forensics_result.id_clustering,
-                    'status': 'FATALITY'
-                },
-                'flags': {'is_verified': is_verified, 'comments_enabled': comments_enabled},
-                'raw_stats': get_raw_stats(messages)
-            }
+            scam_flag = True
+            scam_reason_text = 'ID Clustering FATALITY - обнаружена ферма ботов'
 
     breakdown = {}
     categories = {}
@@ -1491,6 +1463,9 @@ def calculate_final_score(
                 'score': 0,
                 'final_score': 0,
                 'verdict': 'EXCLUDED',
+                # v52.0: SCAM detection - сохраняем флаг даже для EXCLUDED
+                'is_scam': scam_flag,
+                'scam_reason': scam_reason_text,
                 'exclusion_reason': exclusion_reason,
                 'tier': 'EXCLUDED',
                 'tier_cap': 0,
@@ -1501,7 +1476,7 @@ def calculate_final_score(
                 'forensics': forensics_breakdown,
                 'conviction': conviction_details,
                 'flags': {
-                    'is_scam': getattr(chat, 'is_scam', False),
+                    'is_scam': scam_flag,  # v52.0: использует наш флаг
                     'is_fake': getattr(chat, 'is_fake', False),
                     'is_verified': is_verified,
                     'comments_enabled': comments_enabled,
@@ -1522,8 +1497,11 @@ def calculate_final_score(
 
     final_score = max(0, min(100, final_score))
 
-    # Вердикт
-    if final_score >= 75:
+    # v52.0: Вердикт с учётом scam_flag
+    # Если scam_flag=True, вердикт ВСЕГДА SCAM, независимо от баллов
+    if scam_flag:
+        verdict = 'SCAM'
+    elif final_score >= 75:
         verdict = 'EXCELLENT'
     elif final_score >= 55:
         verdict = 'GOOD'
@@ -1556,6 +1534,9 @@ def calculate_final_score(
         'score': final_score,
         'final_score': final_score,  # v37.2: алиас для совместимости
         'verdict': verdict,
+        # v52.0: SCAM detection - сохраняем реальные баллы + флаг
+        'is_scam': scam_flag,
+        'scam_reason': scam_reason_text,
         # v37.2: Tier System
         'tier': tier,
         'tier_cap': tier_cap,
@@ -1566,7 +1547,7 @@ def calculate_final_score(
         'forensics': forensics_breakdown,
         'conviction': conviction_details,
         'flags': {
-            'is_scam': getattr(chat, 'is_scam', False),
+            'is_scam': scam_flag,  # v52.0: использует наш флаг, не chat.is_scam
             'is_fake': getattr(chat, 'is_fake', False),
             'is_verified': is_verified,
             'comments_enabled': comments_enabled,
