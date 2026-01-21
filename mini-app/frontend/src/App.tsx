@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, JSX } from 'react'
 import { useTelegram } from './hooks/useTelegram'
-import { useChannels, useStats, useScan, useHistory, useWatchlist, Channel, ChannelDetail, ChannelFilters, BotInfo, StoredChannel, API_BASE } from './hooks/useApi'
+import { useChannels, useStats, useScan, useScanRequest, useHistory, useWatchlist, Channel, ChannelDetail, ChannelFilters, BotInfo, StoredChannel, API_BASE } from './hooks/useApi'
 import styles from './App.module.css'
 
 // All 17 categories
@@ -495,7 +495,8 @@ function App() {
   const { webApp, hapticLight, hapticMedium, hapticSuccess, hapticError } = useTelegram()
   const { channels, total, loading, error, hasMore, fetchChannels, reset } = useChannels()
   const { fetchStats } = useStats()  // v9.0: stats removed from UI
-  const { result: scanResult, loading: scanning, error: scanError, isLiveScan, scanChannel, reset: resetScan } = useScan()
+  const { result: scanResult, loading: scanning, error: scanError, scanChannel, reset: resetScan } = useScan()
+  const { submitRequest, loading: submitting } = useScanRequest()  // v58.0: Scan request queue
 
   // v55.0: History & Watchlist hooks (history removed from UI, kept for future)
   const { addToHistory } = useHistory()
@@ -596,22 +597,32 @@ function App() {
   }, [])
 
   // Handle search
+  // v58.0: Queue-based scan - first check DB, then submit to queue if not found
   const handleSearch = useCallback(async () => {
     const query = searchQuery.trim().replace('@', '')
     if (!query) return
 
     hapticMedium()
     setScanProgress(0)
+
+    // First try to get from DB
     const result = await scanChannel(query)
 
-    // v58.0: Show toast based on result
     if (result) {
+      // Found in DB - show channel detail
       setScanProgress(100)
-      showToast('success', `@${query} добавлен в базу`)
-    } else {
-      showToast('error', scanError || 'Канал не найден')
+      return
     }
-  }, [searchQuery, hapticMedium, scanChannel, scanError, showToast])
+
+    // Not found in DB - submit to queue
+    const queueResult = await submitRequest(query)
+    if (queueResult?.success) {
+      setScanProgress(100)
+      showToast('success', `@${query} добавлен в очередь`)
+    } else {
+      showToast('error', queueResult?.message || 'Ошибка добавления')
+    }
+  }, [searchQuery, hapticMedium, scanChannel, submitRequest, showToast])
 
   // Handle search result
   useEffect(() => {
@@ -628,16 +639,16 @@ function App() {
     }
   }, [handleSearch])
 
-  // v58.0: Progress simulation for live scan
+  // v58.0: Progress simulation for scan/submit
   useEffect(() => {
-    if (!scanning || !isLiveScan) {
+    if (!scanning && !submitting) {
       return
     }
     const interval = setInterval(() => {
       setScanProgress(p => p < 90 ? p + (90 - p) * 0.08 : p)
     }, 400)
     return () => clearInterval(interval)
-  }, [scanning, isLiveScan])
+  }, [scanning, submitting])
 
   // Infinite scroll
   const handleScroll = useCallback(() => {
@@ -965,8 +976,8 @@ function App() {
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={handleKeyDown}
             />
-            {scanning && <span className={styles.searchSpinner}>{isLiveScan ? 'Сканирование...' : '...'}</span>}
-            {searchQuery && !scanning && (
+            {(scanning || submitting) && <span className={styles.searchSpinner}>{submitting ? 'Очередь...' : '...'}</span>}
+            {searchQuery && !scanning && !submitting && (
               <button
                 className={styles.clearButton}
                 onClick={() => setSearchQuery('')}
@@ -999,12 +1010,12 @@ function App() {
           </button>
           {/* v58.0: Scan Button */}
           <button
-            className={`${styles.scanBtn} ${scanning ? styles.scanning : ''}`}
+            className={`${styles.scanBtn} ${(scanning || submitting) ? styles.scanning : ''}`}
             onClick={handleSearch}
-            disabled={!searchQuery.trim() || scanning}
+            disabled={!searchQuery.trim() || scanning || submitting}
             title="Сканировать канал"
           >
-            {scanning ? (
+            {(scanning || submitting) ? (
               <div className={styles.scanBtnSpinner} />
             ) : (
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1015,14 +1026,13 @@ function App() {
           </button>
         </div>
         {/* v58.0: Scan Progress Bar */}
-        {scanning && isLiveScan && (
+        {(scanning || submitting) && (
           <div className={styles.scanProgress}>
             <div className={styles.scanProgressFill} style={{ width: `${scanProgress}%` }} />
             <span className={styles.scanProgressText}>
-              {scanProgress < 20 ? 'Подключение...' :
-               scanProgress < 50 ? 'Сканирование постов...' :
-               scanProgress < 80 ? 'Анализ метрик...' :
-               'Сохранение...'}
+              {submitting ? 'Добавление в очередь...' :
+               scanProgress < 50 ? 'Поиск в базе...' :
+               'Загрузка данных...'}
             </span>
           </div>
         )}

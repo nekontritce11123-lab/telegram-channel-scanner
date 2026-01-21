@@ -164,6 +164,20 @@ class CrawlerDB:
         # Категории
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_status_category ON channels(status, category)')
 
+        # v58.0: Таблица очереди запросов на сканирование
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS scan_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                processed_at DATETIME DEFAULT NULL,
+                error TEXT DEFAULT NULL
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scan_requests_status ON scan_requests(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scan_requests_created ON scan_requests(created_at)')
+
         self.conn.commit()
 
     def _migrate_add_category(self):
@@ -1022,6 +1036,90 @@ class CrawlerDB:
         cursor.execute("UPDATE channels SET status = 'WAITING' WHERE status = 'PROCESSING'")
         self.conn.commit()
         return cursor.rowcount
+
+    # =========================================================================
+    # v58.0: Scan Requests Queue
+    # =========================================================================
+
+    def add_scan_request(self, username: str) -> int:
+        """
+        Добавляет запрос на сканирование в очередь.
+        Returns: ID созданного запроса
+        """
+        username = username.lower().lstrip('@')
+        cursor = self.conn.cursor()
+
+        # Проверяем нет ли уже pending запроса на этот канал
+        cursor.execute(
+            "SELECT id FROM scan_requests WHERE username = ? AND status = 'pending'",
+            (username,)
+        )
+        existing = cursor.fetchone()
+        if existing:
+            return existing[0]  # Возвращаем существующий ID
+
+        cursor.execute(
+            "INSERT INTO scan_requests (username, status) VALUES (?, 'pending')",
+            (username,)
+        )
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def get_scan_requests(self, limit: int = 5) -> list:
+        """
+        Возвращает последние запросы на сканирование.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT id, username, status, created_at, processed_at, error
+            FROM scan_requests
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = cursor.fetchall()
+        return [
+            {
+                'id': r[0],
+                'username': r[1],
+                'status': r[2],
+                'created_at': r[3],
+                'processed_at': r[4],
+                'error': r[5]
+            }
+            for r in rows
+        ]
+
+    def get_pending_scan_requests(self, limit: int = 10) -> list:
+        """
+        Возвращает pending запросы для обработки.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT id, username
+            FROM scan_requests
+            WHERE status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT ?
+        """, (limit,))
+        return [{'id': r[0], 'username': r[1]} for r in cursor.fetchall()]
+
+    def update_scan_request(self, request_id: int, status: str, error: str = None):
+        """
+        Обновляет статус запроса.
+        """
+        cursor = self.conn.cursor()
+        if status in ('done', 'error'):
+            cursor.execute("""
+                UPDATE scan_requests
+                SET status = ?, processed_at = datetime('now'), error = ?
+                WHERE id = ?
+            """, (status, error, request_id))
+        else:
+            cursor.execute(
+                "UPDATE scan_requests SET status = ? WHERE id = ?",
+                (status, request_id)
+            )
+        self.conn.commit()
 
     def close(self):
         """Закрывает соединение."""

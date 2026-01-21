@@ -332,6 +332,43 @@ export function useScan() {
 
 
 // ============================================================================
+// v58.0: SCAN REQUEST QUEUE
+// ============================================================================
+
+interface ScanRequestResponse {
+  success: boolean
+  request_id?: number
+  message: string
+}
+
+export function useScanRequest() {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submitRequest = useCallback(async (username: string): Promise<ScanRequestResponse | null> => {
+    setLoading(true)
+    setError(null)
+
+    try {
+      const data = await fetchAPI<ScanRequestResponse>('/api/scan/request', {
+        method: 'POST',
+        body: JSON.stringify({ username }),
+      })
+      return data
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Request failed'
+      setError(msg)
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  return { submitRequest, loading, error }
+}
+
+
+// ============================================================================
 // v49.0: HISTORY HOOK
 // ============================================================================
 

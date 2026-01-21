@@ -1847,6 +1847,85 @@ async def live_scan_channel(request: ScanRequest):
         return ScanResponse(success=False, error="Scan failed")
 
 
+# ============================================================================
+# v58.0: SCAN REQUEST QUEUE
+# ============================================================================
+
+class ScanRequestCreate(BaseModel):
+    username: str
+
+
+class ScanRequestItem(BaseModel):
+    id: int
+    username: str
+    status: str
+    created_at: str
+    processed_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ScanRequestResponse(BaseModel):
+    success: bool
+    request_id: Optional[int] = None
+    message: str
+
+
+@app.post("/api/scan/request", response_model=ScanRequestResponse)
+async def create_scan_request(request: ScanRequestCreate):
+    """
+    v58.0: Добавляет канал в очередь на сканирование.
+    Сканирование выполняется локальным worker'ом.
+    """
+    username = request.username.lower().lstrip('@')
+
+    # Валидация username
+    if not USERNAME_REGEX.match(username):
+        return ScanRequestResponse(success=False, message="Invalid username format")
+
+    # Проверяем не отсканирован ли уже канал (с баллами > 0)
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "SELECT score, status FROM channels WHERE username = ?",
+        (username,)
+    )
+    existing = cursor.fetchone()
+    if existing and existing[0] > 0 and existing[1] in ('GOOD', 'BAD'):
+        return ScanRequestResponse(
+            success=True,
+            request_id=0,
+            message=f"Channel already scanned (score: {existing[0]})"
+        )
+
+    # Добавляем в очередь
+    request_id = db.add_scan_request(username)
+
+    return ScanRequestResponse(
+        success=True,
+        request_id=request_id,
+        message="Request added to queue"
+    )
+
+
+@app.get("/api/scan/requests", response_model=list[ScanRequestItem])
+async def get_scan_requests(limit: int = 5):
+    """
+    v58.0: Возвращает последние запросы на сканирование.
+    """
+    requests = db.get_scan_requests(limit=limit)
+
+    return [
+        ScanRequestItem(
+            id=r['id'],
+            username=r['username'],
+            status=r['status'],
+            created_at=r['created_at'] or '',
+            processed_at=r['processed_at'],
+            error=r['error']
+        )
+        for r in requests
+    ]
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=3002)
