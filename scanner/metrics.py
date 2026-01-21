@@ -373,10 +373,23 @@ class FraudConvictionSystem:
         """
         F10: Много реакций, мало комментариев относительно размера (вес 15).
         v4.0: Если >500 реакций/пост, но <5 комментов - боты.
+        v47.2: НЕ срабатывает если комменты выключены (это норма).
         """
         total_reactions = sum(get_message_reactions_count(m) for m in self.messages)
         reactions_per_post = total_reactions / len(self.messages) if self.messages else 0
         avg_comments = self.comments_data.get('avg_comments', 0)
+        comments_enabled = self.comments_data.get('enabled', True)
+
+        # v47.2: Если комменты выключены — 0 комментов это норма, не фрод
+        if not comments_enabled:
+            return FraudFactor(
+                name='high_reactions_low_comments',
+                weight=0,
+                triggered=False,
+                value={'reactions_per_post': round(reactions_per_post, 1), 'comments_enabled': False},
+                threshold={'reactions': 500, 'comments': 5},
+                description="Комменты выключены — фактор не применяется"
+            )
 
         # Много реакций + мало комментариев = боты накручивают реакции
         triggered = reactions_per_post > 500 and avg_comments < 5
