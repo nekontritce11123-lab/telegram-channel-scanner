@@ -184,18 +184,6 @@ export interface ChannelFilters {
   page_size?: number
 }
 
-// v62.0: Telegram WebApp type for initData
-declare global {
-  interface Window {
-    Telegram?: {
-      WebApp?: {
-        initData?: string
-        platform?: string
-      }
-    }
-  }
-}
-
 // API functions
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {

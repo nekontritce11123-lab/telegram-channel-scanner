@@ -50,6 +50,7 @@ interface TelegramWebApp {
   isExpanded: boolean
   viewportHeight: number
   viewportStableHeight: number
+  initData: string  // v62.0: Raw initData string for backend verification
 }
 
 declare global {
