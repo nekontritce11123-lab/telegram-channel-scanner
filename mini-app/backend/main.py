@@ -509,7 +509,7 @@ def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
         'engagement': {
             'comments': {'max': 15, 'label': 'Комментарии'},
             'reaction_rate': {'max': 15, 'label': 'Реакции'},
-            'er_variation': {'max': 5, 'label': 'Разнообразие'},
+            'er_trend': {'max': 10, 'label': 'Тренд ER'},  # v62.5: was er_variation (max:5)
             'stability': {'max': 5, 'label': 'Стабильность ER'},
         },
         'reputation': {
@@ -768,10 +768,12 @@ def format_breakdown_for_ui(breakdown_data: dict, llm_analysis: dict = None) -> 
 
     categories = breakdown_data.get('categories', {})
 
-    # v23.0: KEY_MAPPING для совместимости со старыми данными
+    # v62.5: KEY_MAPPING — scorer.py key → METRIC_CONFIG key
+    # scorer.py produces: reaction_stability, source_diversity
+    # METRIC_CONFIG expects: stability, source
     KEY_MAPPING = {
-        'stability': 'reaction_stability',
-        'source': 'source_diversity',
+        'reaction_stability': 'stability',
+        'source_diversity': 'source',
     }
 
     # v48.0: Маппинг метрик в категории с labels (Score Metrics - имеют points/max)
@@ -910,11 +912,11 @@ def format_breakdown_for_ui(breakdown_data: dict, llm_analysis: dict = None) -> 
         calculated_max = 0  # v22.2: Сумма max всех items (учитывает floating weights)
 
         for metric_key, label in metrics.items():
-            # v23.0: Применяем KEY_MAPPING для совместимости
+            # v62.5: KEY_MAPPING maps scorer.py keys → METRIC_CONFIG keys
             source_key = metric_key
-            for old_key, new_key in KEY_MAPPING.items():
-                if new_key == metric_key and old_key in breakdown:
-                    source_key = old_key
+            for scorer_key, config_key in KEY_MAPPING.items():
+                if config_key == metric_key and scorer_key in breakdown:
+                    source_key = scorer_key
                     break
 
             metric_data = breakdown.get(source_key, breakdown.get(metric_key, {}))

@@ -234,6 +234,11 @@ const METRIC_DESCRIPTIONS: Record<string, { title: string; description: string; 
     description: 'Как часто посты репостят.',
     interpretation: 'Вирусный контент постоянно репостят. Мало репостов = слабая виральность.'
   },
+  'regularity': {
+    title: 'Регулярность',
+    description: 'Как часто выходят посты.',
+    interpretation: 'Оптимально 1-5 постов в день. Меньше 1 в неделю = мёртвый канал. Больше 10 = спам.'
+  },
   'comments': {
     title: 'Комментарии',
     description: 'Активность в комментариях.',
@@ -244,10 +249,10 @@ const METRIC_DESCRIPTIONS: Record<string, { title: string; description: string; 
     description: 'Как активно ставят реакции.',
     interpretation: 'Подписчики должны реагировать на посты. Нет реакций = мёртвая аудитория.'
   },
-  'er_variation': {
-    title: 'Разнообразие ER',
-    description: 'Насколько разные реакции на разные посты.',
-    interpretation: 'Естественно когда на разные посты разная реакция. Одинаково везде = накрутка.'
+  'er_trend': {
+    title: 'Тренд ER',
+    description: 'Растёт или падает вовлечённость.',
+    interpretation: 'Растущий ER = канал набирает аудиторию. Падающий = выгорание.'
   },
   'stability': {
     title: 'Стабильность ER',

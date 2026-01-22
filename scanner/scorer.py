@@ -1397,12 +1397,6 @@ def calculate_final_score(
     # Дополнительные данные для Trust Factor
     regularity_cv = calculate_post_regularity(messages)
 
-    # v41.0: ad_load больше не в breakdown (теперь LLM ad_percentage)
-    breakdown['regularity'] = {
-        'value': round(regularity_cv, 2),
-        'status': 'info_only'  # v13.0: только информационно
-    }
-
     # =========================================================================
     # v13.5: TRUST FACTOR (0.0-1.0) - мультипликатор доверия
     # Включает Forensics + Statistical Trust Penalties
