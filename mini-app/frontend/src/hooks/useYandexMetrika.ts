@@ -30,9 +30,12 @@ function safeYM(method: string, ...args: unknown[]): void {
   try {
     if (typeof window !== 'undefined' && window.ym && COUNTER_ID > 0) {
       window.ym(COUNTER_ID, method, ...args)
+      console.log('[YM] ✓', method, ...args)  // v62.0: Debug
+    } else {
+      console.log('[YM] ✗ not ready:', { ym: !!window.ym, counter: COUNTER_ID })
     }
-  } catch {
-    // Silent fail - аналитика не должна ломать приложение
+  } catch (e) {
+    console.log('[YM] error:', e)
   }
 }
 

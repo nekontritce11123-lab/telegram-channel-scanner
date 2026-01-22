@@ -549,8 +549,10 @@ function App() {
       isInitialized.current = true
       fetchStats()
       fetchChannels({ page: 1, page_size: 30, sort_by: 'score', sort_order: 'desc' })  // v59.6: По умолчанию по Score
+      // v62.0: Initial pageview for Яндекс.Метрика (defer:true doesn't auto-track in SPA)
+      hit('/', { title: 'Reklamshik - Главная' })
     }
-  }, [fetchStats, fetchChannels])
+  }, [fetchStats, fetchChannels, hit])
 
   // BackButton for channel detail
   useEffect(() => {
