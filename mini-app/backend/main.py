@@ -7,14 +7,19 @@ import os
 import sys
 import json
 import re
+import hmac
+import hashlib
+import asyncio
+import time
 from pathlib import Path
 from datetime import datetime
 from io import BytesIO
+from urllib.parse import parse_qs
 
 # v48.1: Regex для валидации Telegram username
 USERNAME_REGEX = re.compile(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$')
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -36,6 +41,58 @@ except ImportError:
     decompress_breakdown = lambda x: x
 
 load_dotenv()
+
+
+# ============================================================================
+# v62.0: Analytics - Telegram initData verification
+# ============================================================================
+
+def verify_telegram_init_data(init_data: str, bot_token: str) -> dict | None:
+    """
+    Верифицирует initData от Telegram и извлекает user_id.
+    Работает для ВСЕХ пользователей (не только Premium).
+    """
+    if not init_data or not bot_token:
+        return None
+    try:
+        parsed = parse_qs(init_data)
+        received_hash = parsed.get('hash', [''])[0]
+        if not received_hash:
+            return None
+
+        # Создаём data-check-string
+        data_check_parts = []
+        for key in sorted(parsed.keys()):
+            if key != 'hash':
+                data_check_parts.append(f"{key}={parsed[key][0]}")
+        data_check_string = '\n'.join(data_check_parts)
+
+        # Проверяем подпись
+        secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+        if calculated_hash != received_hash:
+            return None
+
+        # Извлекаем user
+        user_str = parsed.get('user', [''])[0]
+        if user_str:
+            user = json.loads(user_str)
+            return {'user_id': user.get('id'), 'username': user.get('username')}
+        return None
+    except Exception:
+        return None
+
+
+def get_user_id_from_request(request) -> int | None:
+    """Извлекает user_id из X-Telegram-Init-Data header."""
+    init_data = request.headers.get('X-Telegram-Init-Data')
+    if not init_data:
+        return None
+    bot_token = os.getenv("BOT_TOKEN")
+    user_data = verify_telegram_init_data(init_data, bot_token)
+    return user_data.get('user_id') if user_data else None
+
 
 # v15.0: CPM-based ценообразование (рублей за 1000 ПРОСМОТРОВ)
 # Калиброваны по реальным сделкам:
@@ -194,6 +251,31 @@ async def lifespan(app: FastAPI):
     db = CrawlerDB(db_path)
     print(f"База данных подключена: {db_path}")
 
+    # v62.0: Analytics table
+    db.conn.execute("PRAGMA journal_mode=WAL")
+    db.conn.execute("""
+        CREATE TABLE IF NOT EXISTS analytics_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            user_id INTEGER DEFAULT NULL,
+            session_id TEXT DEFAULT NULL,
+            username TEXT DEFAULT NULL,
+            score INTEGER DEFAULT NULL,
+            verdict TEXT DEFAULT NULL,
+            duration_ms INTEGER DEFAULT NULL,
+            status TEXT DEFAULT NULL,
+            error_message TEXT DEFAULT NULL,
+            properties TEXT DEFAULT NULL,
+            platform TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    db.conn.execute("CREATE INDEX IF NOT EXISTS idx_analytics_created ON analytics_events(created_at DESC)")
+    db.conn.execute("CREATE INDEX IF NOT EXISTS idx_analytics_type ON analytics_events(event_type)")
+    db.conn.execute("CREATE INDEX IF NOT EXISTS idx_analytics_user ON analytics_events(user_id)")
+    db.conn.commit()
+    print("v62.0: Analytics table ready")
+
     yield
 
     # Cleanup
@@ -208,6 +290,51 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+
+# ============================================================================
+# v62.0: Analytics - Async logging helper
+# ============================================================================
+
+async def log_analytics(
+    event_type: str,
+    user_id: int = None,
+    username: str = None,
+    score: int = None,
+    verdict: str = None,
+    duration_ms: int = None,
+    status: str = "success",
+    error_message: str = None,
+    properties: dict = None,
+    platform: str = None
+):
+    """
+    Асинхронно логирует событие. Никогда не ломает endpoint при ошибке.
+    """
+    try:
+        props_json = json.dumps(properties, ensure_ascii=False) if properties else None
+        await asyncio.to_thread(
+            _sync_log_event,
+            event_type, user_id, username, score, verdict,
+            duration_ms, status, error_message, props_json, platform
+        )
+    except Exception:
+        pass  # Silent fail
+
+
+def _sync_log_event(event_type, user_id, username, score, verdict,
+                    duration_ms, status, error_message, props_json, platform):
+    """Синхронная запись в SQLite."""
+    if db is None:
+        return
+    cursor = db.conn.cursor()
+    cursor.execute("""
+        INSERT INTO analytics_events
+        (event_type, user_id, username, score, verdict, duration_ms, status, error_message, properties, platform)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (event_type, user_id, username, score, verdict, duration_ms, status, error_message, props_json, platform))
+    db.conn.commit()
+
 
 # CORS для Mini App
 # Разрешаем конкретные домены + Telegram WebView
@@ -1660,7 +1787,7 @@ async def get_channels_count(
 
 
 @app.get("/api/channels/{username}")
-async def get_channel(username: str):
+async def get_channel(username: str, request: Request):
     """
     Получить детали канала по username.
     Если канала нет в базе - вернуть 404.
@@ -1669,6 +1796,9 @@ async def get_channel(username: str):
     иначе использует estimate_breakdown() как fallback.
     Поддержка Info Metrics (ad_load, regularity, posting_frequency, private_links).
     """
+    start_time = time.perf_counter()
+    user_id = get_user_id_from_request(request)
+    platform = request.headers.get('X-Platform', 'unknown')
     username = username.lower().lstrip("@")
 
     # v48.2: Валидация username (консистентность с get_channel_photo)
@@ -1811,6 +1941,18 @@ async def get_channel(username: str):
         cpm_max=price_max,
         breakdown=breakdown
     )
+
+    # v62.0: Analytics logging
+    asyncio.create_task(log_analytics(
+        event_type='channel_view',
+        user_id=user_id,
+        username=str(row[0]),
+        score=score,
+        verdict=verdict,
+        duration_ms=int((time.perf_counter() - start_time) * 1000),
+        platform=platform,
+        properties={'members': members, 'category': category}
+    ))
 
     return {
         "username": str(row[0]) if row[0] else "",
@@ -2007,6 +2149,90 @@ async def live_scan_channel(request: ScanRequest):
 
 
 # ============================================================================
+# v62.0: ANALYTICS ENDPOINTS
+# ============================================================================
+
+class EventCreate(BaseModel):
+    event_type: str
+    user_id: Optional[int] = None
+    session_id: Optional[str] = None
+    properties: Optional[dict] = None
+    platform: Optional[str] = None
+
+
+@app.post("/api/events")
+async def track_event(event: EventCreate, request: Request):
+    """v62.0: Endpoint для frontend event tracking."""
+    # Попробовать извлечь user_id из header если не передан
+    user_id = event.user_id or get_user_id_from_request(request)
+
+    asyncio.create_task(log_analytics(
+        event_type=event.event_type,
+        user_id=user_id,
+        properties=event.properties,
+        platform=event.platform or request.headers.get('X-Platform', 'unknown')
+    ))
+    return {"success": True}
+
+
+@app.get("/api/analytics/summary")
+async def get_analytics_summary(days: int = 7):
+    """v62.0: Сводка аналитики за период."""
+    cursor = db.conn.cursor()
+
+    # DAU за каждый день
+    cursor.execute("""
+        SELECT DATE(created_at) as day, COUNT(DISTINCT user_id) as dau
+        FROM analytics_events
+        WHERE created_at >= datetime('now', ? || ' days')
+          AND user_id IS NOT NULL
+        GROUP BY DATE(created_at)
+        ORDER BY day DESC
+    """, (f"-{days}",))
+    dau_by_day = {row[0]: row[1] for row in cursor.fetchall()}
+
+    # События по типам
+    cursor.execute("""
+        SELECT event_type, COUNT(*) as count, AVG(duration_ms) as avg_ms
+        FROM analytics_events
+        WHERE created_at >= datetime('now', ? || ' days')
+        GROUP BY event_type
+    """, (f"-{days}",))
+    events = {row[0]: {"count": row[1], "avg_ms": round(row[2], 1) if row[2] else None}
+              for row in cursor.fetchall()}
+
+    # Топ каналов
+    cursor.execute("""
+        SELECT username, COUNT(*) as cnt
+        FROM analytics_events
+        WHERE event_type IN ('scan_request', 'channel_view')
+          AND created_at >= datetime('now', ? || ' days')
+          AND username IS NOT NULL
+        GROUP BY username ORDER BY cnt DESC LIMIT 10
+    """, (f"-{days}",))
+    top_channels = [{"username": row[0], "count": row[1]} for row in cursor.fetchall()]
+
+    # Воронка конверсии
+    cursor.execute("""
+        SELECT
+            COUNT(DISTINCT CASE WHEN event_type = 'app_open' THEN user_id END) as opens,
+            COUNT(DISTINCT CASE WHEN event_type IN ('search_submit', 'channel_view') THEN user_id END) as browse,
+            COUNT(DISTINCT CASE WHEN event_type = 'channel_detail' THEN user_id END) as detail
+        FROM analytics_events
+        WHERE created_at >= datetime('now', ? || ' days')
+    """, (f"-{days}",))
+    funnel = cursor.fetchone()
+
+    return {
+        "period_days": days,
+        "dau_by_day": dau_by_day,
+        "events": events,
+        "top_channels": top_channels,
+        "funnel": {"opens": funnel[0], "browse": funnel[1], "detail": funnel[2]} if funnel else {}
+    }
+
+
+# ============================================================================
 # v58.0: SCAN REQUEST QUEUE
 # ============================================================================
 
@@ -2049,15 +2275,27 @@ def _write_requests(requests: list):
 
 
 @app.post("/api/scan/request", response_model=ScanRequestResponse)
-async def create_scan_request(request: ScanRequestCreate):
+async def create_scan_request(scan_req: ScanRequestCreate, request: Request):
     """
     v61.0: Добавляет канал в очередь на сканирование.
     Записывает в requests.json для забора локальным краулером через SCP.
     """
-    username = request.username.lower().lstrip('@')
+    start_time = time.perf_counter()
+    user_id = get_user_id_from_request(request)
+    platform = request.headers.get('X-Platform', 'unknown')
+    username = scan_req.username.lower().lstrip('@')
 
     # Валидация username
     if not USERNAME_REGEX.match(username):
+        asyncio.create_task(log_analytics(
+            event_type='scan_request',
+            user_id=user_id,
+            username=username,
+            status='error',
+            error_message='Invalid username format',
+            duration_ms=int((time.perf_counter() - start_time) * 1000),
+            platform=platform
+        ))
         return ScanRequestResponse(success=False, message="Invalid username format")
 
     # Проверяем не отсканирован ли уже канал (с баллами > 0)
@@ -2068,6 +2306,15 @@ async def create_scan_request(request: ScanRequestCreate):
     )
     existing = cursor.fetchone()
     if existing and existing[0] is not None and existing[0] > 0 and existing[1] in ('GOOD', 'BAD'):
+        asyncio.create_task(log_analytics(
+            event_type='scan_request',
+            user_id=user_id,
+            username=username,
+            score=existing[0],
+            status='already_scanned',
+            duration_ms=int((time.perf_counter() - start_time) * 1000),
+            platform=platform
+        ))
         return ScanRequestResponse(
             success=True,
             request_id=0,
@@ -2080,6 +2327,15 @@ async def create_scan_request(request: ScanRequestCreate):
     # Проверяем дубликат в очереди
     existing_usernames = [r.get("username", "").lower() for r in requests_list]
     if username in existing_usernames:
+        asyncio.create_task(log_analytics(
+            event_type='scan_request',
+            user_id=user_id,
+            username=username,
+            status='already_queued',
+            duration_ms=int((time.perf_counter() - start_time) * 1000),
+            platform=platform,
+            properties={'queue_position': existing_usernames.index(username) + 1}
+        ))
         return ScanRequestResponse(
             success=True,
             request_id=len(requests_list),
@@ -2092,6 +2348,16 @@ async def create_scan_request(request: ScanRequestCreate):
         "requested_at": datetime.now().isoformat()
     })
     _write_requests(requests_list)
+
+    asyncio.create_task(log_analytics(
+        event_type='scan_request',
+        user_id=user_id,
+        username=username,
+        status='queued',
+        duration_ms=int((time.perf_counter() - start_time) * 1000),
+        platform=platform,
+        properties={'queue_position': len(requests_list)}
+    ))
 
     return ScanRequestResponse(
         success=True,

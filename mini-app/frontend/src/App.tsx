@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, JSX } from 'react'
 import { useTelegram } from './hooks/useTelegram'
 import { useChannels, useStats, useScan, useScanRequest, useHistory, useWatchlist, Channel, ChannelDetail, ChannelFilters, BotInfo, StoredChannel, API_BASE } from './hooks/useApi'
+import { useYandexMetrika } from './hooks/useYandexMetrika'
 import styles from './App.module.css'
 
 // All 17 categories
@@ -502,6 +503,9 @@ function App() {
   const { addToHistory } = useHistory()
   const { watchlist, isInWatchlist, addToWatchlist, removeFromWatchlist } = useWatchlist()
 
+  // v62.0: Яндекс.Метрика analytics
+  const { reachGoal, hit } = useYandexMetrika()
+
   // State
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -588,7 +592,9 @@ function App() {
     reset()
     fetchChannels(buildFilters(1))
     setShowFilterSheet(false)
-  }, [buildFilters, reset, fetchChannels])
+    // v62.0: Analytics
+    reachGoal('filter_applied', { category: selectedCategory, minScore, sortBy })
+  }, [buildFilters, reset, fetchChannels, reachGoal, selectedCategory, minScore, sortBy])
 
   // v59.7: Fetch filter preview count when filter sheet is open
   useEffect(() => {
@@ -638,12 +644,14 @@ function App() {
     if (!query) return
 
     hapticMedium()
+    reachGoal('search_submitted', { query })  // v62.0
 
     // First try to get from DB (only if fully processed)
     const result = await scanChannel(query, true)
 
     if (result) {
       // Found in DB and fully processed - show channel detail
+      reachGoal('search_found', { query, username: result.username, score: result.score })  // v62.0
       return
     }
 
@@ -651,10 +659,12 @@ function App() {
     const queueResult = await submitRequest(query)
     if (queueResult?.success) {
       showToast('success', `@${query} добавлен в очередь`)
+      reachGoal('search_queued', { query })  // v62.0
     } else {
       showToast('error', queueResult?.message || 'Ошибка добавления')
+      reachGoal('search_error', { query, error: queueResult?.message })  // v62.0
     }
-  }, [searchQuery, hapticMedium, scanChannel, submitRequest, showToast])
+  }, [searchQuery, hapticMedium, scanChannel, submitRequest, showToast, reachGoal])
 
   // Handle search result
   useEffect(() => {
@@ -689,7 +699,10 @@ function App() {
     hapticLight()
     addToHistory(channel)  // v49.0: Auto-add to history on view
     scanChannel(channel.username)
-  }, [hapticLight, scanChannel, addToHistory])
+    // v62.0: Analytics
+    reachGoal('channel_viewed', { username: channel.username, score: channel.score, source: 'list' })
+    hit(`/channel/${channel.username}`, { title: `@${channel.username}` })
+  }, [hapticLight, scanChannel, addToHistory, reachGoal, hit])
 
   // Close channel detail
   const closeChannelDetail = useCallback(() => {

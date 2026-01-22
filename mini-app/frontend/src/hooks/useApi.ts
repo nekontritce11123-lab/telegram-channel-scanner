@@ -184,14 +184,37 @@ export interface ChannelFilters {
   page_size?: number
 }
 
+// v62.0: Telegram WebApp type for initData
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp?: {
+        initData?: string
+        platform?: string
+      }
+    }
+  }
+}
+
 // API functions
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options?.headers as Record<string, string>),
+  }
+
+  // v62.0: Добавляем Telegram initData для user tracking
+  const tg = window.Telegram?.WebApp
+  if (tg?.initData) {
+    headers['X-Telegram-Init-Data'] = tg.initData
+  }
+  if (tg?.platform) {
+    headers['X-Platform'] = tg.platform
+  }
+
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    headers,
   })
 
   if (!response.ok) {
