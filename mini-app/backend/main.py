@@ -7,7 +7,8 @@ import os
 import sys
 import json
 import re
-import httpx
+from pathlib import Path
+from datetime import datetime
 from io import BytesIO
 
 # v48.1: Regex для валидации Telegram username
@@ -19,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 from dotenv import load_dotenv
+import httpx
 
 # Добавляем путь к scanner (на сервере: /root/reklamshik/)
 backend_dir = os.path.dirname(os.path.abspath(__file__))
@@ -645,18 +647,19 @@ def format_breakdown_for_ui(breakdown_data: dict, llm_analysis: dict = None) -> 
         'source': 'source_diversity',
     }
 
-    # v23.0: Маппинг метрик в категории с labels (Score Metrics - имеют points/max)
+    # v48.0: Маппинг метрик в категории с labels (Score Metrics - имеют points/max)
     METRIC_CONFIG = {
         'quality': {
             'cv_views': 'CV просмотров',
             'reach': 'Охват',
-            'views_decay': 'Стабильность',
+            'regularity': 'Регулярность',  # v48.0: NEW
             'forward_rate': 'Репосты',
+            # views_decay → info_only (points=0, max=0)
         },
         'engagement': {
             'comments': 'Комментарии',
+            'er_trend': 'Тренд ER',  # v48.0: NEW (заменил er_variation)
             'reaction_rate': 'Реакции',
-            'er_variation': 'Разнообразие',
             'reaction_stability': 'Стабильность ER',
         },
         'reputation': {
@@ -1009,6 +1012,9 @@ PENALTY_NAMES = {
     'posting_frequency': 'Частота постинга',
     'private_links': 'Приватные ссылки',
     'reaction_flatness': 'Плоские реакции',
+    # v60.0: Added missing penalties
+    'spam_posting': 'Спам-постинг',
+    'scam_network': 'Скам-сеть',
 }
 
 
@@ -1045,6 +1051,71 @@ def extract_trust_penalties_from_details(trust_details: dict) -> list:
 
     # Сортируем по multiplier (самые серьёзные первые)
     penalties.sort(key=lambda x: x['multiplier'])
+
+    return penalties
+
+
+def extract_llm_penalties(llm_analysis: dict) -> list:
+    """
+    v60.3: Извлекает LLM штрафы (боты, реклама) из llm_analysis.
+
+    Args:
+        llm_analysis: dict с полями bot_percentage, ad_percentage, bot_mult, ad_mult
+
+    Returns:
+        list of {'name': str, 'multiplier': float, 'description': str}
+    """
+    if not llm_analysis:
+        return []
+
+    penalties = []
+
+    # Bot penalty
+    bot_mult = llm_analysis.get('bot_mult', 1.0)
+    bot_pct = llm_analysis.get('bot_percentage', 0)
+    if bot_mult < 1.0 and bot_pct:
+        penalties.append({
+            'name': 'Боты в комментариях',
+            'multiplier': bot_mult,
+            'description': f'{bot_pct}% комментариев от ботов'
+        })
+
+    # Ad penalty
+    ad_mult = llm_analysis.get('ad_mult', 1.0)
+    ad_pct = llm_analysis.get('ad_percentage', 0)
+    if ad_mult < 1.0 and ad_pct:
+        penalties.append({
+            'name': 'Рекламная нагрузка',
+            'multiplier': ad_mult,
+            'description': f'{ad_pct}% постов — реклама'
+        })
+
+    return penalties
+
+
+def _build_trust_penalties(trust_details: dict, breakdown: dict, trust_factor: float, score: int) -> list:
+    """
+    v60.3: Собирает все штрафы: forensic (trust_details) + LLM (bot/ad).
+    """
+    penalties = []
+
+    # 1. Forensic penalties из trust_details
+    if trust_details:
+        penalties.extend(extract_trust_penalties_from_details(trust_details))
+
+    # 2. LLM penalties из breakdown
+    if breakdown:
+        llm_data = breakdown.get('ll', breakdown.get('llm_analysis', {}))
+        if llm_data:
+            penalties.extend(extract_llm_penalties(llm_data))
+
+    # 3. Fallback если нет штрафов но trust < 1.0
+    if not penalties and trust_factor < 1.0:
+        penalties = estimate_trust_penalties(trust_factor, score)
+
+    # Сортируем по multiplier (самые серьёзные первые)
+    if penalties:
+        penalties.sort(key=lambda x: x.get('multiplier', 1.0))
 
     return penalties
 
@@ -1584,6 +1655,10 @@ async def get_channels_count(
     return {"count": total}
 
 
+# v61.0: Endpoints export/import/reset удалены
+# БД теперь копируется через SCP, синхронизация не нужна
+
+
 @app.get("/api/channels/{username}")
 async def get_channel(username: str):
     """
@@ -1695,17 +1770,15 @@ async def get_channel(username: str):
         if 'is_verified' in flags:
             is_verified = flags.get('is_verified', False)
 
-    # v52.2: Trust penalties - сначала пытаемся использовать реальные trust_details
-    trust_penalties = []
+    # v60.3: Trust penalties (forensic + LLM)
+    trust_details = {}
+    breakdown_for_llm = {}
     if real_breakdown_data:
         bd = real_breakdown_data.get('breakdown', real_breakdown_data)
         trust_details = bd.get('trust_details', {})
-        if trust_details:
-            trust_penalties = extract_trust_penalties_from_details(trust_details)
+        breakdown_for_llm = bd
 
-    # Fallback на estimate если нет реальных данных
-    if not trust_penalties and trust_factor < 1.0:
-        trust_penalties = estimate_trust_penalties(trust_factor, score)
+    trust_penalties = _build_trust_penalties(trust_details, breakdown_for_llm, trust_factor, score)
 
     # v13.0: Рассчитываем цену с ВСЕМИ мультипликаторами
     # v59.6: Передаём реальное avg_views из БД
@@ -1918,8 +1991,8 @@ async def live_scan_channel(request: ScanRequest):
             "cpm_max": price_max,
             "recommendations": [r.dict() for r in recommendations],
             "breakdown": ui_breakdown,
-            # v52.2: Используем реальные trust_details если есть
-            "trust_penalties": extract_trust_penalties_from_details(trust_details) if trust_details else estimate_trust_penalties(trust_factor, score),
+            # v60.3: Trust penalties с учётом LLM штрафов
+            "trust_penalties": _build_trust_penalties(trust_details, breakdown, trust_factor, score),
             "is_verified": is_verified,
             "source": "live_scan",
         }
@@ -1956,11 +2029,30 @@ class ScanRequestResponse(BaseModel):
     message: str
 
 
+# v61.0: Путь к файлу запросов
+REQUESTS_FILE = Path("/root/reklamshik/requests.json")
+
+
+def _read_requests() -> list:
+    """Читает requests.json."""
+    if not REQUESTS_FILE.exists():
+        return []
+    try:
+        return json.loads(REQUESTS_FILE.read_text())
+    except (json.JSONDecodeError, IOError):
+        return []
+
+
+def _write_requests(requests: list):
+    """Записывает requests.json."""
+    REQUESTS_FILE.write_text(json.dumps(requests, indent=2, ensure_ascii=False))
+
+
 @app.post("/api/scan/request", response_model=ScanRequestResponse)
 async def create_scan_request(request: ScanRequestCreate):
     """
-    v58.0: Добавляет канал в очередь на сканирование.
-    Сканирование выполняется локальным worker'ом.
+    v61.0: Добавляет канал в очередь на сканирование.
+    Записывает в requests.json для забора локальным краулером через SCP.
     """
     username = request.username.lower().lstrip('@')
 
@@ -1968,15 +2060,13 @@ async def create_scan_request(request: ScanRequestCreate):
     if not USERNAME_REGEX.match(username):
         return ScanRequestResponse(success=False, message="Invalid username format")
 
-    # v59.4: Проверяем не отсканирован ли уже канал (с баллами > 0)
-    # LOWER() для case-insensitive поиска
+    # Проверяем не отсканирован ли уже канал (с баллами > 0)
     cursor = db.conn.cursor()
     cursor.execute(
         "SELECT score, status FROM channels WHERE LOWER(username) = ?",
         (username,)
     )
     existing = cursor.fetchone()
-    # v59.4: Защита от None — score может быть NULL в БД
     if existing and existing[0] is not None and existing[0] > 0 and existing[1] in ('GOOD', 'BAD'):
         return ScanRequestResponse(
             success=True,
@@ -1984,83 +2074,46 @@ async def create_scan_request(request: ScanRequestCreate):
             message=f"Channel already scanned (score: {existing[0]})"
         )
 
+    # Читаем текущие запросы
+    requests_list = _read_requests()
+
+    # Проверяем дубликат в очереди
+    existing_usernames = [r.get("username", "").lower() for r in requests_list]
+    if username in existing_usernames:
+        return ScanRequestResponse(
+            success=True,
+            request_id=len(requests_list),
+            message="Already in queue"
+        )
+
     # Добавляем в очередь
-    request_id = db.add_scan_request(username)
+    requests_list.append({
+        "username": username,
+        "requested_at": datetime.now().isoformat()
+    })
+    _write_requests(requests_list)
 
     return ScanRequestResponse(
         success=True,
-        request_id=request_id,
+        request_id=len(requests_list),
         message="Request added to queue"
     )
 
 
-@app.get("/api/scan/requests", response_model=list[ScanRequestItem])
-async def get_scan_requests(limit: int = 5):
+@app.get("/api/scan/requests")
+async def get_scan_requests(limit: int = 10):
     """
-    v58.0: Возвращает последние запросы на сканирование.
+    v61.0: Возвращает текущую очередь запросов из requests.json.
     """
-    requests = db.get_scan_requests(limit=limit)
-
-    return [
-        ScanRequestItem(
-            id=r['id'],
-            username=r['username'],
-            status=r['status'],
-            created_at=r['created_at'] or '',
-            processed_at=r['processed_at'],
-            error=r['error']
-        )
-        for r in requests
-    ]
-
-
-# ============================================================================
-# v59.8: QUEUE SYNC FOR LOCAL CRAWLER
-# ============================================================================
-
-@app.get("/api/queue/pending")
-async def get_pending_queue():
-    """
-    v59.8: Возвращает каналы в очереди с приоритетом (пользовательские запросы).
-    Используется локальным краулером для синхронизации.
-    """
-    cursor = db.conn.cursor()
-    cursor.execute("""
-        SELECT username, priority, created_at
-        FROM channels
-        WHERE status = 'WAITING' AND priority > 0
-        ORDER BY priority DESC, created_at ASC
-    """)
-    rows = cursor.fetchall()
+    requests_list = _read_requests()
 
     return {
-        "channels": [
-            {"username": row[0], "priority": row[1], "created_at": row[2]}
-            for row in rows
-        ],
-        "count": len(rows)
+        "queue": requests_list[-limit:] if limit else requests_list,
+        "count": len(requests_list)
     }
 
 
-@app.post("/api/queue/sync")
-async def mark_synced(usernames: list[str]):
-    """
-    v59.8: Помечает каналы как синхронизированные (сбрасывает priority).
-    Вызывается после того как локальный краулер забрал их в свою очередь.
-    """
-    if not usernames:
-        return {"success": True, "updated": 0}
-
-    cursor = db.conn.cursor()
-    placeholders = ','.join(['?' for _ in usernames])
-    cursor.execute(f"""
-        UPDATE channels
-        SET priority = 0
-        WHERE LOWER(username) IN ({placeholders}) AND status = 'WAITING'
-    """, [u.lower() for u in usernames])
-    db.conn.commit()
-
-    return {"success": True, "updated": cursor.rowcount}
+# v61.0: QUEUE SYNC удалён - используем requests.json файл
 
 
 if __name__ == "__main__":

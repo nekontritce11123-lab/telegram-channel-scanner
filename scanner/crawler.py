@@ -26,7 +26,7 @@ import asyncio
 import re
 import random
 import json
-import httpx  # v59.8: для синхронизации с сервером
+# v61.0: httpx удалён - используем SCP синхронизацию через sync.py
 from datetime import datetime
 from typing import Optional
 
@@ -41,6 +41,7 @@ from .metrics import get_message_reactions_count  # v56.0: для posts_raw
 from .json_compression import (
     compress_breakdown, compress_posts_raw, compress_user_ids
 )  # v23.0: JSON compression
+from .sync import fetch_requests, push_database  # v61.0: SCP синхронизация
 # v46.0: Brand Safety теперь в LLM Analyzer, стоп-слова deprecated
 
 # v43.0: Централизованная конфигурация
@@ -224,63 +225,8 @@ class SmartCrawler:
             logger.error(f"Failed to add seeds: {e}")
             return 0
 
-    async def _sync_from_server(self):
-        """
-        v59.8: Синхронизирует очередь с сервером.
-        Забирает пользовательские запросы (priority > 0) и добавляет в локальную очередь.
-        """
-        API_URL = "https://ads-api.factchain-traker.online"
-
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                # Получаем pending каналы с сервера
-                response = await client.get(f"{API_URL}/api/queue/pending")
-                if response.status_code != 200:
-                    print(f"⚠ Синхронизация: сервер вернул {response.status_code}")
-                    return
-
-                data = response.json()
-                channels = data.get("channels", [])
-
-                if not channels:
-                    print("✓ Синхронизация: нет новых запросов")
-                    return
-
-                # Добавляем в локальную очередь
-                added = 0
-                synced_usernames = []
-                for ch in channels:
-                    username = ch["username"].lower()
-                    priority = ch.get("priority", 1)
-
-                    # Добавляем с приоритетом
-                    cursor = self.db.conn.cursor()
-                    cursor.execute("""
-                        INSERT INTO channels (username, status, priority, found_via)
-                        VALUES (?, 'WAITING', ?, 'user_request')
-                        ON CONFLICT(username) DO UPDATE SET
-                            priority = MAX(priority, ?),
-                            status = CASE WHEN status IN ('GOOD', 'BAD') THEN status ELSE 'WAITING' END
-                    """, (username, priority, priority))
-                    self.db.conn.commit()
-
-                    if cursor.rowcount > 0:
-                        added += 1
-                    synced_usernames.append(username)
-
-                print(f"✓ Синхронизация: {len(channels)} запросов с сервера, {added} добавлено")
-
-                # Помечаем как синхронизированные на сервере
-                if synced_usernames:
-                    await client.post(
-                        f"{API_URL}/api/queue/sync",
-                        json=synced_usernames
-                    )
-
-        except httpx.ConnectError:
-            print("⚠ Синхронизация: сервер недоступен (работаем оффлайн)")
-        except Exception as e:
-            print(f"⚠ Синхронизация: ошибка {e}")
+    # v61.0: Старые HTTP sync функции удалены
+    # Используем SCP синхронизацию через scanner/sync.py
 
     def extract_links(self, messages: list, channel_username: str) -> set:
         """
@@ -717,8 +663,19 @@ class SmartCrawler:
             print("\nДобавляю seed каналы:")
             self.add_seeds(seeds)
 
-        # v59.8: Синхронизация с сервером - забираем пользовательские запросы
-        await self._sync_from_server()
+        # v61.0: SCP синхронизация - забираем запросы с сервера
+        try:
+            requests = fetch_requests()
+            if requests:
+                added = 0
+                for username in requests:
+                    if self.db.add_channel(username, parent="user_request"):
+                        added += 1
+                print(f"✓ Синхронизация: {len(requests)} запросов с сервера, {added} добавлено")
+            else:
+                print("✓ Синхронизация: нет новых запросов")
+        except Exception as e:
+            print(f"⚠ Синхронизация: {e}")
 
         # Статистика
         stats = self.db.get_stats()
@@ -732,7 +689,7 @@ class SmartCrawler:
             print("\nОчередь пуста! Добавьте seed каналы.")
             return
 
-        print(f"\nЗапускаю краулер (v43.0 all-or-nothing)...")
+        print(f"\nЗапускаю краулер v61.0...")
         print("Нажми Ctrl+C для остановки\n")
 
         try:
@@ -884,6 +841,12 @@ class SmartCrawler:
 
         finally:
             await self.stop()
+
+            # v61.0: Отправляем БД на сервер после завершения
+            try:
+                push_database()
+            except Exception as e:
+                print(f"⚠ Ошибка отправки БД: {e}")
 
             # v41.1: Компактная финальная статистика
             stats = self.db.get_stats()

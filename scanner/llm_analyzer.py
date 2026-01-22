@@ -980,7 +980,7 @@ class LLMAnalyzer:
     def __init__(self):
         # v23.0: unified cache from cache.py
         self.cache = get_llm_cache()
-        print(f"LLM ANALYZER v40.0: Ollama ({OLLAMA_MODEL})")
+        print(f"LLM Analyzer: Ollama ({OLLAMA_MODEL})")
 
     def analyze(
         self,

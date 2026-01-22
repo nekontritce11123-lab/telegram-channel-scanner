@@ -924,7 +924,9 @@ function App() {
                   </svg>
                   <span className={styles.trustPenaltiesTitle}>Штрафы доверия</span>
                 </div>
-                <span className={styles.trustPenaltiesTotal}>×{selectedChannel.trust_factor?.toFixed(2) || '1.00'}</span>
+                {selectedChannel.trust_factor && selectedChannel.trust_factor < 1 && (
+                  <span className={styles.trustPenaltiesTotal}>×{selectedChannel.trust_factor.toFixed(2)}</span>
+                )}
               </div>
               <div className={styles.trustPenaltiesList}>
                 {selectedChannel.trust_penalties.map((penalty, i) => (

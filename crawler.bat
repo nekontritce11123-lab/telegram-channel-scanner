@@ -1,12 +1,12 @@
 @echo off
 chcp 65001 >nul 2>&1
-title Crawler v42.0
+title Crawler v61.0
 
 :menu
 cls
 echo ============================================================
-echo                     CRAWLER v42.0
-echo         LLM analiz reklamy i botov - 17 kategoriy
+echo                     CRAWLER v61.0
+echo         Skaner Telegram kanalov - 17 kategoriy
 echo ============================================================
 echo.
 echo   [1] Zapustit crawler (beskonechno)
@@ -21,6 +21,7 @@ echo   [7] Export GOOD v CSV
 echo   [8] Export po kategorii
 echo.
 echo   [9] Skanirovat odin kanal
+echo   [S] Sync BD na server
 echo   [0] Vyhod
 echo.
 set /p choice="Vybor: "
@@ -34,6 +35,7 @@ if "%choice%"=="6" goto classify
 if "%choice%"=="7" goto export_all
 if "%choice%"=="8" goto export_category
 if "%choice%"=="9" goto scan_one
+if /i "%choice%"=="s" goto sync_db
 if "%choice%"=="0" goto exit
 
 echo Nevernyy vybor!
@@ -43,6 +45,9 @@ goto menu
 :run_infinite
 cls
 echo Zapusk crawlera... (Ctrl+C dlya ostanovki)
+echo.
+echo Pri zapuske: zabirayem zaprosy s servera
+echo Pri zavershenii: otpravlyaem BD na server
 echo.
 python crawler.py
 pause
@@ -120,6 +125,17 @@ cls
 set /p channel="Kanal (@username): "
 echo.
 python run.py %channel%
+pause
+goto menu
+
+:sync_db
+cls
+echo Otpravka BD na server...
+echo.
+cd mini-app\deploy
+python sync_db.py
+cd ..\..
+echo.
 pause
 goto menu
 

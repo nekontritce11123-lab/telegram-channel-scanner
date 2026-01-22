@@ -363,7 +363,7 @@ class ChannelClassifier:
         # v33: Прогреваем модель при старте
         _preload_model()
 
-        print(f"CLASSIFIER V2.0: Ollama ({OLLAMA_MODEL}) + Chain-of-Thought + 30+ rules")
+        print(f"Classifier: Ollama ({OLLAMA_MODEL})")
 
     def unload(self):
         """Выгружает модель из GPU. Вызывать при завершении работы."""
