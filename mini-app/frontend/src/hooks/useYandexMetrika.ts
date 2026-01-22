@@ -9,8 +9,8 @@
 
 import { useCallback } from 'react'
 
-// TODO: Заменить на реальный ID счётчика после создания на metrika.yandex.ru
-const COUNTER_ID = 0
+// v62.0: Яндекс.Метрика counter ID
+const COUNTER_ID = 106393488
 
 declare global {
   interface Window {
