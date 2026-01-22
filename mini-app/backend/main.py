@@ -2116,6 +2116,79 @@ async def get_scan_requests(limit: int = 10):
 # v61.0: QUEUE SYNC удалён - используем requests.json файл
 
 
+# ============================================================================
+# v61.2: REAL-TIME CHANNEL SYNC
+# ============================================================================
+
+class ChannelSyncData(BaseModel):
+    username: str
+    status: str
+    score: Optional[int] = None
+    verdict: Optional[str] = None
+    trust_factor: Optional[float] = None
+    members: Optional[int] = None
+    category: Optional[str] = None
+    category_secondary: Optional[str] = None
+    category_percent: Optional[int] = 100
+    breakdown_json: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
+@app.post("/api/channels/sync")
+async def sync_channel(data: ChannelSyncData):
+    """
+    v61.2: Обновить один канал через API (real-time sync).
+    Вызывается краулером после обработки каждого GOOD/BAD канала.
+
+    Upsert: если канал существует — обновляет, иначе создаёт.
+    """
+    username = data.username.lower().lstrip('@')
+
+    if not USERNAME_REGEX.match(username):
+        return {"success": False, "error": "Invalid username format"}
+
+    try:
+        cursor = db.conn.cursor()
+        cursor.execute("""
+            INSERT INTO channels (
+                username, status, score, verdict, trust_factor, members,
+                category, category_secondary, category_percent,
+                breakdown_json, title, description, scanned_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(username) DO UPDATE SET
+                status = excluded.status,
+                score = excluded.score,
+                verdict = excluded.verdict,
+                trust_factor = excluded.trust_factor,
+                members = excluded.members,
+                category = excluded.category,
+                category_secondary = excluded.category_secondary,
+                category_percent = excluded.category_percent,
+                breakdown_json = excluded.breakdown_json,
+                title = excluded.title,
+                description = excluded.description,
+                scanned_at = excluded.scanned_at
+        """, (
+            username,
+            data.status,
+            data.score,
+            data.verdict,
+            data.trust_factor,
+            data.members,
+            data.category,
+            data.category_secondary,
+            data.category_percent,
+            data.breakdown_json,
+            data.title,
+            data.description
+        ))
+        db.conn.commit()
+        return {"success": True, "username": username}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=3002)

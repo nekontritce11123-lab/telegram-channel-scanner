@@ -1,13 +1,13 @@
 """
 CLI модуль для сканирования каналов.
-v38.0: Интеграция LLM анализа (Ollama обязателен)
+v48.0: Business-Oriented Scoring System
 
 Формула: Final Score = min((Raw Score + LLM Bonus) × Trust Factor × LLM Trust Factor, Tier Cap)
 
 RAW SCORE (0-100) - "витрина":
-- КАЧЕСТВО: 40 баллов (cv_views, reach, decay, forward_rate)
-- ENGAGEMENT: 40 баллов (comments, reactions, er_variation, stability)
-- РЕПУТАЦИЯ: 20 баллов (verified, age, premium, source)
+- КАЧЕСТВО: 42 балла (cv_views 12, reach 8, regularity 7, forward_rate 15)
+- ENGAGEMENT: 38 баллов (comments 15, er_trend 10, reactions 8, stability 5)
+- РЕПУТАЦИЯ: 20 баллов (verified 0, age 7, premium 7, source 6)
 
 TRUST FACTOR (0.0-1.0) - мультипликатор доверия:
 - Forensics (ID Clustering, Geo/DC, Premium)
@@ -288,9 +288,9 @@ def print_result(result: dict) -> None:
     if breakdown:
         print(f"\n--- BREAKDOWN (Raw Score) ---")
 
-        # v13.0: Только метрики Raw Score (без reliability)
-        quality_keys = ['cv_views', 'reach', 'views_decay', 'forward_rate']
-        engagement_keys = ['comments', 'reaction_rate', 'er_variation', 'reaction_stability']
+        # v48.0: Метрики Raw Score (views_decay → info only, er_variation → удалён)
+        quality_keys = ['cv_views', 'reach', 'regularity', 'forward_rate', 'views_decay']
+        engagement_keys = ['comments', 'er_trend', 'reaction_rate', 'reaction_stability']
         reputation_keys = ['verified', 'age', 'premium', 'source_diversity']
 
         def print_metrics(keys: list, title: str):

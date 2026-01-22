@@ -230,3 +230,244 @@ BREAKDOWN_KEYS_REV['er'] = 'er_trend'
 ```bash
 python crawler.py
 ```
+
+---
+
+## Session 7 - v60.0 Trust Penalties Fix ✅
+
+### Проблема
+"Штрафы доверия" перестали показываться в UI. Раньше показывали "Незначительный риск", теперь вообще ничего.
+
+### Root Cause
+**JSON Compression теряла trust_details!**
+
+```python
+# json_compression.py compress_breakdown()
+if key in ('reactions_enabled', 'comments_enabled', 'floating_weights'):
+    result[key] = data  # special keys pass through
+    continue
+
+# trust_details НЕ в списке → сжимается как 'tr' → не восстанавливается!
+```
+
+Data flow:
+1. scorer.py → `trust_details = {'hollow_views': {...}, 'bot_wall': {...}}`
+2. crawler.py → `breakdown['trust_details'] = trust_details` ✅
+3. compress_breakdown() → `'trust_details'` → `'tr'` (first 2 chars) ❌
+4. decompress_breakdown() → `'tr'` → `'tr'` (not in reverse mapping) ❌
+5. backend → `bd.get('trust_details', {})` → `{}` (not found!) ❌
+
+### Исправления
+
+**scanner/json_compression.py:**
+- Добавлен `'trust_details'` в special keys для compress_breakdown()
+- Добавлен `'trust_details'` в special keys для decompress_breakdown()
+
+**mini-app/backend/main.py:**
+- Добавлены 2 отсутствующих penalty: `spam_posting`, `scam_network`
+
+### Миграция
+- Сброшены 6 каналов для пересканирования
+- Backend задеплоен
+
+### Верификация
+- API работает: `https://ads-api.factchain-traker.online/api/health`
+- Текущие каналы имеют trust_factor=1.0 (нет штрафов для тестирования)
+- Для полной проверки нужен канал со штрафами (trust_factor < 1.0)
+
+### Следующий шаг
+Запустить краулер и найти канал со штрафами для верификации UI.
+
+---
+
+## Session 8 - v60.1 Full Database Sync ✅
+
+### Задача
+При запуске краулера синхронизировать не только пользовательские запросы, но и всю БД с сервером.
+
+### Реализация
+
+**mini-app/backend/main.py:**
+- Новый endpoint `GET /api/channels/export`
+- Возвращает все GOOD/BAD каналы с полными данными
+- ВАЖНО: Endpoint размещён ПЕРЕД `/api/channels/{username}` чтобы избежать перехвата
+
+**scanner/crawler.py:**
+- Новая функция `_sync_full_db_from_server()`
+- Вызывается после `_sync_from_server()` при старте краулера
+- Импортирует обработанные каналы в локальную БД
+- Не перезаписывает каналы уже обработанные локально
+
+### Результат
+```
+✓ Полная синхронизация: 6 каналов с сервера
+  + 0 импортировано, 5 обновлено
+После синхронизации:
+  Всего: 199
+  GOOD: 4
+  BAD: 2
+```
+
+Локальная БД теперь получает данные с сервера при запуске краулера.
+
+---
+
+## Session 9 - v60.2 Bidirectional Database Sync ✅
+
+### Задача
+Синхронизация с локальной БД НА сервер (было только с сервера).
+
+### Реализация
+
+**mini-app/backend/main.py:**
+- Новый endpoint `POST /api/channels/import`
+- Принимает список каналов и сохраняет в серверную БД
+
+**scanner/crawler.py:**
+- Новая функция `_sync_to_server()`
+- Отправляет локальные GOOD/BAD каналы на сервер
+
+**Порядок синхронизации при старте краулера:**
+1. `_sync_from_server()` — забираем пользовательские запросы
+2. `_sync_to_server()` — отправляем локальные каналы НА сервер
+3. `_sync_full_db_from_server()` — получаем обновлённые данные С сервера
+
+### Результат
+```
+Локальная БД: GOOD: 29, BAD: 5
+✓ Синхронизация на сервер: 34 каналов отправлено
+  + 0 новых, 34 обновлено
+
+Сервер после синхронизации: good_channels: 30
+```
+
+---
+
+## Session 10 - v48.0 Business-Oriented Scoring System ✅
+
+### Цель
+Перейти от "лабораторного анализа" к "бизнес-аналитике":
+- Убрать технические метрики (`views_decay`, `er_variation`) из баллов
+- Добавить бизнес-метрики (`regularity`, `er_trend`)
+
+### Изменения в весах
+
+**QUALITY (40 → 42 балла):**
+| Метрика | v45.0 | v48.0 | Изменение |
+|---------|-------|-------|-----------|
+| forward_rate | 13 | **15** | +2 (виральность = главное) |
+| cv_views | 15 | **12** | -3 |
+| reach | 7 | **8** | +1 |
+| regularity | 0 | **7** | **NEW!** Стабильность постинга |
+| views_decay | 5 | **0** | → info_only (для bot_wall) |
+
+**ENGAGEMENT (40 → 38 баллов):**
+| Метрика | v45.0 | v48.0 | Изменение |
+|---------|-------|-------|-----------|
+| comments | 15 | **15** | без изменений |
+| er_trend | 0 | **10** | **NEW!** Канал растёт или умирает? |
+| reaction_rate | 15 | **8** | -7 (легко накрутить) |
+| stability | 5 | **5** | без изменений |
+| er_variation | 5 | **0** | УДАЛЕНО (заменено er_trend) |
+
+**REPUTATION (20 баллов) — без изменений**
+
+### Новые функции scorer.py
+1. `regularity_to_points()` - баллы за стабильность постинга
+   - 1-5 постов/день = max баллов (профессиональный канал)
+   - <1/неделю = 0 (мёртвый)
+   - >20/день = минимум (спам)
+
+2. `er_trend_to_points()` - баллы за тренд вовлеченности
+   - growing (≥1.1) = max баллов
+   - stable (0.9-1.1) = 70%
+   - declining (0.7-0.9) = 30%
+   - dying (<0.7) = 0
+
+3. `calculate_floating_weights()` обновлён:
+   - Новый pool: 15 comments + 8 reactions + 15 forward = 38
+
+### Файлы изменены
+- `scanner/scorer.py` - RAW_WEIGHTS, новые функции, calculate_final_score()
+- `scanner/cli.py` - docstring и engagement_keys
+- `mini-app/backend/main.py` - METRIC_CONFIG
+
+### Деплой
+- Backend задеплоен
+- 34 канала сброшены в WAITING для пересканирования
+- API: https://ads-api.factchain-traker.online
+
+### Следующий шаг
+Запустить краулер для пересканирования:
+```bash
+python crawler.py
+```
+
+---
+
+## Session 11 - v61.0 Architecture Simplification ✅
+
+### Цель
+Упростить архитектуру: убрать сложную двустороннюю HTTP синхронизацию БД.
+
+**БЫЛО (сложно):**
+```
+Локал ←→ Сервер (HTTP sync, 350+ строк)
+├── _sync_from_server()
+├── _sync_to_server()
+├── _sync_full_db_from_server()
+└── 5 API endpoints
+```
+
+**СТАЛО (просто):**
+```
+Локал → Сервер (SCP, ~60 строк)
+├── fetch_requests()   # SCP: забираем requests.json
+├── push_database()    # SCP: копируем crawler.db
+└── Сервер только читает БД
+```
+
+### Изменения
+
+**Создан scanner/sync.py (~60 строк):**
+- `fetch_requests()` — SCP скачивает requests.json, очищает на сервере
+- `push_database()` — SCP копирует crawler.db на сервер
+- Использует paramiko для SSH/SFTP
+
+**Рефакторинг scanner/crawler.py (-204 строки):**
+- Удалён `import httpx`
+- Удалены функции:
+  - `_sync_from_server()` (~56 строк)
+  - `_sync_full_db_from_server()` (~92 строки)
+  - `_sync_to_server()` (~56 строк)
+- Добавлен импорт `from .sync import fetch_requests, push_database`
+- В `run()`: вызов `fetch_requests()` в начале, `push_database()` в finally
+
+**Рефакторинг mini-app/backend/main.py (-171 строка):**
+- Удалены endpoints:
+  - `/api/channels/export`
+  - `/api/channels/import`
+  - `/api/channels/reset`
+  - `/api/queue/pending`
+  - `/api/queue/sync`
+- Переписаны:
+  - `POST /api/scan/request` — пишет в requests.json
+  - `GET /api/scan/requests` — читает из requests.json
+
+**Рефакторинг scanner/database.py (-15 строк):**
+- Убран ORDER BY priority из `get_next()`, `get_next_atomic()`, `peek_next()`
+- Упрощён `add_scan_request()`
+
+### E2E Тестирование ✅
+```
+1. POST /api/scan/request → {"success": true}
+2. requests.json на сервере: [{"username": "test_e2e_channel", ...}]
+3. fetch_requests() → ['test_e2e_channel']
+4. requests.json очищен: []
+5. push_database() → True
+```
+
+### Итого
+- **Удалено:** ~400 строк
+- **Добавлено:** ~145 строк
+- **Результат:** -255 строк кода, архитектура значительно упрощена

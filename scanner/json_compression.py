@@ -84,12 +84,14 @@ def _get_max_values() -> dict:
         return result
     except ImportError:
         # Fallback if import fails (e.g., circular import)
+        # v48.0: Business-oriented scoring
         return {
-            'cv_views': 15, 'reach': 7, 'views_decay': 5, 'forward_rate': 13,
-            'comments': 15, 'reaction_rate': 15, 'er_variation': 5,
-            'stability': 5, 'reaction_stability': 5,  # v58.2: both aliases
+            'cv_views': 12, 'reach': 8, 'regularity': 7, 'forward_rate': 15,
+            'views_decay': 0,  # v48.0: info_only
+            'comments': 15, 'reaction_rate': 8, 'er_trend': 10,
+            'stability': 5, 'reaction_stability': 5,
             'verified': 0, 'age': 7, 'premium': 7,
-            'source': 6, 'source_diversity': 6,  # v58.2: both aliases
+            'source': 6, 'source_diversity': 6,
         }
 
 
@@ -131,7 +133,8 @@ def compress_breakdown(breakdown: dict) -> dict:
 
     for key, data in breakdown.items():
         # Skip special keys
-        if key.startswith('_') or key in ('reactions_enabled', 'comments_enabled', 'floating_weights'):
+        # v60.0: Added trust_details - complex nested dict, don't compress
+        if key.startswith('_') or key in ('reactions_enabled', 'comments_enabled', 'floating_weights', 'trust_details'):
             result[key] = data
             continue
 
@@ -180,7 +183,8 @@ def decompress_breakdown(compressed: dict) -> dict:
             continue
 
         # Restore special keys
-        if key in ('reactions_enabled', 'comments_enabled', 'floating_weights'):
+        # v60.0: Added trust_details
+        if key in ('reactions_enabled', 'comments_enabled', 'floating_weights', 'trust_details'):
             result[key] = data
             continue
 

@@ -1,17 +1,24 @@
 """
-v61.0: Простая синхронизация через SCP.
-Заменяет сложную HTTP синхронизацию.
+v61.2: Синхронизация с сервером.
 
 Функции:
-- fetch_requests() - забрать запросы с сервера
-- push_database() - отправить БД на сервер
+- fetch_requests() - забрать запросы с сервера (SFTP)
+- push_database() - отправить всю БД на сервер (SFTP)
+- sync_channel() - отправить один канал через HTTP API (real-time)
 """
 import io
 import json
 import logging
 import os
+import sqlite3
+import tempfile
 from pathlib import Path
 from dotenv import load_dotenv
+
+try:
+    import httpx
+except ImportError:
+    httpx = None
 
 try:
     import paramiko
@@ -140,15 +147,24 @@ def push_database(db_path: str = "crawler.db") -> bool:
         logger.error(f"Failed to connect: {e}")
         return False
 
+    tmp_path = None
     try:
         remote_db = f"{REMOTE_DIR}/crawler.db"
 
-        size_kb = local_db.stat().st_size / 1024
-        logger.info(f"Копирую БД ({size_kb:.1f} KB) на сервер...")
+        # v61.1: Безопасное копирование через SQLite backup API
+        # Предотвращает повреждение БД при копировании во время записи
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.db') as tmp:
+            tmp_path = tmp.name
 
-        sftp.put(str(local_db), remote_db)
+        source = sqlite3.connect(str(local_db))
+        dest = sqlite3.connect(tmp_path)
+        source.backup(dest)
+        source.close()
+        dest.close()
 
-        logger.info(f"✓ БД скопирована на сервер: {remote_db}")
+        size_kb = os.path.getsize(tmp_path) / 1024
+        sftp.put(tmp_path, remote_db)
+
         return True
 
     except Exception as e:
@@ -156,6 +172,9 @@ def push_database(db_path: str = "crawler.db") -> bool:
         return False
 
     finally:
+        # Удаляем временный файл
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
         sftp.close()
         ssh.close()
 
@@ -194,6 +213,64 @@ def create_requests_file() -> bool:
     finally:
         sftp.close()
         ssh.close()
+
+
+# ============================================================================
+# v61.2: HTTP API Sync (real-time, один канал)
+# ============================================================================
+
+API_URL = "https://ads-api.factchain-traker.online"
+
+
+def sync_channel(channel_data: dict) -> bool:
+    """
+    v61.2: Отправить данные одного канала на сервер через HTTP API.
+
+    Не блокирует при ошибке — логирует и продолжает.
+    Используется для real-time синхронизации после обработки каждого канала.
+
+    Args:
+        channel_data: dict с полями:
+            - username (required)
+            - status (GOOD/BAD)
+            - score, verdict, trust_factor, members
+            - category, breakdown_json, title
+
+    Returns:
+        True если успешно, False если ошибка
+    """
+    if httpx is None:
+        logger.warning("httpx not installed, skipping sync_channel")
+        return False
+
+    username = channel_data.get("username", "")
+    if not username:
+        logger.warning("sync_channel: username is required")
+        return False
+
+    try:
+        response = httpx.post(
+            f"{API_URL}/api/channels/sync",
+            json=channel_data,
+            timeout=15.0
+        )
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("success"):
+                logger.debug(f"✓ Synced @{username} to server")
+                return True
+            else:
+                logger.warning(f"sync_channel @{username}: {result.get('error')}")
+                return False
+        else:
+            logger.warning(f"sync_channel @{username}: HTTP {response.status_code}")
+            return False
+    except httpx.TimeoutException:
+        logger.warning(f"sync_channel @{username}: timeout")
+        return False
+    except Exception as e:
+        logger.warning(f"sync_channel @{username}: {e}")
+        return False
 
 
 # Для тестирования

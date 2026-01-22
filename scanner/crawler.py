@@ -41,7 +41,7 @@ from .metrics import get_message_reactions_count  # v56.0: для posts_raw
 from .json_compression import (
     compress_breakdown, compress_posts_raw, compress_user_ids
 )  # v23.0: JSON compression
-from .sync import fetch_requests, push_database  # v61.0: SCP синхронизация
+from .sync import fetch_requests, push_database, sync_channel  # v61.2: + HTTP sync
 # v46.0: Brand Safety теперь в LLM Analyzer, стоп-слова deprecated
 
 # v43.0: Централизованная конфигурация
@@ -824,6 +824,32 @@ class SmartCrawler:
 
                 self.processed_count += 1
                 self.new_links_count += result.get('new_channels', 0)
+
+                # v61.2: Real-time sync через HTTP API (не копирует БД, отправляет JSON)
+                if result['status'] in ('GOOD', 'BAD'):
+                    try:
+                        # Формируем JSON для UI (с categories)
+                        breakdown_json_str = json.dumps({
+                            'breakdown': breakdown_compressed,
+                            'categories': result.get('categories', {}),
+                            'flags': flags
+                        }, ensure_ascii=False) if breakdown_compressed else None
+
+                        sync_data = {
+                            "username": username,
+                            "status": result['status'],
+                            "score": result.get('score'),
+                            "verdict": result.get('verdict'),
+                            "trust_factor": result.get('trust_factor'),
+                            "members": result.get('members'),
+                            "category": result.get('category'),
+                            "breakdown_json": breakdown_json_str,
+                            "title": result.get('title'),
+                            "description": result.get('description'),
+                        }
+                        sync_channel(sync_data)
+                    except Exception:
+                        pass  # Не блокируем при ошибке синхронизации
 
                 # Пауза между каналами
                 pause = RATE_LIMIT['between_channels'] + random.uniform(-1, 2)

@@ -1,165 +1,184 @@
-# Findings: v52.0 Complete Metrics + Compact Header
+# Findings: v61.0 Архитектурный рефакторинг
 
-## User Requirements (Screenshot Analysis)
-1. **Score Card** (54 SCORE / 0.85 TRUST) - слишком большой, уменьшить
-2. **Flags** (Верификация, Комментарии, Реакции) - можно компактнее
-3. **Stats Row** (ЦЕНА, ПОДПИСЧИКИ, ER) - слишком большой
-4. **Trust Penalties** - ПОКАЗАТЬ ВСЕ (сейчас скрыты)
+## Requirements
 
-## Current CSS Values (App.module.css)
+**Основная задача:** Упростить архитектуру, убрать двустороннюю синхронизацию БД.
 
-### Score Card
-```css
-.scoreValue { font-size: 36px; }
-.scoreLabel { font-size: 12px; }
-.scoreBadge { font-size: 12px; padding: 4px 12px; }
-.scoreBlock { padding: 16px; }
-.scoreCard { gap: 8px; }
-```
+**Требования пользователя:**
+- Один источник истины - локальная `crawler.db`
+- Сервер только читает готовую БД
+- Сервер может отправлять запросы на сканирование (в requests.json)
+- Краулер строго локальный
+- Минимум зависимостей между компонентами
 
-### Flags
-```css
-.flagItem { padding: 8px 4px; font-size: 12px; }
-.flagsGrid { gap: 8px; }
-svg { width: 16px; height: 16px; }
-```
+---
 
-### Stats Row
-```css
-.statCard { padding defined by card-bg }
-.statValue { font-size from design system }
-.statsRow { gap: 8px; }
-```
+## Research Findings
 
-## Trust Penalties Data Structure
+### Текущий код синхронизации (ДЛЯ УДАЛЕНИЯ)
 
-From scorer.py calculate_trust_factor() returns:
+#### scanner/crawler.py
+
+**Импорты (строка 29):**
 ```python
-trust_details = {
-    'id_clustering': {'multiplier': 0.5, 'reason': '...', 'neighbor_ratio': 0.2},
-    'geo_dc': {'multiplier': 0.2, 'reason': '...'},
-    'hollow_views': {'multiplier': 0.6, 'reason': '...'},
-    # etc
-}
+import httpx  # ← УДАЛИТЬ
 ```
 
-Backend server.py should convert this to:
+**Функция _sync_from_server() (строки 227-283):**
+- Делает GET /api/queue/pending
+- Получает username'ы с priority > 0
+- Добавляет в локальную БД
+- Делает POST /api/queue/sync для сброса priority
+- **56 строк → УДАЛИТЬ**
+
+**Функция _sync_full_db_from_server() (строки 285-377):**
+- Делает GET /api/channels/export
+- Получает все GOOD/BAD каналы
+- Импортирует в локальную БД если не обработаны
+- **92 строки → УДАЛИТЬ**
+
+**Функция _sync_to_server() (строки 379-435):**
+- Собирает локальные GOOD/BAD каналы
+- Делает POST /api/channels/import
+- **56 строк → УДАЛИТЬ**
+
+**Вызовы в run() (строки 873, 876, 879):**
 ```python
-trust_penalties = [
-    {'name': 'Hollow Views', 'multiplier': 0.6, 'reason': 'Reach 350% > 300%...'},
-    {'name': 'Hidden Comments', 'multiplier': 0.85, 'reason': 'Комментарии скрыты'},
+await self._sync_from_server()           # ← УДАЛИТЬ
+await self._sync_to_server()             # ← УДАЛИТЬ
+await self._sync_full_db_from_server()   # ← УДАЛИТЬ
+```
+
+#### mini-app/backend/main.py
+
+**Endpoints для синхронизации:**
+
+| Endpoint | Строки | Описание |
+|----------|--------|----------|
+| `/api/channels/export` | 1656-1691 | Экспорт GOOD/BAD для краулера |
+| `/api/channels/import` | 1694-1767 | Импорт с краулера |
+| `/api/channels/reset` | 1770-1794 | Сброс для пересканирования |
+| `/api/queue/pending` | 2227-2248 | Список priority > 0 |
+| `/api/queue/sync` | 2251-2269 | Сброс priority |
+
+**Итого:** 171 строка → УДАЛИТЬ
+
+### Текущий деплой (mini-app/deploy/)
+
+**deploy_backend.py:**
+- Копирует mini-app/backend/* на сервер
+- НЕ копирует scanner/* (уже убрано ранее)
+- Рестартует systemd сервис reklamshik-api
+
+**sync_db.py:**
+- Сложная логика синхронизации
+- → ПЕРЕПИСАТЬ на простое SCP копирование
+
+### SSH/SCP credentials
+
+Из существующих deploy скриптов (deploy/.env):
+```
+SERVER_IP=217.60.3.122
+SERVER_USER=root
+SSH_KEY_PATH=~/.ssh/id_rsa
+```
+
+---
+
+## Technical Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| requests.json вместо БД | Простота, текстовый файл, легко читать и отлаживать |
+| SCP через Paramiko | Уже используется в deploy скриптах, надёжная библиотека |
+| Очищать requests.json сразу после чтения | Предотвращает дубликаты, запросы уже в локальной БД |
+| Оставить priority колонку в БД | SQLite не поддерживает DROP COLUMN без пересоздания таблицы |
+| Push БД целиком | ~1MB файл, SCP копирует за секунду |
+| Не удалять scan_requests таблицу | Может пригодиться для истории на сервере |
+
+---
+
+## Issues Encountered
+
+| Issue | Resolution |
+|-------|------------|
+| SQLite не поддерживает DROP COLUMN | Оставить колонку priority, просто игнорировать |
+| Concurrent writes в requests.json | Маловероятно при 1 запрос/сек, JSON atomic write |
+| Потеря запросов при падении краулера | Запросы уже в локальной БД после fetch_requests() |
+
+---
+
+## Resources
+
+**Файлы для изменения:**
+- `scanner/sync.py` (NEW)
+- `scanner/crawler.py` (строки 227-435, 873-879)
+- `mini-app/backend/main.py` (строки 1656-1794, 2227-2269)
+- `scanner/database.py` (priority логика)
+- `mini-app/deploy/sync_db.py`
+
+**API endpoints после рефакторинга:**
+
+| Endpoint | Метод | Описание |
+|----------|-------|----------|
+| `/api/channels` | GET | Список каналов (пагинация, фильтры) |
+| `/api/channels/{username}` | GET | Детали канала |
+| `/api/channels/count` | GET | Количество каналов |
+| `/api/stats` | GET | Общая статистика |
+| `/api/stats/categories` | GET | По категориям |
+| `/api/health` | GET | Здоровье сервера |
+| `/api/scan/request` | POST | Добавить в requests.json |
+| `/api/scan/queue` | GET | Текущая очередь (из requests.json) |
+
+---
+
+## Code Analysis
+
+### Как сейчас работает priority система
+
+**database.py add_channel():**
+```python
+def add_channel(self, username, priority=0):
+    cursor.execute("""
+        INSERT OR IGNORE INTO channels (username, status, priority, created_at)
+        VALUES (?, 'WAITING', ?, ?)
+    """, (username, priority, datetime.now()))
+```
+
+**database.py get_next():**
+```python
+def get_next(self):
+    cursor.execute("""
+        SELECT username FROM channels
+        WHERE status = 'WAITING'
+        ORDER BY priority DESC, created_at ASC
+        LIMIT 1
+    """)
+```
+
+**После рефакторинга:**
+- `add_channel()` - убрать параметр priority
+- `get_next()` - убрать ORDER BY priority (только created_at ASC)
+
+### Структура requests.json
+
+```json
+[
+  {"username": "durov", "requested_at": "2026-01-22T10:00:00"},
+  {"username": "telegram", "requested_at": "2026-01-22T10:05:00"}
 ]
 ```
 
-## Current State (v45.0)
+После fetch_requests():
+- Файл становится `[]`
+- Usernames добавляются в локальную БД как WAITING
 
-### RAW_WEIGHTS in scorer.py (lines 69-92)
-```python
-RAW_WEIGHTS = {
-    'quality': {
-        'cv_views': 15,
-        'reach': 7,          # v45.0: -3
-        'views_decay': 5,    # v45.0: -3 → TO BE REMOVED
-        'forward_rate': 13,  # v45.0: +6
-    },
-    'engagement': {
-        'comments': 15,
-        'reaction_rate': 15, # → reduce to 8
-        'er_variation': 5,   # → TO BE REMOVED
-        'stability': 5,
-    },
-    'reputation': {
-        'verified': 0,       # disabled in v38.4
-        'age': 7,
-        'premium': 7,
-        'source': 6,
-    },
-}
+---
 
-CATEGORY_TOTALS = {
-    'quality': 40,      # → 42
-    'engagement': 40,   # → 38
-    'reputation': 20,   # unchanged
-}
-```
+## Visual/Browser Findings
 
-### er_trend_data Structure (from calculate_er_trend in metrics.py)
-```python
-{
-    'er_trend': float,  # ratio of recent ER / old ER
-    'recent_er': float,
-    'old_er': float,
-    'status': str,      # 'growing' | 'stable' | 'declining' | 'dying' | 'insufficient'
-    'posts_analyzed': int
-}
-```
-- Already calculated in scorer.py line 1259
-- Currently stored in breakdown as info metric only
+*(пока нет)*
 
-### regularity Structure (from calculate_post_regularity in metrics.py)
-- Returns CV% of posting intervals
-- Higher CV = irregular posting
-- Currently stored in breakdown['regularity'] as info only (line 1355)
+---
 
-### posting_data Structure (from calculate_posts_per_day)
-```python
-{
-    'posts_per_day': float,
-    'posting_status': str,  # 'normal' | 'active' | 'heavy' | 'spam'
-    'trust_multiplier': float
-}
-```
-- This is for TRUST penalty, not scoring
-- regularity_to_points should use posts_per_day directly
-
-## Key Insight: regularity vs posts_per_day
-
-Two related but different metrics:
-1. `regularity_cv` from `calculate_post_regularity()` - measures consistency (CV of intervals)
-2. `posts_per_day` from `calculate_posts_per_day()` - measures frequency
-
-For scoring, we want FREQUENCY (posts_per_day):
-- Ideal: 1-5 posts/day = maximum points
-- Too rare: <0.5 posts/day = channel is "sleeping"
-- Too frequent: >20 posts/day = spam, ad will be buried
-
-## Floating Weights Impact
-
-Current (40 engagement = 15 comments + 15 reactions + 10 redistributable):
-```
-All on:    15 comments + 15 reactions + 13 forward = 43
-No comm:   0  comments + 22 reactions + 21 forward = 43
-No react:  22 comments + 0  reactions + 21 forward = 43
-Both off:  0  comments + 0  reactions + 43 forward = 43
-```
-
-New (38 engagement = 15 comments + 8 reactions + 15 redistributable):
-```
-All on:    15 comments + 8 reactions + 15 forward = 38
-No comm:   0  comments + 15 reactions + 23 forward = 38
-No react:  22 comments + 0  reactions + 16 forward = 38
-Both off:  0  comments + 0  reactions + 38 forward = 38
-```
-
-Wait - need to recalculate. The floating weights affect comments, reactions, and forward_rate.
-Total of these three: 15 + 8 + 15 = 38 in new system.
-
-## Trust Factor Penalties Preserved
-
-These stay in calculate_trust_factor():
-- `bot_wall` (decay 0.98-1.02): ×0.6
-- `budget_cliff` (decay <0.2): ×0.7
-- `dying_engagement` (er_trend <0.7 + stable views): ×0.6
-
-## Files to Modify
-
-1. **scanner/scorer.py**
-   - RAW_WEIGHTS dict (lines 69-92)
-   - CATEGORY_TOTALS dict (lines 94-99)
-   - calculate_floating_weights() (lines 459-502)
-   - calculate_final_score() - quality and engagement sections
-   - New functions: regularity_to_points(), er_trend_to_points()
-
-2. **mini-app/backend/server.py**
-   - METRIC_CONFIG mapping
-   - format_breakdown_for_ui()
+*Update this file after every 2 view/browser/search operations*

@@ -67,34 +67,37 @@ from .config import SIZE_THRESHOLDS
 # ============================================================================
 
 RAW_WEIGHTS = {
-    # КАЧЕСТВО КОНТЕНТА (40 баллов)
-    # v45.0: Forward Rate +6 (виральность = "Святой Грааль" для рекламодателя)
+    # v48.0: КАЧЕСТВО КОНТЕНТА (42 балла)
+    # Бизнес-ориентированный скоринг: виральность и регулярность важнее технических метрик
     'quality': {
-        'cv_views': 15,      # Естественность просмотров
-        'reach': 7,          # v45.0: -3 (reach без forward = пустые просмотры)
-        'views_decay': 5,    # v45.0: -3 (важно для системы, не для рекламодателя)
-        'forward_rate': 13,  # v45.0: +6 (репосты = бесплатный охват)
+        'forward_rate': 15,  # v48.0: +2 (виральность = "Святой Грааль")
+        'cv_views': 12,      # v48.0: -3 (снизили, но важно для детекции)
+        'reach': 8,          # v48.0: +1
+        'regularity': 7,     # v48.0: NEW! Стабильность постинга
+        # views_decay убран из баллов → остался в Trust Factor (bot_wall)
     },
-    # ENGAGEMENT (40 баллов)
+    # v48.0: ENGAGEMENT (38 баллов)
+    # Тренд важнее абсолютных чисел, реакции легко накрутить
     'engagement': {
         'comments': 15,      # Комментарии (floating если закрыты)
-        'reaction_rate': 15, # Реакции
-        'er_variation': 5,   # Разнообразие вовлечения
+        'er_trend': 10,      # v48.0: NEW! Канал растёт или умирает?
+        'reaction_rate': 8,  # v48.0: -7 (легко накрутить)
         'stability': 5,      # Стабильность реакций
+        # er_variation убран → заменён на er_trend
     },
-    # РЕПУТАЦИЯ (20 баллов)
+    # РЕПУТАЦИЯ (20 баллов) — без изменений
     'reputation': {
-        'verified': 0,       # v38.4: Верификация убрана (не коррелирует с качеством)
-        'age': 7,            # v38.4: было 5, +2
-        'premium': 7,        # v38.4: было 5, +2
-        'source': 6,         # v38.4: было 5, +1
+        'verified': 0,       # v38.4: Верификация убрана
+        'age': 7,
+        'premium': 7,
+        'source': 6,
     },
 }
 
-# Итоги по категориям
+# v48.0: Итоги по категориям
 CATEGORY_TOTALS = {
-    'quality': 40,
-    'engagement': 40,
+    'quality': 42,      # v48.0: было 40, +2
+    'engagement': 38,   # v48.0: было 40, -2
     'reputation': 20,
 }
 
@@ -265,7 +268,7 @@ def decay_to_points(ratio: float, reaction_rate: float = 0, max_pts: int = None)
         (points, info_dict) с деталями анализа
     """
     if max_pts is None:
-        max_pts = RAW_WEIGHTS['quality']['views_decay']  # 8
+        max_pts = 0  # v48.0: views_decay теперь info_only, баллы не начисляются
 
     info = {'ratio': ratio, 'zone': 'unknown', 'description': ''}
 
@@ -350,9 +353,10 @@ def stability_to_points(data: dict, max_pts: int = None) -> int:
 def er_cv_to_points(cv: float, members: int = 0, max_pts: int = None) -> int:
     """
     v13.0: ER variation CV -> баллы (default max 5).
+    v48.0: DEPRECATED - er_variation убран из scoring, заменён на er_trend.
     """
     if max_pts is None:
-        max_pts = RAW_WEIGHTS['engagement']['er_variation']  # 5
+        max_pts = 5  # v48.0: hardcoded, метрика удалена из RAW_WEIGHTS
 
     # Микроканалы: маленькие числа → меньше вариация
     # v23.0: использует SIZE_THRESHOLDS из config.py
@@ -456,49 +460,107 @@ def age_to_points(age_days: int, max_pts: int = None) -> int:
     return max_pts  # 5 - > 2 лет - veteran
 
 
+def regularity_to_points(posts_per_day: float, max_pts: int = None) -> int:
+    """
+    v48.0: Регулярность постинга → баллы (max 7).
+
+    Идеал: 1-5 постов в день = профессиональный канал.
+    <1 в неделю = мёртвый канал.
+    >20 в день = спам-помойка.
+    """
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['quality']['regularity']  # 7
+
+    if posts_per_day < 0.14:      # < 1 в неделю
+        return 0                   # Мёртвый канал
+    if posts_per_day < 0.5:       # 3-4 в неделю
+        return int(max_pts * 0.4)  # 3 балла
+    if posts_per_day < 1.0:       # почти каждый день
+        return int(max_pts * 0.7)  # 5 баллов
+    if posts_per_day <= 5.0:      # 1-5 в день = ИДЕАЛ
+        return max_pts             # 7 баллов
+    if posts_per_day <= 10.0:     # 5-10 в день
+        return int(max_pts * 0.7)  # 5 баллов
+    if posts_per_day <= 20.0:     # 10-20 в день
+        return int(max_pts * 0.4)  # 3 балла
+    return int(max_pts * 0.15)    # >20 = спам, 1 балл
+
+
+def er_trend_to_points(er_trend_data: dict, max_pts: int = None) -> int:
+    """
+    v48.0: Тренд вовлеченности → баллы (max 10).
+
+    Растёт = покупай сейчас (дешевле не будет).
+    Падает = аудитория выгорает.
+    """
+    if max_pts is None:
+        max_pts = RAW_WEIGHTS['engagement']['er_trend']  # 10
+
+    status = er_trend_data.get('status', 'insufficient_data')
+    # trend = er_trend_data.get('er_trend', 1.0)  # Not used directly, status is derived from it
+
+    if status == 'insufficient_data':
+        return int(max_pts * 0.5)  # 5 баллов (недостаточно данных)
+
+    if status == 'always_dead':
+        return 0                    # Всегда мёртвый
+
+    if status == 'growing':         # trend >= 1.1
+        return max_pts              # 10 баллов
+
+    if status == 'stable':          # 0.9 <= trend < 1.1
+        return int(max_pts * 0.7)   # 7 баллов
+
+    if status == 'declining':       # 0.7 <= trend < 0.9
+        return int(max_pts * 0.3)   # 3 балла
+
+    # status == 'dying' (trend < 0.7)
+    return 0                        # Канал умирает
+
+
 def calculate_floating_weights(comments_enabled: bool, reactions_enabled: bool = True) -> dict:
     """
-    v45.0: Плавающие веса для комментов И реакций.
+    v48.0: Плавающие веса для комментов И реакций.
 
-    Базовые веса: 15 comments + 15 reactions + 13 forward = 43
+    Базовые веса: 15 comments + 8 reactions + 15 forward = 38
 
     Сценарии:
-    - Всё включено:           15 comments + 15 reactions + 13 forward = 43
-    - Без комментов:          0 comments + 22 reactions + 21 forward = 43
-    - Без реакций:            22 comments + 0 reactions + 21 forward = 43
-    - Без обоих:              0 comments + 0 reactions + 43 forward = 43
+    - Всё включено:           15 comments + 8 reactions + 15 forward = 38
+    - Без комментов:          0 comments + 13 reactions + 25 forward = 38
+    - Без реакций:            20 comments + 0 reactions + 18 forward = 38
+    - Без обоих:              0 comments + 0 reactions + 38 forward = 38
     """
     base_comments = RAW_WEIGHTS['engagement']['comments']        # 15
-    base_reactions = RAW_WEIGHTS['engagement']['reaction_rate']  # 15
-    base_forward = RAW_WEIGHTS['quality']['forward_rate']        # 13 (v45.0)
+    base_reactions = RAW_WEIGHTS['engagement']['reaction_rate']  # 8 (v48.0)
+    base_forward = RAW_WEIGHTS['quality']['forward_rate']        # 15 (v48.0)
 
     if comments_enabled and reactions_enabled:
         # Всё включено - стандартные веса
         return {
-            'comments_max': base_comments,
-            'reaction_rate_max': base_reactions,
-            'forward_rate_max': base_forward
+            'comments_max': base_comments,      # 15
+            'reaction_rate_max': base_reactions, # 8
+            'forward_rate_max': base_forward     # 15
         }
     elif comments_enabled and not reactions_enabled:
-        # Реакции отключены - их баллы идут в комменты и forward
+        # Реакции отключены - их баллы в комменты и forward
         return {
-            'comments_max': 22,        # 15 + 7 от реакций
+            'comments_max': 20,         # 15 + 5
             'reaction_rate_max': 0,
-            'forward_rate_max': 21     # v45.0: 13 + 8 от реакций
+            'forward_rate_max': 18      # 15 + 3
         }
     elif not comments_enabled and reactions_enabled:
-        # Комменты отключены - их баллы идут в реакции и forward
+        # Комменты отключены - их баллы в реакции и forward
         return {
             'comments_max': 0,
-            'reaction_rate_max': 22,   # 15 + 7 от комментов
-            'forward_rate_max': 21     # v45.0: 13 + 8 от комментов
+            'reaction_rate_max': 13,    # 8 + 5
+            'forward_rate_max': 25      # 15 + 10
         }
     else:
         # Оба отключены - всё в forward
         return {
             'comments_max': 0,
             'reaction_rate_max': 0,
-            'forward_rate_max': 43     # v45.0: Все 43 баллов
+            'forward_rate_max': 38      # v48.0: Все 38 баллов
         }
 
 
@@ -1128,7 +1190,7 @@ def calculate_final_score(
     categories = {}
 
     # =========================================================================
-    # КАТЕГОРИЯ 1: КАЧЕСТВО КОНТЕНТА (35 баллов)
+    # КАТЕГОРИЯ 1: КАЧЕСТВО КОНТЕНТА (42 балла) — v48.0
     # =========================================================================
     quality_score = 0
 
@@ -1156,20 +1218,34 @@ def calculate_final_score(
         'max': WEIGHTS['quality']['reach']
     }
 
-    # 1.3 Views Decay (max 8) - v15.1: Исправленная логика
+    # 1.3 Regularity (max 7) — v48.0: NEW! Стабильность постинга
+    # Используем is_news=False, реальное значение определится позже
+    posting_data = calculate_posts_per_day(messages, is_news=False)
+    regularity_pts = regularity_to_points(posting_data['posts_per_day'])
+    quality_score += regularity_pts
+    breakdown['regularity'] = {
+        'value': round(posting_data['posts_per_day'], 2),
+        'points': regularity_pts,
+        'max': WEIGHTS['quality']['regularity'],
+        'status': posting_data['posting_status']
+    }
+
+    # 1.4 Views Decay — v48.0: INFO ONLY (для Trust Factor bot_wall)
+    # НЕ добавляем в quality_score! Остаётся для детекции ботов.
     reaction_rate = calculate_reaction_rate(messages)
     decay_ratio = calculate_views_decay(messages)
     decay_pts, decay_info = decay_to_points(decay_ratio, reaction_rate)
-    quality_score += decay_pts
+    # quality_score += decay_pts  # v48.0: УБРАНО из баллов
     breakdown['views_decay'] = {
         'value': round(decay_ratio, 2),
-        'points': decay_pts,
-        'max': WEIGHTS['quality']['views_decay'],
+        'points': 0,              # v48.0: info only
+        'max': 0,                 # v48.0: info only
         'zone': decay_info['zone'],
-        'description': decay_info['description']
+        'description': decay_info['description'],
+        'status': 'info_only'     # v48.0: маркер для UI
     }
 
-    # 1.4 Forward Rate (max 7, или 14 floating)
+    # 1.5 Forward Rate (max 15, или до 38 floating)
     forward_max = weights['forward_rate_max']
     forward_pts = forward_rate_to_points(forward_rate, members, forward_max)
     quality_score += forward_pts
@@ -1182,15 +1258,15 @@ def calculate_final_score(
 
     categories['quality'] = {
         'score': quality_score,
-        'max': CATEGORY_TOTALS['quality'] + (7 if not comments_enabled else 0)
+        'max': CATEGORY_TOTALS['quality'] + (forward_max - WEIGHTS['quality']['forward_rate'])
     }
 
     # =========================================================================
-    # КАТЕГОРИЯ 2: ENGAGEMENT (30 баллов)
+    # КАТЕГОРИЯ 2: ENGAGEMENT (38 баллов) — v48.0
     # =========================================================================
     engagement_score = 0
 
-    # 2.1 Comments (max 10, или 0 floating)
+    # 2.1 Comments (max 15, или до 20 floating)
     comments_max = weights['comments_max']
     if comments_max > 0:
         comments_pts, comments_status = comments_to_points(comments_data, members, comments_max)
@@ -1206,7 +1282,17 @@ def calculate_final_score(
         'floating_weights': not comments_enabled
     }
 
-    # 2.2 Reaction Rate (max 10, или 20 floating)
+    # 2.2 ER Trend (max 10) — v48.0: NEW! Канал растёт или умирает?
+    er_trend_data = calculate_er_trend(messages)
+    er_trend_pts = er_trend_to_points(er_trend_data)
+    engagement_score += er_trend_pts
+    breakdown['er_trend'] = {
+        **er_trend_data,        # er_new, er_old, er_trend, status, posts_new, posts_old
+        'points': er_trend_pts,
+        'max': WEIGHTS['engagement']['er_trend']
+    }
+
+    # 2.3 Reaction Rate (max 8, или до 13 floating)
     reaction_max = weights['reaction_rate_max']
     reaction_pts = reaction_rate_to_points(reaction_rate, members, reaction_max)
     engagement_score += reaction_pts
@@ -1216,20 +1302,6 @@ def calculate_final_score(
         'max': reaction_max,
         'floating_boost': reaction_max > WEIGHTS['engagement']['reaction_rate']
     }
-
-    # 2.3 ER Variation (max 5)
-    er_cv = calculate_er_variation(messages)
-    er_pts = er_cv_to_points(er_cv, members)
-    engagement_score += er_pts
-    breakdown['er_variation'] = {
-        'value': round(er_cv, 1),
-        'points': er_pts,
-        'max': WEIGHTS['engagement']['er_variation']
-    }
-
-    # 2.3.1 ER Trend (v45.0: информативная метрика для детекции зомби-каналов)
-    er_trend_data = calculate_er_trend(messages)
-    breakdown['er_trend'] = er_trend_data
 
     # 2.4 Reaction Stability (max 5)
     stability = calculate_reaction_stability(messages)
@@ -1241,9 +1313,11 @@ def calculate_final_score(
         'max': WEIGHTS['engagement']['stability']
     }
 
+    # v48.0: er_variation УДАЛЁН (заменён на er_trend)
+
     categories['engagement'] = {
         'score': engagement_score,
-        'max': CATEGORY_TOTALS['engagement'] + (10 if not comments_enabled else 0)
+        'max': CATEGORY_TOTALS['engagement'] + (comments_max - WEIGHTS['engagement']['comments']) + (reaction_max - WEIGHTS['engagement']['reaction_rate'])
     }
 
     # =========================================================================

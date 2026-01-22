@@ -402,6 +402,9 @@ class CrawlerDB:
         """
         Добавляет канал в очередь.
 
+        v61.1: Если parent='user_request' и канал уже существует в WAITING,
+        обновляем found_via для приоритетной обработки.
+
         Returns:
             True если добавлен новый, False если уже существует.
         """
@@ -409,10 +412,18 @@ class CrawlerDB:
 
         cursor = self.conn.cursor()
         try:
-            cursor.execute(
-                "INSERT OR IGNORE INTO channels (username, found_via) VALUES (?, ?)",
-                (username, parent)
-            )
+            # v61.1: user_request обновляет found_via для приоритета
+            if parent == "user_request":
+                cursor.execute("""
+                    INSERT INTO channels (username, found_via) VALUES (?, ?)
+                    ON CONFLICT(username) DO UPDATE SET found_via = ?
+                    WHERE status = 'WAITING'
+                """, (username, parent, parent))
+            else:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO channels (username, found_via) VALUES (?, ?)",
+                    (username, parent)
+                )
             self.conn.commit()
             return cursor.rowcount > 0
         except sqlite3.IntegrityError as e:
@@ -525,11 +536,13 @@ class CrawlerDB:
             username канала или None если очередь пуста
         """
         cursor = self.conn.cursor()
-        # v61.0: Просто по времени добавления (priority удалён)
+        # v61.1: user_request первыми, потом по времени
         cursor.execute("""
             SELECT username FROM channels
             WHERE status = 'WAITING'
-            ORDER BY created_at ASC
+            ORDER BY
+                CASE WHEN found_via = 'user_request' THEN 0 ELSE 1 END,
+                created_at ASC
             LIMIT 1
         """)
         row = cursor.fetchone()

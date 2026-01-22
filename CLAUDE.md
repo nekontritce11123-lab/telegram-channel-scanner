@@ -247,8 +247,25 @@ cursor.execute("ALTER TABLE channels ADD COLUMN photo_url TEXT DEFAULT NULL")
 3. [ ] Создать/проверить симлинк nginx в sites-enabled
 4. [ ] Убедиться что нет конфликта доменов с другими конфигами
 5. [ ] `nginx -t && nginx -s reload`
-6. [ ] Проверить API: `curl https://api.factchain-traker.online/api/health`
-7. [ ] Проверить каналы: `curl https://api.factchain-traker.online/api/channels`
+6. [ ] Проверить API: `curl https://ads-api.factchain-traker.online/api/health`
+7. [ ] Проверить каналы: `curl https://ads-api.factchain-traker.online/api/channels`
+
+### Служебные API endpoints
+
+```bash
+# Сброс всех каналов для пересканирования (v60.3)
+# Используется при изменении системы скоринга
+curl -X POST "https://ads-api.factchain-traker.online/api/channels/reset"
+# Возвращает: {"success": true, "reset": 34}
+
+# Экспорт всех GOOD/BAD каналов
+curl "https://ads-api.factchain-traker.online/api/channels/export"
+
+# Импорт каналов с локального краулера
+curl -X POST "https://ads-api.factchain-traker.online/api/channels/import" \
+  -H "Content-Type: application/json" \
+  -d '{"channels": [...]}'
+```
 
 ### UI ошибки
 
