@@ -194,6 +194,60 @@ class RawUserWrapper:
         return f"<User id={self.id} username={self.username} premium={self.is_premium} dc={self.dc_id}>"
 
 
+# ============================================================================
+# v63.0: PHOTO DOWNLOAD FOR VISION
+# ============================================================================
+
+async def download_photos_from_messages(
+    client: Client,
+    messages: list,
+    max_photos: int = 10
+) -> list:
+    """
+    Скачивает фото из сообщений канала для Vision анализа.
+
+    Args:
+        client: Pyrogram клиент
+        messages: Список RawMessageWrapper
+        max_photos: Максимум фото для скачивания
+
+    Returns:
+        Список байтов изображений
+    """
+    import random
+
+    # Собираем сообщения с фото
+    photo_messages = []
+    for msg in messages:
+        raw = getattr(msg, '_raw', None)
+        if raw and hasattr(raw, 'media'):
+            media = raw.media
+            # MessageMediaPhoto имеет атрибут photo
+            if hasattr(media, 'photo') and media.photo:
+                photo_messages.append(msg)
+
+    if not photo_messages:
+        return []
+
+    # Берём случайные (но не больше max_photos)
+    if len(photo_messages) > max_photos:
+        photo_messages = random.sample(photo_messages, max_photos)
+
+    # Скачиваем в память
+    photos = []
+    for msg in photo_messages:
+        try:
+            photo = await client.download_media(msg._raw, in_memory=True)
+            if photo:
+                data = photo.getvalue() if hasattr(photo, 'getvalue') else photo
+                if isinstance(data, bytes):
+                    photos.append(data)
+        except Exception as e:
+            logger.warning(f"Photo download failed: {e}")
+
+    return photos
+
+
 @dataclass
 class ScanResult:
     """
