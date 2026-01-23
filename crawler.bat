@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul 2>&1
-title Crawler v61.0
+title Crawler v50.0
 
 :menu
 cls
 echo ============================================================
-echo                     CRAWLER v61.0
+echo                     CRAWLER v50.0
 echo         Skaner Telegram kanalov - 17 kategoriy
 echo ============================================================
 echo.
