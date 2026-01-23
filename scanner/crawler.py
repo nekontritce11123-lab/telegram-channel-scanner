@@ -24,7 +24,6 @@ AI классификация v18.0:
 
 import asyncio
 import re
-import random
 import json
 # v61.0: httpx удалён - используем SCP синхронизацию через sync.py
 from datetime import datetime
@@ -155,12 +154,7 @@ def extract_content_for_classification(
     }
 
 
-# Настройки rate limiting
-RATE_LIMIT = {
-    'between_channels': 5,      # Секунд между каналами
-    'batch_size': 100,          # Каналов до большой паузы
-    'batch_pause': 300,         # 5 минут отдыха
-}
+# v50.0: Rate limiting отключён (бесполезен для локального сканирования)
 
 # v43.0: GOOD_THRESHOLD, COLLECT_THRESHOLD импортируются из scanner.config
 
@@ -655,9 +649,6 @@ class SmartCrawler:
             else:
                 # v33: НЕ останавливаем — пропускаем и продолжаем
                 print("SKIP (retry later)")
-                await asyncio.sleep(5)  # Пауза перед следующим
-
-            await asyncio.sleep(3)
 
         print(f"Реклассификация завершена: {reclassified} категорий\n")
 
@@ -743,7 +734,6 @@ class SmartCrawler:
                 # Перемещаем в конец очереди чтобы не застрять в бесконечном цикле
                 if result is None:
                     self.db.requeue_channel(username)
-                    await asyncio.sleep(2)
                     continue
 
                 # v43.0: Атомарная запись результата
@@ -873,16 +863,6 @@ class SmartCrawler:
                         sync_channel(sync_data)
                     except Exception:
                         pass  # Не блокируем при ошибке синхронизации
-
-                # Пауза между каналами
-                pause = RATE_LIMIT['between_channels'] + random.uniform(-1, 2)
-                await asyncio.sleep(pause)
-
-                # Большая пауза каждые N каналов
-                if self.processed_count % RATE_LIMIT['batch_size'] == 0:
-                    print(f"\nПауза {RATE_LIMIT['batch_pause'] // 60} минут (обработано {self.processed_count})...")
-                    await asyncio.sleep(RATE_LIMIT['batch_pause'])
-                    print("Продолжаю...\n")
 
         except KeyboardInterrupt:
             # v43.0: При Ctrl+C текущий канал остаётся WAITING — никаких потерь!
