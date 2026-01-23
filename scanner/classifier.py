@@ -82,7 +82,7 @@ IMPORTANT: Use EXACT name like AI_ML, CRYPTO, TECH - not "Technology" or "Artifi
 
 # === ПОДГОТОВКА ДАННЫХ ===
 
-def _prepare_context(title: str, description: str, messages: list) -> str:
+def _prepare_context(title: str, description: str, messages: list, image_descriptions: str = "") -> str:
     """Формирует контекст для LLM."""
     parts = []
 
@@ -93,6 +93,10 @@ def _prepare_context(title: str, description: str, messages: list) -> str:
         clean_desc = clean_text(description)[:1000]
         if clean_desc:
             parts.append(f"Description: {clean_desc}")
+
+    # v63.0: Image analysis from Florence-2
+    if image_descriptions:
+        parts.append(image_descriptions)
 
     posts_text = []
     for msg in messages[:MAX_POSTS_FOR_AI]:
@@ -374,7 +378,8 @@ class ChannelClassifier:
         channel_id: int,
         title: str,
         description: str,
-        messages: list
+        messages: list,
+        image_descriptions: str = ""  # v63.0: Vision analysis
     ) -> Optional[str]:
         """
         Классифицирует канал через Ollama с thinking mode.
@@ -392,7 +397,7 @@ class ChannelClassifier:
             return cached_data
 
         # Готовим контекст
-        context = _prepare_context(title, description, messages)
+        context = _prepare_context(title, description, messages, image_descriptions)
 
         # Запрос к Ollama (без keyword костылей!)
         category = await _call_ollama(context)
