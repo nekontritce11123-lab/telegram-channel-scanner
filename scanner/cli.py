@@ -33,10 +33,11 @@ if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-from .client import get_client, smart_scan
+from .client import get_client, smart_scan, download_photos_from_messages
 from .scorer import calculate_final_score
 from .llm_analyzer import LLMAnalyzer, LLMAnalysisResult, OLLAMA_URL, OLLAMA_MODEL
 from .classifier import get_classifier
+from .vision import analyze_images_batch, format_for_prompt
 from .config import ensure_ollama_running, check_ollama_available
 from .database import CrawlerDB
 from .metrics import get_message_reactions_count  # v57.0: для posts_raw
@@ -102,13 +103,26 @@ async def scan_channel(channel: str) -> dict:
         if comments_data.get('enabled'):
             comments_list = comments_data.get('comments', [])
 
+        # v63.0: Vision Analysis - анализ изображений
+        image_descriptions = ""
+        try:
+            photos = await download_photos_from_messages(client, messages, max_photos=10)
+            if photos:
+                print(f"[VISION] Analyzing {len(photos)} images...")
+                analyses = analyze_images_batch(photos)
+                image_descriptions = format_for_prompt(analyses)
+                print(f"[VISION] Done ({len(analyses)} analyzed)")
+        except Exception as e:
+            print(f"[VISION] Error: {e}")
+
         # v38.3: Получаем категорию из classifier для category-aware LLM анализа
         classifier = get_classifier()
         category = await classifier.classify_sync(
             channel_id=getattr(chat, 'id', 0),
             title=getattr(chat, 'title', ''),
             description=getattr(chat, 'description', ''),
-            messages=messages
+            messages=messages,
+            image_descriptions=image_descriptions  # v63.0
         )
         if not category:
             category = "DEFAULT"
