@@ -331,6 +331,10 @@ class SmartCrawler:
             dict с delete=True для удаления, или
             None для retry (канал остаётся WAITING)
         """
+        # v50.0: Тайминг обработки
+        import time as _time
+        _start_time = _time.time()
+
         result = {
             'username': username,
             'status': 'ERROR',
@@ -352,6 +356,7 @@ class SmartCrawler:
             'ad_links': None,
             'delete': False,  # v43.0: флаг для удаления
             'safety': None,   # v45.0: Brand Safety
+            'elapsed': 0,     # v50.0: время обработки
         }
 
         # Сканируем
@@ -371,6 +376,7 @@ class SmartCrawler:
             else:
                 # Постоянные ошибки — помечаем для удаления
                 result['delete'] = True
+                result['elapsed'] = _time.time() - _start_time
                 return result
 
         # v22.1: Извлекаем контент для хранения и переклассификации
@@ -465,6 +471,7 @@ class SmartCrawler:
                             result['title'] = content['title']
                             result['description'] = content['description']
                             result['content_json'] = content['content_json']
+                            result['elapsed'] = _time.time() - _start_time
                             return result
 
             except (AttributeError, KeyError, TypeError) as e:
@@ -522,6 +529,7 @@ class SmartCrawler:
             error_msg = f"{type(e).__name__}: {e}"
             result['status'] = 'ERROR'
             result['verdict'] = error_msg
+            result['elapsed'] = _time.time() - _start_time
             return result
 
         # v43.0: Заполняем result данными для claim_and_complete()
@@ -601,6 +609,7 @@ class SmartCrawler:
             status = 'BAD'
 
         result['status'] = status
+        result['elapsed'] = _time.time() - _start_time
         return result
 
     async def reclassify_uncategorized(self, limit: int = 50):
@@ -703,7 +712,7 @@ class SmartCrawler:
             print("\nОчередь пуста! Добавьте seed каналы.")
             return
 
-        print(f"\nЗапускаю краулер v61.0...")
+        print(f"\nЗапускаю краулер v50.0...")
         print("Нажми Ctrl+C для остановки\n")
 
         try:
@@ -807,15 +816,27 @@ class SmartCrawler:
                         continue
 
                 # v42.0: Чистый компактный вывод (только GOOD и BAD)
+                # v50.0: Улучшенный вывод с таймингами и подробностями
                 num = self.processed_count + 1
                 cat = result.get('category') or ''
                 ad = result.get('ad_pct')
                 bot = result.get('bot_pct')
+                members = result.get('members', 0)
+                trust = result.get('trust_factor', 1.0)
+                elapsed = result.get('elapsed', 0)
+                score = result.get('score', 0)
 
-                # Форматируем None как "—"
+                # Форматируем подписчиков (1.2K, 15K, 1.2M)
+                if members >= 1_000_000:
+                    members_str = f"{members/1_000_000:.1f}M"
+                elif members >= 1_000:
+                    members_str = f"{members/1_000:.1f}K"
+                else:
+                    members_str = str(members)
+
+                # Форматируем ad/bot
                 ad_str = f"{ad}%" if ad is not None else "—"
                 bot_str = f"{bot}%" if bot is not None else "—"
-                llm_info = f"ad:{ad_str} bot:{bot_str}"
 
                 # v45.0: Brand Safety плашка
                 safety = result.get('safety')
@@ -823,17 +844,18 @@ class SmartCrawler:
                 if safety and safety.get('is_toxic'):
                     toxic_cat = safety.get('category', 'TOXIC')
                     toxic_labels = {"GAMBLING": "🎰", "ADULT": "🔞", "SCAM": "⚠️"}
-                    toxic_str = f" {toxic_labels.get(toxic_cat, '☠️')} {toxic_cat}"
+                    toxic_str = f" {toxic_labels.get(toxic_cat, '☠️')}"
+
+                # Trust penalty indicator
+                trust_str = "" if trust >= 0.95 else f" T:{trust:.2f}"
 
                 if result['status'] == 'GOOD':
-                    cat_str = f" · {cat}" if cat else ""
                     new_str = f" +{result['new_channels']}" if result.get('new_channels') else ""
-                    print(f"[{num}] @{username}{cat_str} · {llm_info} · {result['score']} ✓{new_str}")
+                    print(f"[{num}] ✓ @{username} | {cat} | {members_str} | {score}pt{trust_str} | ad:{ad_str} bot:{bot_str} | {elapsed:.1f}s{new_str}")
                 elif result['status'] == 'BAD':
-                    cat_str = f" · {cat}" if cat else ""
-                    print(f"[{num}] @{username}{cat_str} · {llm_info} · {result['score']} ✗{toxic_str}")
+                    print(f"[{num}] ✗ @{username} | {cat or 'BAD'} | {members_str} | {score}pt{trust_str} | ad:{ad_str} bot:{bot_str} | {elapsed:.1f}s{toxic_str}")
                 elif result['status'] == 'ERROR':
-                    print(f"[{num}] @{username} · ERROR: {result.get('verdict', 'unknown')}")
+                    print(f"[{num}] ⚠ @{username} | ERROR: {result.get('verdict', 'unknown')} | {elapsed:.1f}s")
 
                 self.processed_count += 1
                 self.new_links_count += result.get('new_channels', 0)
