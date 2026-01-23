@@ -395,7 +395,7 @@ class SmartCrawler:
         image_descriptions = ""
         try:
             photos = await download_photos_from_messages(
-                self.client, scan_result.messages, max_photos=10
+                self.client, scan_result.messages, max_photos=10, chat=scan_result.chat
             )
             if photos:
                 print(f"  [VISION] {len(photos)} images...")

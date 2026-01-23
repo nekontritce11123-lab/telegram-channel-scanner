@@ -201,7 +201,8 @@ class RawUserWrapper:
 async def download_photos_from_messages(
     client: Client,
     messages: list,
-    max_photos: int = 10
+    max_photos: int = 10,
+    chat = None
 ) -> list:
     """
     Скачивает фото из сообщений канала для Vision анализа.
@@ -210,40 +211,57 @@ async def download_photos_from_messages(
         client: Pyrogram клиент
         messages: Список RawMessageWrapper
         max_photos: Максимум фото для скачивания
+        chat: Pyrogram Chat объект (resolved)
 
     Returns:
         Список байтов изображений
     """
     import random
+    from pyrogram.raw import types
 
-    # Собираем сообщения с фото
-    photo_messages = []
+    if not chat:
+        return []
+
+    # Собираем ID сообщений с фото
+    photo_msg_ids = []
     for msg in messages:
         raw = getattr(msg, '_raw', None)
         if raw and hasattr(raw, 'media'):
             media = raw.media
             # MessageMediaPhoto имеет атрибут photo
-            if hasattr(media, 'photo') and media.photo:
-                photo_messages.append(msg)
+            if isinstance(media, types.MessageMediaPhoto) and media.photo:
+                photo_msg_ids.append(msg.id)
 
-    if not photo_messages:
+    if not photo_msg_ids:
         return []
 
     # Берём случайные (но не больше max_photos)
-    if len(photo_messages) > max_photos:
-        photo_messages = random.sample(photo_messages, max_photos)
+    if len(photo_msg_ids) > max_photos:
+        photo_msg_ids = random.sample(photo_msg_ids, max_photos)
 
-    # Скачиваем в память
+    # Получаем полные сообщения через высокоуровневый API
+    # Используем chat.id или chat.username
+    chat_ref = chat.username or chat.id
     photos = []
-    for msg in photo_messages:
-        try:
-            photo = await client.download_media(msg._raw, in_memory=True)
-            if photo:
-                data = photo.getvalue() if hasattr(photo, 'getvalue') else photo
-                if isinstance(data, bytes):
-                    photos.append(data)
-        except Exception as e:
-            logger.warning(f"Photo download failed: {e}")
+
+    try:
+        # Получаем сообщения пачкой (один запрос)
+        full_messages = await client.get_messages(chat_ref, message_ids=photo_msg_ids)
+
+        for msg in full_messages:
+            if msg and msg.photo:
+                try:
+                    # Скачиваем фото в память
+                    photo_file = await client.download_media(msg, in_memory=True)
+                    if photo_file:
+                        data = photo_file.getvalue() if hasattr(photo_file, 'getvalue') else photo_file
+                        if isinstance(data, bytes) and len(data) > 0:
+                            photos.append(data)
+                except Exception as e:
+                    logger.warning(f"Photo download failed (msg {msg.id}): {e}")
+
+    except Exception as e:
+        logger.warning(f"Failed to get messages for photos: {e}")
 
     return photos
 

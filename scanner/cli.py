@@ -106,7 +106,7 @@ async def scan_channel(channel: str) -> dict:
         # v63.0: Vision Analysis - анализ изображений
         image_descriptions = ""
         try:
-            photos = await download_photos_from_messages(client, messages, max_photos=10)
+            photos = await download_photos_from_messages(client, messages, max_photos=10, chat=chat)
             if photos:
                 print(f"[VISION] Analyzing {len(photos)} images...")
                 analyses = analyze_images_batch(photos)
