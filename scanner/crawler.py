@@ -843,19 +843,18 @@ class SmartCrawler:
                 toxic_str = ""
                 if safety and safety.get('is_toxic'):
                     toxic_cat = safety.get('category', 'TOXIC')
-                    toxic_labels = {"GAMBLING": "🎰", "ADULT": "🔞", "SCAM": "⚠️"}
-                    toxic_str = f" {toxic_labels.get(toxic_cat, '☠️')}"
+                    toxic_str = f" [{toxic_cat}]"
 
                 # Trust penalty indicator
                 trust_str = "" if trust >= 0.95 else f" T:{trust:.2f}"
 
                 if result['status'] == 'GOOD':
                     new_str = f" +{result['new_channels']}" if result.get('new_channels') else ""
-                    print(f"[{num}] ✓ @{username} | {cat} | {members_str} | {score}pt{trust_str} | ad:{ad_str} bot:{bot_str} | {elapsed:.1f}s{new_str}")
+                    print(f"[{num}] OK @{username} | {cat} | {members_str} | {score}pt{trust_str} | ad:{ad_str} bot:{bot_str} | {elapsed:.1f}s{new_str}")
                 elif result['status'] == 'BAD':
-                    print(f"[{num}] ✗ @{username} | {cat or 'BAD'} | {members_str} | {score}pt{trust_str} | ad:{ad_str} bot:{bot_str} | {elapsed:.1f}s{toxic_str}")
+                    print(f"[{num}] NO @{username} | {cat or 'BAD'} | {members_str} | {score}pt{trust_str} | ad:{ad_str} bot:{bot_str} | {elapsed:.1f}s{toxic_str}")
                 elif result['status'] == 'ERROR':
-                    print(f"[{num}] ⚠ @{username} | ERROR: {result.get('verdict', 'unknown')} | {elapsed:.1f}s")
+                    print(f"[{num}] ER @{username} | ERROR: {result.get('verdict', 'unknown')} | {elapsed:.1f}s")
 
                 self.processed_count += 1
                 self.new_links_count += result.get('new_channels', 0)
