@@ -350,35 +350,6 @@ def stability_to_points(data: dict, max_pts: int = None) -> int:
     return 3       # Высокая вариация - живая аудитория
 
 
-def er_cv_to_points(cv: float, members: int = 0, max_pts: int = None) -> int:
-    """
-    v13.0: ER variation CV -> баллы (default max 5).
-    v48.0: DEPRECATED - er_variation убран из scoring, заменён на er_trend.
-    """
-    if max_pts is None:
-        max_pts = 5  # v48.0: hardcoded, метрика удалена из RAW_WEIGHTS
-
-    # Микроканалы: маленькие числа → меньше вариация
-    # v23.0: использует SIZE_THRESHOLDS из config.py
-    if members < SIZE_THRESHOLDS['micro']:
-        if cv < 15:
-            return 0
-        if cv < 30:
-            return int(max_pts * 0.5)  # 2
-        if cv < 50:
-            return int(max_pts * 0.8)  # 4
-        return max_pts  # 5
-
-    # Стандартные пороги
-    if cv < 20:
-        return 0
-    if cv < 40:
-        return int(max_pts * 0.4)  # 2
-    if cv < 70:
-        return int(max_pts * 0.7)  # 3
-    return max_pts  # 5
-
-
 def source_to_points(max_share: float, repost_ratio: float = 1.0, max_pts: int = None) -> int:
     """
     v13.0: Source diversity -> баллы (default max 5).

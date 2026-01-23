@@ -206,8 +206,8 @@ class SmartCrawler:
         # v63.0: Выгружаем Vision модель
         try:
             unload_vision()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Vision unload warning: {e}")
 
         if self.client:
             await self.client.stop()
@@ -395,7 +395,7 @@ class SmartCrawler:
         image_descriptions = ""
         try:
             photos = await download_photos_from_messages(
-                self.client, scan_result.messages, max_photos=5, chat=scan_result.chat
+                self.client, scan_result.messages, max_photos=10, chat=scan_result.chat
             )
             if photos:
                 print(f"  [VISION] {len(photos)} images...")
@@ -476,7 +476,7 @@ class SmartCrawler:
 
             except (AttributeError, KeyError, TypeError) as e:
                 # LLM анализ опционален - не прерываем сканирование
-                pass
+                logger.debug(f"LLM analysis optional error: {e}")
 
         # v43.2: Теперь считаем score С учётом llm_result (ad_percentage штраф!)
         try:
@@ -882,8 +882,8 @@ class SmartCrawler:
                             "description": result.get('description'),
                         }
                         sync_channel(sync_data)
-                    except Exception:
-                        pass  # Не блокируем при ошибке синхронизации
+                    except Exception as e:
+                        logger.warning(f"Sync error for {result.get('username')}: {e}")
 
         except KeyboardInterrupt:
             # v43.0: При Ctrl+C текущий канал остаётся WAITING — никаких потерь!

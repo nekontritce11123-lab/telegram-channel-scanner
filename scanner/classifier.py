@@ -16,12 +16,15 @@ import json
 import asyncio
 import re
 import time
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 # Для HTTP запросов к Ollama
 import requests
+
+logger = logging.getLogger(__name__)
 
 # v2.1: Общие утилиты (clean_text)
 from scanner.utils import clean_text
@@ -347,7 +350,7 @@ def _unload_model():
         )
         print(f"Модель {OLLAMA_MODEL} выгружена из GPU")
     except (requests.exceptions.RequestException, OSError) as e:
-        pass  # Не критично при выходе - модель выгрузится сама по timeout
+        logger.debug(f"Model unload skipped: {e}")  # Не критично при выходе
 
 
 # === ОСНОВНОЙ КЛАССИФИКАТОР ===

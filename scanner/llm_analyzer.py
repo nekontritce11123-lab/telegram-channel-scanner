@@ -45,12 +45,15 @@ from scanner.utils import clean_text
 from scanner.cache import get_llm_cache
 
 # v43.0: Централизованная конфигурация
+# v51.0: MAX_POSTS_FOR_AI, MAX_CHARS_PER_POST для унификации
 from scanner.config import (
     OLLAMA_URL,
     OLLAMA_MODEL,
     OLLAMA_TIMEOUT,
     MAX_RETRIES,
     RETRY_DELAY,
+    MAX_POSTS_FOR_AI,
+    MAX_CHARS_PER_POST,
 )
 
 # === V2.0: JSON REPAIR ===
@@ -187,10 +190,10 @@ def _regex_extract_fields(response: str) -> dict:
 # DEBUG
 DEBUG_LLM_ANALYZER = False  # v41.0: отключен для компактного вывода
 
-# Лимиты
-MAX_POSTS_FOR_ANALYSIS = 30
+# Лимиты (v51.0: унифицированы через config.py)
+MAX_POSTS_FOR_ANALYSIS = MAX_POSTS_FOR_AI  # из config.py (50)
 MAX_COMMENTS_FOR_ANALYSIS = 999  # v40.2: без лимита (сколько API даёт)
-MAX_CHARS_PER_POST = 600
+# MAX_CHARS_PER_POST теперь импортируется из config.py (800)
 
 
 # === РЕЗУЛЬТАТЫ ===

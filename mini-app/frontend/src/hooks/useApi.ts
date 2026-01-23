@@ -73,11 +73,7 @@ export interface Breakdown {
   floating_weights?: boolean
 }
 
-// Legacy simple breakdown (for backwards compatibility)
-export interface BreakdownItem {
-  score: number
-  max: number
-}
+// v51.0: BreakdownItem removed (legacy, not used anywhere)
 
 export interface TrustPenalty {
   name: string
@@ -152,12 +148,7 @@ export interface CategoryStatsResponse {
   uncategorized: number
 }
 
-// v49.0: Live Scan types
-export interface ScanResponse {
-  success: boolean
-  channel?: ChannelDetail
-  error?: string
-}
+// v51.0: ScanResponse removed (live scan disabled v59.5)
 
 // v49.0: History/Watchlist stored channel
 export interface StoredChannel {

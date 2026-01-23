@@ -10,8 +10,17 @@ __pycache__/
 .Python
 *.so
 
+# Cache
+.cache/
+cache/
+.pytest_cache/
+
 # Output
 output/
+
+# Test artifacts
+TEST_MODEL/
+debug/
 
 # Temp files
 tmpclaude-*
@@ -19,6 +28,9 @@ tmpclaude-*
 temp_*.json
 *_test.json
 all_channels.json
+task_plan.md
+findings.md
+progress.md
 
 # Windows artifacts
 nul
@@ -28,5 +40,6 @@ nul
 .idea/
 *.swp
 *.swo
+
+# Database
 crawler.db
-cache/

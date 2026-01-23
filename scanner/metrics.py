@@ -1,12 +1,15 @@
 """
 Модуль расчёта метрик качества Telegram канала.
 v41.1: Floating weights для закрытых комментов.
+v51.0: SIZE_THRESHOLDS из config.py вместо hardcoded.
 """
 from datetime import datetime, timezone
 from collections import Counter
 from typing import Any
 from dataclasses import dataclass
 import re
+
+from scanner.config import SIZE_THRESHOLDS
 
 
 # ============================================================================
@@ -57,11 +60,12 @@ class FraudConvictionSystem:
         self.forward_rate = (total_forwards / total_views * 100) if total_views > 0 else 0
 
     def get_size_category(self) -> str:
-        if self.members < 200:
+        """v51.0: Использует SIZE_THRESHOLDS из config.py."""
+        if self.members < SIZE_THRESHOLDS['micro']:
             return 'micro'
-        elif self.members < 1000:
+        elif self.members < SIZE_THRESHOLDS['small']:
             return 'small'
-        elif self.members < 5000:
+        elif self.members < SIZE_THRESHOLDS['medium']:
             return 'medium'
         return 'large'
 

@@ -1,16 +1,13 @@
 """
 scanner/utils.py - общие utility функции
 
-v1.0: clean_text, load_json_cache, save_json_cache
-v1.1: safe_int, safe_float (из mini-app/backend/main.py)
-
-Избегаем дублирования кода между модулями.
+v1.0: clean_text
+v2.0: Удалены мёртвые функции (load_json_cache, save_json_cache, safe_int, safe_float)
+      - JSONCache теперь в cache.py
+      - safe_int/safe_float локально в main.py
 """
 
-import json
 import re
-from pathlib import Path
-from typing import Optional
 
 
 def clean_text(text: str, remove_symbols_emoji: bool = False) -> str:
@@ -42,85 +39,3 @@ def clean_text(text: str, remove_symbols_emoji: bool = False) -> str:
     text = re.sub(r'\n{3,}', '\n\n', text)
 
     return text.strip()
-
-
-def load_json_cache(path: Path) -> dict:
-    """
-    Загружает JSON кэш из файла.
-
-    Args:
-        path: Путь к файлу кэша
-
-    Returns:
-        dict с данными или пустой dict при ошибке
-    """
-    if not path.exists():
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError, IOError):
-        # Ошибка чтения/парсинга - начинаем с пустого кэша
-        return {}
-
-
-def save_json_cache(path: Path, data: dict, indent: int = 2) -> bool:
-    """
-    Сохраняет JSON кэш в файл.
-
-    Args:
-        path: Путь к файлу кэша
-        data: Данные для сохранения
-        indent: Отступ для форматирования (по умолчанию 2)
-
-    Returns:
-        True если успешно, False при ошибке
-    """
-    path.parent.mkdir(exist_ok=True)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=indent)
-        return True
-    except (OSError, IOError, TypeError) as e:
-        # OSError/IOError: ошибки файловой системы
-        # TypeError: несериализуемые данные в JSON
-        print(f"Cache save error: {e}")
-        return False
-
-
-def safe_int(value, default: int = 0) -> int:
-    """
-    Безопасное преобразование в int.
-
-    Args:
-        value: Значение для преобразования (может быть None, str, float)
-        default: Значение по умолчанию при ошибке
-
-    Returns:
-        int значение или default
-    """
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return default
-
-
-def safe_float(value, default: float = 0.0) -> float:
-    """
-    Безопасное преобразование в float.
-
-    Args:
-        value: Значение для преобразования (может быть None, str, int)
-        default: Значение по умолчанию при ошибке
-
-    Returns:
-        float значение или default
-    """
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except (ValueError, TypeError):
-        return default

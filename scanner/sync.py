@@ -189,7 +189,8 @@ def create_requests_file() -> bool:
 
     try:
         ssh, sftp = _get_sftp()
-    except Exception:
+    except Exception as e:
+        logger.debug(f"SFTP connection failed: {e}")
         return False
 
     try:

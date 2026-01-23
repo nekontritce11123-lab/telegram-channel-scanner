@@ -102,8 +102,8 @@ class JSONCache:
                 if datetime.now() - cached_at > self.ttl:
                     cache_file.unlink()
                     removed += 1
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Cache cleanup error for {cache_file}: {e}")
 
         if removed:
             logger.info(f"Cleared {removed} expired cache entries")

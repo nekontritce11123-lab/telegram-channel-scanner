@@ -68,16 +68,6 @@ SIZE_THRESHOLDS = {
 
 
 # =============================================================================
-# CRAWLER RATE LIMITING
-# =============================================================================
-
-CRAWLER_PAUSE_MIN = float(os.getenv("CRAWLER_PAUSE_MIN", "5"))   # Минимальная пауза между каналами
-CRAWLER_PAUSE_MAX = float(os.getenv("CRAWLER_PAUSE_MAX", "10"))  # Максимальная пауза между каналами
-CRAWLER_BIG_PAUSE = int(os.getenv("CRAWLER_BIG_PAUSE", "60"))    # Большая пауза каждые N каналов
-CRAWLER_BIG_PAUSE_EVERY = int(os.getenv("CRAWLER_BIG_PAUSE_EVERY", "100"))  # Частота больших пауз
-
-
-# =============================================================================
 # CATEGORIES (read-only, не изменять через env)
 # =============================================================================
 
