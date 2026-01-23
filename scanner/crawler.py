@@ -30,11 +30,13 @@ import json
 from datetime import datetime
 from typing import Optional
 
+from loguru import logger
 from pyrogram import Client
 
 from .database import CrawlerDB
-from .client import get_client, smart_scan_safe
+from .client import get_client, smart_scan_safe, download_photos_from_messages
 from .scorer import calculate_final_score
+from .vision import analyze_images_batch, format_for_prompt, unload_model as unload_vision
 from .classifier import get_classifier, ChannelClassifier
 from .llm_analyzer import LLMAnalyzer
 from .metrics import get_message_reactions_count  # v56.0: для posts_raw
@@ -206,6 +208,12 @@ class SmartCrawler:
         if self.classifier:
             self.classifier.save_cache()
             self.classifier.unload()  # v33: Выгружаем модель из GPU
+
+        # v63.0: Выгружаем Vision модель
+        try:
+            unload_vision()
+        except Exception:
+            pass
 
         if self.client:
             await self.client.stop()
@@ -383,6 +391,20 @@ class SmartCrawler:
         # v46.0: Brand Safety теперь через LLM (см. ниже после llm_analyzer.analyze)
         # Старый стоп-слова фильтр удалён - LLM понимает контекст лучше
 
+        # v63.0: Vision Analysis - анализ изображений с канала
+        image_descriptions = ""
+        try:
+            photos = await download_photos_from_messages(
+                self.client, scan_result.messages, max_photos=10
+            )
+            if photos:
+                print(f"  [VISION] {len(photos)} images...")
+                analyses = analyze_images_batch(photos)
+                image_descriptions = format_for_prompt(analyses)
+                print(f"  [VISION] Done ({len(analyses)} analyzed)")
+        except Exception as e:
+            logger.warning(f"Vision analysis failed: {e}")
+
         # v43.2: Сначала классификация и LLM анализ, ПОТОМ score
         # (чтобы llm_trust_factor применился к score!)
 
@@ -395,7 +417,8 @@ class SmartCrawler:
                     channel_id=channel_id,
                     title=getattr(scan_result.chat, 'title', ''),
                     description=getattr(scan_result.chat, 'description', ''),
-                    messages=scan_result.messages
+                    messages=scan_result.messages,
+                    image_descriptions=image_descriptions  # v63.0
                 )
                 if category:
                     self.classified_count += 1
