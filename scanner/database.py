@@ -85,6 +85,9 @@ class ChannelRecord:
     user_ids_json: str = None
     linked_chat_id: int = None
     linked_chat_title: str = None
+    # v52.0: Gzip-сжатые тексты для пересчёта LLM
+    posts_text_gz: bytes = None
+    comments_text_gz: bytes = None
 
 
 class CrawlerDB:
@@ -153,8 +156,8 @@ class CrawlerDB:
         # v59.5: Миграция - приоритет для пользовательских запросов
         self._migrate_v59_priority()
 
-        # v59.6: Миграция - триггеры для нормализации username к lowercase
-        self._migrate_v59_username_triggers()
+        # v52.0: Миграция - хранение текстов для пересчёта LLM
+        self._migrate_v52_texts()
 
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
@@ -183,6 +186,10 @@ class CrawlerDB:
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_scan_requests_status ON scan_requests(status)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_scan_requests_created ON scan_requests(created_at)')
+
+        # v59.6: Миграция - триггеры для нормализации username к lowercase
+        # ВАЖНО: вызывать ПОСЛЕ создания таблицы scan_requests!
+        self._migrate_v59_username_triggers()
 
         self.conn.commit()
 
@@ -398,6 +405,40 @@ class CrawlerDB:
 
         self.conn.commit()
 
+    def _migrate_v52_texts(self):
+        """v52.0: Хранение gzip-сжатых текстов для пересчёта LLM без Telegram API.
+
+        Новые колонки:
+        - posts_text_gz: gzip(JSON массив текстов 50 постов по 500 символов)
+        - comments_text_gz: gzip(JSON массив текстов 100 комментов по 150 символов)
+
+        Размер: ~10 KB на канал (вместо 40 KB без сжатия).
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(channels)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        new_columns = [
+            ('posts_text_gz', 'BLOB DEFAULT NULL'),
+            ('comments_text_gz', 'BLOB DEFAULT NULL'),
+        ]
+
+        added = []
+        for col_name, col_def in new_columns:
+            if col_name not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE channels ADD COLUMN {col_name} {col_def}")
+                    added.append(col_name)
+                except sqlite3.OperationalError as e:
+                    logger.debug(f"Migration v52.0 {col_name}: column already exists or table issue: {e}")
+                except sqlite3.Error as e:
+                    logger.error(f"Migration v52.0 {col_name} failed: {e}")
+
+        if added:
+            print(f"Миграция v52.0: добавлены колонки для текстов: {', '.join(added)}")
+
+        self.conn.commit()
+
     def add_channel(self, username: str, parent: str = "") -> bool:
         """
         Добавляет канал в очередь.
@@ -595,7 +636,10 @@ class CrawlerDB:
         posts_raw: list = None,
         user_ids: list = None,
         linked_chat_id: int = None,
-        linked_chat_title: str = None
+        linked_chat_title: str = None,
+        # v52.0: Gzip-сжатые тексты для пересчёта LLM
+        posts_text_gz: bytes = None,
+        comments_text_gz: bytes = None
     ) -> bool:
         """
         v43.0: Атомарно записывает результат ТОЛЬКО если канал в WAITING.
@@ -677,6 +721,8 @@ class CrawlerDB:
                 user_ids_json = ?,
                 linked_chat_id = ?,
                 linked_chat_title = ?,
+                posts_text_gz = ?,
+                comments_text_gz = ?,
                 scanned_at = datetime('now')
             WHERE LOWER(username) = ? AND status = 'WAITING'
             RETURNING username
@@ -691,7 +737,8 @@ class CrawlerDB:
               decay_ratio, decay_zone, er_trend, er_trend_status,
               ad_percentage, bot_percentage, comment_trust,
               safety_json, posts_raw_json, user_ids_json,
-              linked_chat_id, linked_chat_title, username))
+              linked_chat_id, linked_chat_title,
+              posts_text_gz, comments_text_gz, username))
 
         row = cursor.fetchone()
         self.conn.commit()
@@ -768,7 +815,10 @@ class CrawlerDB:
         posts_raw: list = None,
         user_ids: list = None,
         linked_chat_id: int = None,
-        linked_chat_title: str = None
+        linked_chat_title: str = None,
+        # v52.0: Gzip-сжатые тексты для пересчёта LLM
+        posts_text_gz: bytes = None,
+        comments_text_gz: bytes = None
     ):
         """
         Помечает канал как проверенный.
@@ -889,6 +939,8 @@ class CrawlerDB:
                 user_ids_json = ?,
                 linked_chat_id = ?,
                 linked_chat_title = ?,
+                posts_text_gz = ?,
+                comments_text_gz = ?,
                 scanned_at = ?
             WHERE LOWER(username) = ?
         ''', (status, score, verdict, trust_factor, members, ad_links_json,
@@ -902,7 +954,8 @@ class CrawlerDB:
               decay_ratio, decay_zone, er_trend, er_trend_status,
               ad_percentage, bot_percentage, comment_trust,
               safety_json, posts_raw_json, user_ids_json,
-              linked_chat_id, linked_chat_title, datetime.now(), username))
+              linked_chat_id, linked_chat_title,
+              posts_text_gz, comments_text_gz, datetime.now(), username))
         self.conn.commit()
 
     def set_category(self, username: str, category: str, category_secondary: str = None, percent: int = 100):
@@ -989,6 +1042,9 @@ class CrawlerDB:
             user_ids_json=get_col('user_ids_json'),
             linked_chat_id=get_col('linked_chat_id'),
             linked_chat_title=get_col('linked_chat_title'),
+            # v52.0: Gzip-сжатые тексты для пересчёта LLM
+            posts_text_gz=get_col('posts_text_gz'),
+            comments_text_gz=get_col('comments_text_gz'),
         )
 
     def get_stats(self) -> dict:

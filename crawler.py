@@ -52,10 +52,10 @@ from scanner.classifier import get_classifier
 
 def print_banner():
     print("""
-╔═══════════════════════════════════════════════════════════╗
-║                    КРАУЛЕР v50.0                          ║
-║         Сканер Telegram каналов • 17 категорий           ║
-╚═══════════════════════════════════════════════════════════╝
++-----------------------------------------------------------+
+|                    CRAWLER v51.0                          |
+|         Telegram channel scanner - 17 categories         |
++-----------------------------------------------------------+
     """)
 
 
@@ -225,10 +225,63 @@ def main():
         default='crawler.db',
         help='Путь к базе данных (по умолчанию: crawler.db)'
     )
+    # v52.0: Флаги пересчёта метрик
+    parser.add_argument(
+        '--recalculate-local',
+        action='store_true',
+        help='Пересчитать scores из сохранённых breakdown (без Telegram/Ollama)'
+    )
+    parser.add_argument(
+        '--recalculate-llm',
+        action='store_true',
+        help='Пересчитать LLM анализ из сохранённых текстов (требует Ollama)'
+    )
+    parser.add_argument(
+        '--sync',
+        action='store_true',
+        help='Синхронизировать результаты на сервер после пересчёта'
+    )
 
     args = parser.parse_args()
 
     print_banner()
+
+    # v52.0: Пересчёт метрик
+    if args.recalculate_local or args.recalculate_llm:
+        from scanner.recalculator import recalculate_local, recalculate_llm, get_channels_without_texts
+
+        db = CrawlerDB(db_path=args.db)
+
+        if args.recalculate_local:
+            print("\n=== ПЕРЕСЧЁТ SCORES (--recalculate-local) ===")
+            print("Применяем НОВЫЕ формулы к сохранённым метрикам...\n")
+            result = recalculate_local(db, verbose=True)
+
+        if args.recalculate_llm:
+            print("\n=== ПЕРЕСЧЁТ LLM (--recalculate-llm) ===")
+
+            # Проверяем есть ли каналы без текстов
+            missing = get_channels_without_texts(db)
+            if missing:
+                print(f"⚠️  {len(missing)} каналов без текстов (нужен ресканс):")
+                for u in missing[:5]:
+                    print(f"    @{u}")
+                if len(missing) > 5:
+                    print(f"    ... и ещё {len(missing) - 5}")
+                print()
+
+            print("Запускаем LLM анализ с новым промптом/моделью...\n")
+            result = recalculate_llm(db, verbose=True)
+
+        # v52.0: Синхронизация на сервер
+        if args.sync:
+            print("\n=== СИНХРОНИЗАЦИЯ НА СЕРВЕР ===")
+            # TODO: Реализовать синхронизацию через API
+            print("⚠️  --sync пока не реализован")
+            print("Используй: cd mini-app/deploy && python sync_channels.py")
+
+        db.close()
+        return
 
     # Для некоторых команд нужна только БД
     if args.stats or args.category_stats or args.export or args.classify:

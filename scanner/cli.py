@@ -21,6 +21,7 @@ LLM ANALYSIS (v38.0):
 - Comment Analysis: bot_percentage, trust_score (v41.0: authenticity removed)
 """
 import asyncio
+import gzip
 import json
 import sys
 from pathlib import Path
@@ -106,7 +107,7 @@ async def scan_channel(channel: str) -> dict:
         # v63.0: Vision Analysis - анализ изображений
         image_descriptions = ""
         try:
-            photos = await download_photos_from_messages(client, messages, max_photos=5, chat=chat)
+            photos = await download_photos_from_messages(client, messages, max_photos=10, chat=chat)
             if photos:
                 print(f"[VISION] Analyzing {len(photos)} images...")
                 analyses = analyze_images_batch(photos)
@@ -147,6 +148,26 @@ async def scan_channel(channel: str) -> dict:
             'reactions': get_message_reactions_count(m) if hasattr(m, 'reactions') else 0,
         } for m in messages[:50]]
         result['posts_raw'] = compress_posts_raw(posts_raw)
+
+        # v52.0: Сохраняем тексты для пересчёта LLM без Telegram API
+        # Тексты постов: первые 50 постов по 500 символов (~5-8 KB после gzip)
+        posts_texts = []
+        for m in messages[:50]:
+            text = getattr(m, 'text', '') or ''
+            if text:
+                posts_texts.append(text[:500])
+        if posts_texts:
+            result['posts_text_gz'] = gzip.compress(
+                json.dumps(posts_texts, ensure_ascii=False).encode('utf-8')
+            )
+
+        # Тексты комментариев: первые 100 комментов по 150 символов (~3-5 KB после gzip)
+        if comments_list:
+            comments_texts = [c[:150] for c in comments_list[:100] if c]
+            if comments_texts:
+                result['comments_text_gz'] = gzip.compress(
+                    json.dumps(comments_texts, ensure_ascii=False).encode('utf-8')
+                )
 
         # v57.0: Собираем user_ids для пересчёта forensics
         user_ids = None
@@ -614,6 +635,9 @@ def save_to_database(result: dict) -> None:
             user_ids=result.get('user_ids'),
             linked_chat_id=result.get('linked_chat_id'),
             linked_chat_title=result.get('linked_chat_title'),
+            # v52.0: Gzip-сжатые тексты для пересчёта LLM
+            posts_text_gz=result.get('posts_text_gz'),
+            comments_text_gz=result.get('comments_text_gz'),
         )
 
         print(f"✓ Сохранено в БД: @{username} ({status})")
