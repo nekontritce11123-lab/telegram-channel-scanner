@@ -3544,6 +3544,37 @@
   line-height: 1.4;
 }
 
+/* v54.0: QuickStats - компактная версия, ширина как у metricsGrid */
+.quickStats {
+  display: flex;
+  justify-content: space-around;
+  padding: 10px 8px;
+  background: var(--section-bg);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.statItem {
+  text-align: center;
+  flex: 1;
+}
+
+.statValue {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+  display: block;
+  line-height: 1.2;
+}
+
+.statLabel {
+  font-size: 9px;
+  color: var(--hint-color);
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+}
+
 /* v12.1: Recommendations Section */
 .recommendationsSection {
   padding: var(--spacing-md);

@@ -108,6 +108,13 @@ export interface LLMAnalysis {
   tier_cap: number
 }
 
+// v54.0: QuickStats interface
+export interface QuickStats {
+  reach: number
+  err: number
+  comments_avg: number
+}
+
 export interface ChannelDetail extends Channel {
   recommendations: Recommendation[]
   status?: string
@@ -117,6 +124,7 @@ export interface ChannelDetail extends Channel {
   price_estimate?: PriceEstimate
   category_rank?: CategoryRank
   llm_analysis?: LLMAnalysis  // v38.0
+  quick_stats?: QuickStats  // v54.0
 }
 
 export interface ChannelListResponse {

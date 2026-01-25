@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, JSX } from 'react'
 import { useTelegram } from './hooks/useTelegram'
-import { useChannels, useStats, useScan, useScanRequest, useHistory, useWatchlist, Channel, ChannelDetail, ChannelFilters, BotInfo, StoredChannel, API_BASE } from './hooks/useApi'
+import { useChannels, useStats, useScan, useScanRequest, useHistory, useWatchlist, Channel, ChannelDetail, ChannelFilters, BotInfo, StoredChannel, API_BASE, QuickStats } from './hooks/useApi'
 import { useYandexMetrika } from './hooks/useYandexMetrika'
 import styles from './App.module.css'
 
@@ -404,6 +404,28 @@ function SkeletonCard() {
   )
 }
 
+// v54.0: QuickStats - 3 ключевых метрики (Охват, ERR, Комментарии)
+function QuickStatsBar({ stats }: { stats: QuickStats | undefined }) {
+  if (!stats || (stats.reach === 0 && stats.err === 0 && stats.comments_avg === 0)) return null
+
+  return (
+    <div className={styles.quickStats}>
+      <div className={styles.statItem}>
+        <span className={styles.statValue}>{stats.reach.toFixed(1)}%</span>
+        <span className={styles.statLabel}>ОХВАТ</span>
+      </div>
+      <div className={styles.statItem}>
+        <span className={styles.statValue}>{stats.err.toFixed(2)}%</span>
+        <span className={styles.statLabel}>ERR</span>
+      </div>
+      <div className={styles.statItem}>
+        <span className={styles.statValue}>{stats.comments_avg.toFixed(1)}</span>
+        <span className={styles.statLabel}>КОММ./ПОСТ</span>
+      </div>
+    </div>
+  )
+}
+
 // v12.0: MetricItem component with progress bar
 // v22.2: Support for disabled metrics (reactions/comments off)
 // v25.0: Support for Info Metrics (value without max, e.g. ad_load, activity)
@@ -475,12 +497,6 @@ function MetricItem({ item, onClick }: { item: { score: number; max: number; lab
         <span className={styles.metricItemLabel}>{item.label}</span>
         <span className={styles.metricItemValue}>
           {item.score}/{item.max}
-          {/* v39.0: Показываем bot_info если есть (AI-детекция ботов в комментах) */}
-          {item.bot_info && (
-            <span className={`${styles.botInfoBadge} ${styles[`bot_${item.bot_info.status}`]}`}>
-              {item.bot_info.value}
-            </span>
-          )}
         </span>
       </div>
       <div className={styles.metricBar}>
@@ -858,6 +874,9 @@ function App() {
               </div>
             </div>
           )}
+
+          {/* v54.0: QuickStats - 3 ключевых метрики */}
+          <QuickStatsBar stats={selectedChannel.quick_stats} />
 
           {/* v51.0: Metrics Grid - всегда показываем если есть данные */}
           {/* v59.0: Порядок изменён: Репутация → Вовлечённость → Качество */}

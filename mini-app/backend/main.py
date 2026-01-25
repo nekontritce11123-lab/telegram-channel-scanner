@@ -1387,6 +1387,75 @@ def safe_float(value, default=1.0) -> float:
         return default
 
 
+def extract_quick_stats_from_breakdown(breakdown: dict) -> dict:
+    """
+    v54.0: Извлекает quick_stats из breakdown (сжатый или декомпрессированный формат).
+
+    Сжатый формат (v1):
+      re = [reach_value, points]
+      rr = [reaction_rate_value, points]
+      co = ["enabled (avg X.X)", points]
+
+    Декомпрессированный формат:
+      reach = {'value': X, 'points': Y, 'max': Z}
+      reaction_rate = {'value': X, 'points': Y, 'max': Z}
+      comments = {'value': X, 'points': Y, 'max': Z}
+    """
+    quick_stats = {'reach': 0, 'err': 0, 'comments_avg': 0}
+
+    if not breakdown:
+        return quick_stats
+
+    # Reach - охват в %
+    # Сжатый формат: re = [value, points]
+    re_data = breakdown.get('re')
+    if isinstance(re_data, list) and len(re_data) >= 1:
+        quick_stats['reach'] = round(float(re_data[0]), 1)
+    # Декомпрессированный формат: reach = {'value': X, ...}
+    elif 'reach' in breakdown:
+        reach_data = breakdown.get('reach')
+        if isinstance(reach_data, dict) and 'value' in reach_data:
+            quick_stats['reach'] = round(float(reach_data['value']), 1)
+        elif isinstance(reach_data, (int, float)):
+            quick_stats['reach'] = round(float(reach_data), 1)
+
+    # ERR / Reaction Rate - engagement rate в %
+    # Сжатый формат: rr = [value, points]
+    rr = breakdown.get('rr')
+    if isinstance(rr, list) and len(rr) >= 1:
+        quick_stats['err'] = round(float(rr[0]), 2)
+    # Декомпрессированный формат: reaction_rate = {'value': X, ...}
+    elif 'reaction_rate' in breakdown:
+        rr_data = breakdown.get('reaction_rate')
+        if isinstance(rr_data, dict) and 'value' in rr_data:
+            quick_stats['err'] = round(float(rr_data['value']), 2)
+        elif isinstance(rr_data, (int, float)):
+            quick_stats['err'] = round(float(rr_data), 2)
+
+    # Comments avg - среднее кол-во комментариев
+    # Сжатый формат: co = ["enabled (avg X.X)", points]
+    co = breakdown.get('co')
+    if isinstance(co, list) and len(co) >= 1:
+        co_value = co[0]
+        if isinstance(co_value, str) and 'avg' in co_value:
+            match = re.search(r'avg\s+([\d.]+)', co_value)
+            if match:
+                quick_stats['comments_avg'] = round(float(match.group(1)), 1)
+    # Декомпрессированный формат: comments = {'value': X, ...}
+    elif 'comments' in breakdown:
+        co_data = breakdown.get('comments')
+        if isinstance(co_data, dict) and 'value' in co_data:
+            val = co_data['value']
+            if isinstance(val, str) and 'avg' in val:
+                match = re.search(r'avg\s+([\d.]+)', val)
+                if match:
+                    quick_stats['comments_avg'] = round(float(match.group(1)), 1)
+            elif isinstance(val, (int, float)):
+                quick_stats['comments_avg'] = round(float(val), 1)
+
+    return quick_stats
+
+
 # v22.0: Кэш для фото каналов (in-memory, до 1000 каналов)
 # v48.0: Добавлен TTL для автоочистки старых записей
 import time
@@ -1868,6 +1937,13 @@ async def get_channel(username: str, request: Request):
         elif real_breakdown_data.get('breakdown', {}).get('llm_analysis'):
             raw_llm_analysis = real_breakdown_data.get('breakdown', {}).get('llm_analysis')
 
+    # v54.0: QuickStats из сжатого формата (ДО декомпрессии!)
+    quick_stats = {'reach': 0, 'err': 0, 'comments_avg': 0}
+    if real_breakdown_data and real_breakdown_data.get('breakdown'):
+        # Сохраняем оригинальный сжатый формат для quick_stats
+        original_compressed = real_breakdown_data.get('breakdown', {})
+        quick_stats = extract_quick_stats_from_breakdown(original_compressed)
+
     # v23.0: Если есть реальный breakdown - форматируем его для UI
     # v39.0: Передаём LLM данные для интеграции в метрики
     # v58.0: Декомпрессия сжатых ключей (cv -> cv_views, etc.)
@@ -1982,6 +2058,8 @@ async def get_channel(username: str, request: Request):
         "llm_analysis": llm_analysis,
         # v34.0: Telegram верификация
         "is_verified": is_verified,
+        # v54.0: QuickStats (reach, err, comments_avg)
+        "quick_stats": quick_stats,
     }
 
 
