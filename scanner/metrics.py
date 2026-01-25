@@ -2,6 +2,7 @@
 Модуль расчёта метрик качества Telegram канала.
 v41.1: Floating weights для закрытых комментов.
 v51.0: SIZE_THRESHOLDS из config.py вместо hardcoded.
+v51.1: shared_utils для iterate_reactions_with_emoji и get_sorted_messages.
 """
 from datetime import datetime, timezone
 from collections import Counter
@@ -10,6 +11,11 @@ from dataclasses import dataclass
 import re
 
 from scanner.config import SIZE_THRESHOLDS
+from scanner.shared_utils import (
+    get_reaction_emoji as _get_reaction_emoji,
+    iterate_reactions_with_emoji,
+    get_sorted_messages,
+)
 
 
 # ============================================================================
@@ -994,86 +1000,87 @@ def check_reactions_enabled(messages: list) -> bool:
 
 
 def get_reaction_emoji(reaction: Any) -> str:
-    """Безопасно получает emoji реакции."""
-    # Pyrogram ReactionCount имеет атрибут reaction
-    if hasattr(reaction, 'reaction'):
-        r = reaction.reaction
-        # ReactionEmoji имеет атрибут emoji
-        if hasattr(r, 'emoji'):
-            return r.emoji
-    # Fallback: может быть напрямую emoji
-    if hasattr(reaction, 'emoji'):
-        return reaction.emoji
-    return "?"
+    """
+    Безопасно получает emoji реакции.
+    v51.1: Делегирует в shared_utils для единообразия.
+    """
+    return _get_reaction_emoji(reaction)
 
 
 def calculate_reaction_stability(messages: list) -> dict:
     """
-    D1: Стабильность распределения реакций между постами.
-    Живая аудитория имеет устоявшиеся предпочтения (~60% thumbs, ~25% fire всегда).
-    Боты дают хаотичные пропорции.
+    v52.2: Стабильность КОЛИЧЕСТВА реакций между постами.
 
-    Возвращает CV отклонений от среднего распределения.
-    CV 10-30% = стабильно = хорошо
-    CV > 70% = хаос = плохо
+    Двухфакторная метрика:
+    1. CV (Coefficient of Variation) количества реакций, исключая топ-аутлайер
+       - CV < 15% = подозрительно однородно (боты)
+       - CV 15-80% = здоровая вариация (живой канал)
+       - CV > 80% = хаос (накрутка или мёртвые посты)
+
+    2. Концентрация топ-поста (доля реакций от общей суммы)
+       - < 40% = нормально (реакции распределены)
+       - 40-60% = есть хит, но ОК
+       - > 60% = один пост накручен, остальные мёртвые
+
+    Логика: живой канал имеет разные реакции на разные посты,
+    но без экстремальной концентрации в одном.
     """
-    post_distributions = []
+    # Собираем количество реакций на каждый пост
+    reaction_counts = []
 
     for m in messages:
-        if not hasattr(m, 'reactions') or not m.reactions:
-            continue
+        count = get_message_reactions_count(m)
+        reaction_counts.append(count)
 
-        reactions = m.reactions
-        if not hasattr(reactions, 'reactions') or not reactions.reactions:
-            continue
+    # Фильтруем посты с реакциями
+    non_zero_counts = [c for c in reaction_counts if c > 0]
 
-        post_dist = {}
-        post_total = 0
-        for r in reactions.reactions:
-            emoji = get_reaction_emoji(r)
-            count = getattr(r, 'count', 0) or 0
-            post_dist[emoji] = count
-            post_total += count
+    if len(non_zero_counts) < 3:
+        return {
+            'stability_cv': 50.0,
+            'top_concentration': 0.2,
+            'status': 'insufficient_data',
+            'posts_with_reactions': len(non_zero_counts),
+            'total_posts': len(reaction_counts)
+        }
 
-        if post_total > 0:
-            # Нормализуем в проценты
-            post_dist = {k: v / post_total for k, v in post_dist.items()}
-            post_distributions.append(post_dist)
+    total_reactions = sum(non_zero_counts)
 
-    if len(post_distributions) < 5:
-        return {'stability_cv': 50.0, 'unique_types': 0, 'status': 'insufficient_data', 'distribution': {}}
+    # Концентрация топ-поста
+    max_reactions = max(non_zero_counts)
+    top_concentration = max_reactions / total_reactions if total_reactions > 0 else 0
 
-    # Собираем все emoji
-    all_emojis = set()
-    for dist in post_distributions:
-        all_emojis.update(dist.keys())
+    # CV без топ-аутлайера (robust CV)
+    # Убираем один максимальный пост чтобы не искажать картину
+    counts_without_top = sorted(non_zero_counts)[:-1] if len(non_zero_counts) > 3 else non_zero_counts
 
-    # Для каждого emoji считаем вариацию его доли
-    emoji_variations = []
-    total_counts = {}
+    if len(counts_without_top) < 2:
+        # Слишком мало данных для CV
+        return {
+            'stability_cv': 50.0,
+            'top_concentration': round(top_concentration, 3),
+            'status': 'insufficient_data_for_cv',
+            'posts_with_reactions': len(non_zero_counts),
+            'total_posts': len(reaction_counts)
+        }
 
-    for emoji in all_emojis:
-        shares = [dist.get(emoji, 0) for dist in post_distributions]
-        mean_share = sum(shares) / len(shares)
-        total_counts[emoji] = sum(shares)
-
-        if mean_share > 0.05:  # Игнорируем редкие emoji
-            if len(shares) > 1:
-                variance = sum((s - mean_share) ** 2 for s in shares) / (len(shares) - 1)
-                cv = (variance ** 0.5) / mean_share if mean_share > 0 else 0
-                emoji_variations.append(cv)
-
-    if not emoji_variations:
-        return {'stability_cv': 50.0, 'unique_types': len(all_emojis), 'status': 'no_significant_reactions', 'distribution': total_counts}
-
-    # Средний CV по всем значимым emoji (в процентах)
-    avg_cv = sum(emoji_variations) / len(emoji_variations) * 100
+    # Расчёт CV
+    mean_count = sum(counts_without_top) / len(counts_without_top)
+    if mean_count > 0:
+        variance = sum((c - mean_count) ** 2 for c in counts_without_top) / (len(counts_without_top) - 1)
+        std_dev = variance ** 0.5
+        cv = (std_dev / mean_count) * 100
+    else:
+        cv = 0
 
     return {
-        'stability_cv': round(avg_cv, 1),
-        'unique_types': len(all_emojis),
-        'posts_analyzed': len(post_distributions),
-        'distribution': total_counts
+        'stability_cv': round(cv, 1),
+        'top_concentration': round(top_concentration, 3),
+        'posts_with_reactions': len(non_zero_counts),
+        'total_posts': len(reaction_counts),
+        'mean_reactions': round(mean_count, 1),
+        'max_reactions': max_reactions,
+        'total_reactions': total_reactions
     }
 
 

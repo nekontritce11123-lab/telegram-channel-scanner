@@ -332,22 +332,49 @@ def decay_to_points(ratio: float, reaction_rate: float = 0, max_pts: int = None)
 
 def stability_to_points(data: dict, max_pts: int = None) -> int:
     """
-    v13.0: Reaction Stability -> баллы (default max 5).
-    Высокий CV = разнообразный контент = ХОРОШО.
+    v52.2: Reaction Stability -> баллы (двухфакторная логика).
+
+    Два фактора:
+    1. CV (Coefficient of Variation) количества реакций (без топ-аутлайера)
+    2. Концентрация топ-поста (доля от всех реакций)
+
+    Логика скоринга:
+    | CV       | Концентрация | Баллы | Интерпретация            |
+    |----------|--------------|-------|--------------------------|
+    | < 15%    | любая        | 1     | Боты (слишком однородно) |
+    | 15-80%   | < 40%        | 5     | Здоровый живой канал     |
+    | 15-80%   | 40-60%       | 3     | Есть хит, но ОК          |
+    | любой    | > 60%        | 1     | Накрутка одного поста    |
+    | > 80%    | любая        | 2     | Хаос (слишком разброс)   |
+
+    Живой канал: умеренная вариация (15-80%) + распределённые реакции (<40% в топе).
     """
     if max_pts is None:
         max_pts = RAW_WEIGHTS['engagement']['stability']  # 5
-    cv = data.get('stability_cv', 50.0)
 
+    # v52.2: Совместимость с разными форматами breakdown
+    # - Новый формат (metrics.py): stability_cv, top_concentration
+    # - Старый формат (breakdown): value, top_concentration
+    cv = data.get('stability_cv') or data.get('value', 50.0)  # fallback для breakdown
+    concentration = data.get('top_concentration', 0.2)  # default = healthy
+
+    # Приоритет 1: Экстремальная концентрация = накрутка одного поста
+    if concentration > 0.60:
+        return 1  # Один пост собрал >60% всех реакций
+
+    # Приоритет 2: Слишком однородно = боты
     if cv < 15:
-        return 1   # Слишком идеально - возможна манипуляция
-    if cv < 50:
-        return max_pts  # 5 - отлично
-    if cv < 100:
-        return 4   # Хорошо
-    if cv < 200:
-        return 3   # Нормально
-    return 3       # Высокая вариация - живая аудитория
+        return 1  # CV < 15% = подозрительно ровные реакции
+
+    # Приоритет 3: Хаос = слишком большой разброс
+    if cv > 80:
+        return 2  # CV > 80% = экстремальная вариация
+
+    # Здоровая зона CV (15-80%)
+    if concentration < 0.40:
+        return 5  # Здоровый канал: умеренный CV + распределённые реакции
+    else:
+        return 3  # Есть хит (40-60% в топе), но CV нормальный
 
 
 def source_to_points(max_share: float, repost_ratio: float = 1.0, max_pts: int = None) -> int:
@@ -575,6 +602,8 @@ def calculate_trust_factor(
     participants_count: int = 0,
     # v15.1: Decay Trust Parameters
     decay_ratio: float = 0.7,
+    # v51.2: CV views для проверки bot_wall false positives
+    cv_views: float = 0,
     # v15.2: Satellite Parameters
     avg_comments: float = 0,
     # v47.4: Comment Trust из LLM анализа (0-100)
@@ -790,16 +819,10 @@ def calculate_trust_factor(
     # Детекция накрутки по паттернам просмотров старых/новых постов
     # =========================================================================
 
-    # 13. BOT WALL - Слишком ровные просмотры (автонакрутка)
-    # ratio 0.98-1.02 означает, что старые и новые посты имеют ИДЕНТИЧНЫЕ просмотры
-    # В реальности так не бывает - всегда есть накопительный эффект
-    # v15.2: Усилен штраф с ×0.8 до ×0.6 (явный признак накрутки)
-    if 0.98 <= decay_ratio <= 1.02:
-        multipliers.append(0.6)
-        details['bot_wall'] = {
-            'multiplier': 0.6,
-            'reason': f'Подозрительно ровные просмотры ({decay_ratio:.2f})'
-        }
+    # v51.3: BOT WALL УДАЛЁН - слишком много false positives
+    # Идея: ratio 0.98-1.02 = "подозрительно ровные просмотры"
+    # Проблема: в реальности ratio ~1.0 бывает случайно, не означает накрутку
+    # Решение: убрали полностью, оставили только BUDGET_CLIFF
 
     # 14. BUDGET CLIFF - Деньги на накрутку кончились
     # ratio < 0.2 означает, что новые посты = 20% от старых
@@ -1274,14 +1297,18 @@ def calculate_final_score(
         'floating_boost': reaction_max > WEIGHTS['engagement']['reaction_rate']
     }
 
-    # 2.4 Reaction Stability (max 5)
+    # 2.4 Reaction Stability (max 5) — v52.2: двухфакторная логика
     stability = calculate_reaction_stability(messages)
     stability_pts = stability_to_points(stability)
     engagement_score += stability_pts
     breakdown['reaction_stability'] = {
         'value': round(stability.get('stability_cv', 50.0), 1),
+        'top_concentration': round(stability.get('top_concentration', 0.2), 3),
         'points': stability_pts,
-        'max': WEIGHTS['engagement']['stability']
+        'max': WEIGHTS['engagement']['stability'],
+        'posts_with_reactions': stability.get('posts_with_reactions', 0),
+        'mean_reactions': stability.get('mean_reactions', 0),
+        'max_reactions': stability.get('max_reactions', 0)
     }
 
     # v48.0: er_variation УДАЛЁН (заменён на er_trend)
@@ -1435,6 +1462,8 @@ def calculate_final_score(
         participants_count=participants_count,
         # v15.1: Decay Trust Parameters
         decay_ratio=decay_ratio,
+        # v51.2: CV views для проверки bot_wall false positives
+        cv_views=cv,
         # v15.2: Satellite Parameters
         avg_comments=comments_data.get('avg_comments', 0),
         # v47.4: Comment Trust из LLM анализа (переменная вычислена выше)

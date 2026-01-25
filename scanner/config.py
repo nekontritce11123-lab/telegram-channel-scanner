@@ -49,7 +49,7 @@ DEBUG_CLASSIFIER = os.getenv("DEBUG_CLASSIFIER", "").lower() in ("1", "true", "y
 # CRAWLER THRESHOLDS
 # =============================================================================
 
-GOOD_THRESHOLD = int(os.getenv("GOOD_THRESHOLD", "60"))      # Минимум для статуса GOOD в базе
+GOOD_THRESHOLD = int(os.getenv("GOOD_THRESHOLD", "70"))      # v51.2: Минимум для статуса GOOD (было 60)
 COLLECT_THRESHOLD = int(os.getenv("COLLECT_THRESHOLD", "72")) # v41.1: Минимум для сбора ссылок (размножения)
 
 

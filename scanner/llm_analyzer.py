@@ -232,12 +232,15 @@ class CommentAnalysisResult:
 
 @dataclass
 class LLMAnalysisResult:
-    """Полный результат LLM анализа v46.0"""
+    """Полный результат LLM анализа v51.2"""
     posts: Optional[PostAnalysisResult]
     comments: Optional[CommentAnalysisResult]
 
     # v46.0: Brand Safety результат
     safety: Optional[dict] = None    # {is_toxic, toxic_category, severity, ...}
+
+    # v51.2: Категория канала для context-aware safety
+    category: Optional[str] = None   # CRYPTO, FINANCE, TECH и т.д.
 
     # Расчётные метрики
     llm_bonus: float = 0.0           # +0-15 points
@@ -273,20 +276,20 @@ class LLMAnalysisResult:
         ad_mult = 1.0
         if self.posts and self.posts.ad_percentage is not None:
             ad_pct = self.posts.ad_percentage
-            if ad_pct <= 15:
-                ad_mult = 1.0      # Премиум канал
-            elif ad_pct <= 20:
-                ad_mult = 0.95     # Норма
-            elif ad_pct <= 25:
-                ad_mult = 0.85     # Начало штрафа
-            elif ad_pct <= 30:
-                ad_mult = 0.70     # Много рекламы
+            # v51.3: Прогрессивная шкала ad_mult (штрафы с 30%)
+            # До 30% — без штрафа, далее прогрессивный рост
+            if ad_pct <= 30:
+                ad_mult = 1.0      # До 30% — норма, без штрафа
             elif ad_pct <= 40:
-                ad_mult = 0.50     # Выжженная аудитория
+                ad_mult = 0.90     # 30-40% — небольшой (-10%)
             elif ad_pct <= 50:
-                ad_mult = 0.35     # Очень много
+                ad_mult = 0.75     # 40-50% — заметный (-25%)
+            elif ad_pct <= 60:
+                ad_mult = 0.55     # 50-60% — серьёзный (-45%)
+            elif ad_pct <= 70:
+                ad_mult = 0.40     # 60-70% — сильный (-60%)
             else:
-                ad_mult = 0.20     # Спам
+                ad_mult = 0.35     # >70% — спам (-65%)
         self._ad_mult = ad_mult
 
         # --- Bot Multiplier (v40.3) ---
@@ -305,21 +308,32 @@ class LLMAnalysisResult:
         # SAFE/LOW = 1.0, MEDIUM = 0.7, HIGH = 0.3, CRITICAL = 0.0 (EXCLUDED)
         safety_mult = 1.0
         if self.safety and self.safety.get('is_toxic'):
+            toxic_category = self.safety.get('toxic_category')
             severity = self.safety.get('severity', 'SAFE')
 
-            # Множители по severity_label (v47.0)
-            if severity == 'CRITICAL':
-                safety_mult = 0.0  # EXCLUDED
-                self.tier = "EXCLUDED"
-                self.tier_cap = 0
-                self.exclusion_reason = f"TOXIC_{self.safety.get('toxic_category', 'CONTENT')}"
-            elif severity == 'HIGH':
-                safety_mult = 0.3
-                self.tier = "RESTRICTED"
-                self.tier_cap = 30
-            elif severity == 'MEDIUM':
-                safety_mult = 0.7
-            # LOW/SAFE не штрафуем
+            # v51.2: GAMBLING override для CRYPTO/FINANCE каналов
+            # LLM часто путает трейдинг с азартными играми (оба имеют "риск", "ставки")
+            # Если канал про криптовалюты или финансы - GAMBLING это false positive
+            if toxic_category == 'GAMBLING' and self.category in ('CRYPTO', 'FINANCE'):
+                if DEBUG_LLM_ANALYZER:
+                    print(f"⚠️ GAMBLING override: category={self.category}, skipping penalty")
+                # Не применяем penalty, но помечаем в safety для логирования
+                self.safety['gambling_override'] = True
+                self.safety['gambling_override_reason'] = f"Category {self.category} = trading, not gambling"
+            else:
+                # Множители по severity_label (v47.0)
+                if severity == 'CRITICAL':
+                    safety_mult = 0.0  # EXCLUDED
+                    self.tier = "EXCLUDED"
+                    self.tier_cap = 0
+                    self.exclusion_reason = f"TOXIC_{toxic_category or 'CONTENT'}"
+                elif severity == 'HIGH':
+                    safety_mult = 0.3
+                    self.tier = "RESTRICTED"
+                    self.tier_cap = 30
+                elif severity == 'MEDIUM':
+                    safety_mult = 0.7
+                # LOW/SAFE не штрафуем
         self._safety_mult = safety_mult
 
         # --- Combined LLM Trust Factor (v47.0) ---
@@ -1004,7 +1018,8 @@ class LLMAnalyzer:
         Returns:
             LLMAnalysisResult с метриками
         """
-        result = LLMAnalysisResult(posts=None, comments=None, safety=None)
+        # v51.2: Передаём category для context-aware safety (GAMBLING override для CRYPTO)
+        result = LLMAnalysisResult(posts=None, comments=None, safety=None, category=category)
 
         # V40.0: Определяем тип канала для калибровки промптов
         channel_type = infer_channel_type(messages, category)
