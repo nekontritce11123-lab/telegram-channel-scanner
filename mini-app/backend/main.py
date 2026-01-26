@@ -482,14 +482,14 @@ def get_cpm_range(category: Optional[str]) -> tuple:
 
 def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
     """
-    v40.4: Оценивает детальный breakdown метрик на основе итогового score.
+    v65.0: Оценивает детальный breakdown метрик на основе итогового score.
 
     Используется как fallback когда нет breakdown_json в БД.
-    Веса синхронизированы с RAW_WEIGHTS в scanner/scorer.py (v38.4).
+    Веса синхронизированы с RAW_WEIGHTS в scanner/scorer.py (v48.0).
 
-    - Quality (40 max): cv_views(15), reach(10), views_decay(8), forward_rate(7)
-    - Engagement (40 max): comments(15), reaction_rate(15), er_variation(5), stability(5)
-    - Reputation (20 max): age(7), premium(7), source(6)
+    - Quality (42 max): forward_rate(15), cv_views(12), reach(8), regularity(7)
+    - Engagement (38 max): comments(15), er_trend(10), reaction_rate(8), reaction_stability(5)
+    - Reputation (20 max): age(7), premium(7), source_diversity(6)
     """
     # Raw score до trust factor
     raw_score = score / trust_factor if trust_factor > 0 else score
@@ -498,25 +498,25 @@ def estimate_breakdown(score: int, trust_factor: float = 1.0) -> dict:
     # Процент от максимума (приблизительно)
     pct = raw_score / 100
 
-    # v40.4: Веса синхронизированы с RAW_WEIGHTS в scorer.py (v38.4)
+    # v55.0: Веса синхронизированы с RAW_WEIGHTS в scorer.py (v48.0)
     weights = {
         'quality': {
-            'cv_views': {'max': 15, 'label': 'CV просмотров'},
-            'reach': {'max': 10, 'label': 'Охват'},
-            'views_decay': {'max': 8, 'label': 'Стабильность'},
-            'forward_rate': {'max': 7, 'label': 'Репосты'},
+            'forward_rate': {'max': 15, 'label': 'Репосты'},      # v48.0: +8 (виральность)
+            'cv_views': {'max': 12, 'label': 'CV просмотров'},    # v48.0: -3
+            'reach': {'max': 8, 'label': 'Охват'},                # v48.0: -2
+            'regularity': {'max': 7, 'label': 'Регулярность'},    # v48.0: NEW
+            # views_decay убран в v48.0 → остался в Trust Factor
         },
         'engagement': {
             'comments': {'max': 15, 'label': 'Комментарии'},
-            'reaction_rate': {'max': 15, 'label': 'Реакции'},
-            'er_trend': {'max': 10, 'label': 'Тренд ER'},  # v62.5: was er_variation (max:5)
-            'stability': {'max': 5, 'label': 'Стабильность ER'},
+            'er_trend': {'max': 10, 'label': 'Тренд ER'},
+            'reaction_rate': {'max': 8, 'label': 'Реакции'},      # v48.0: -7 (легко накрутить)
+            'reaction_stability': {'max': 5, 'label': 'Стабильность ER'},  # v65.0: fix key
         },
         'reputation': {
-            # v38.4: verified убран (0 баллов), age/premium по 7, source 6
             'age': {'max': 7, 'label': 'Возраст'},
             'premium': {'max': 7, 'label': 'Премиумы'},
-            'source': {'max': 6, 'label': 'Оригинальность'},
+            'source_diversity': {'max': 6, 'label': 'Оригинальность'},  # v65.0: fix key
         },
     }
 
@@ -1064,7 +1064,7 @@ def format_breakdown_for_ui(breakdown_data: dict, llm_analysis: dict = None) -> 
 
         result[cat_key] = {
             'total': cat_data.get('score', 0),
-            'max': calculated_max,  # v22.2: Используем сумму из items, НЕ fallback
+            'max': cat_data.get('max', calculated_max),  # v55.0: Берём из categories, fallback на сумму items
             'items': items,
         }
 
@@ -1575,8 +1575,9 @@ async def get_channel_photo(username: str):
 
     except HTTPException:
         raise
-    except Exception:
-        # v48.2: Не раскрываем детали ошибки (information disclosure)
+    except Exception as e:
+        # v65.1: Логируем ошибку для отладки
+        print(f"[PHOTO ERROR] {username}: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Internal error")
 
 

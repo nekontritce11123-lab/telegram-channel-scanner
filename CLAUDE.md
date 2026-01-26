@@ -605,3 +605,73 @@ breakdown_json = json.dumps({
 ### Удалять сразу!
 
 `test_*.py`, `rescan_*.py`, `scan_*.py`, `*_report.json` — временные файлы
+
+---
+
+## КРИТИЧЕСКИЕ ОШИБКИ v65.1 (2026-01-26) — НЕ ПОВТОРЯТЬ!
+
+### 1. UnboundLocalError при добавлении полей в breakdown
+
+**Проблема:** Добавил `ratio` и `count` в breakdown['premium'], но переменные определялись только внутри if-блока.
+
+```python
+# ❌ НЕПРАВИЛЬНО:
+if forensics_result and forensics_result.status == 'complete':
+    premium_ratio = ...  # Определено только здесь!
+    premium_count = ...
+
+breakdown['premium'] = {
+    'ratio': premium_ratio if forensics_result else 0,  # UnboundLocalError!
+}
+
+# ✅ ПРАВИЛЬНО:
+premium_ratio = 0  # Инициализация ДО if-блока
+premium_count = 0
+if forensics_result and forensics_result.status == 'complete':
+    premium_ratio = ...
+    premium_count = ...
+```
+
+**Правило:** При добавлении переменных в dict/return — проверь что они определены во ВСЕХ ветках кода.
+
+### 2. recalculator.py искал неправильные ключи
+
+**Проблема:** Добавил ключи `ratio` и `count` в scorer.py, но recalculator.py искал их по другим именам.
+
+| recalculator.py искал | В breakdown хранится |
+|----------------------|---------------------|
+| `premium_data.get('ratio')` | Нужно из `forensics_json` |
+| `regularity_data.get('posts_per_day')` | `regularity_data.get('value')` |
+
+**Правило:** При добавлении данных в один файл — обновить ВСЕ файлы которые их читают.
+
+### 3. recalculator.py не обновлял verdict
+
+**Проблема:** Пересчитывал score, но не обновлял verdict → цвета кружков в UI были неправильные.
+
+**Правило:** При изменении score — ВСЕГДА обновлять verdict по тем же порогам.
+
+### 4. Повреждённая БД на сервере
+
+**Симптомы:**
+- Аватарки не грузятся (HTTP 500)
+- API падает с `sqlite3.DatabaseError: database disk image is malformed`
+
+**Диагностика:**
+```bash
+ssh root@217.60.3.122 "sqlite3 /root/reklamshik/crawler.db 'PRAGMA integrity_check;'"
+```
+
+**Восстановление:**
+```bash
+# 1. Проверить локальную БД
+python -c "import sqlite3; c=sqlite3.connect('crawler.db'); print(c.execute('PRAGMA integrity_check').fetchone()[0])"
+
+# 2. Загрузить на сервер
+scp ./crawler.db root@217.60.3.122:/root/reklamshik/crawler.db.new
+
+# 3. Заменить и перезапустить
+ssh root@217.60.3.122 "mv /root/reklamshik/crawler.db /root/reklamshik/crawler.db.bak && mv /root/reklamshik/crawler.db.new /root/reklamshik/crawler.db && systemctl restart reklamshik-api"
+```
+
+**Правило:** Всегда проверять integrity перед деплоем: `PRAGMA integrity_check;`

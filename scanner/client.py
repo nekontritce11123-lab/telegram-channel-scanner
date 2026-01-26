@@ -436,6 +436,28 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
     # Дедупликация юзеров
     users_for_forensics = _deduplicate_users(users_for_forensics)
 
+    # v65.0: ПУТЬ В - Fallback через GetParticipants для супергрупп
+    # Если недостаточно юзеров для forensics (нужно минимум 10)
+    if len(users_for_forensics) < 10 and getattr(chat, 'is_megagroup', False):
+        try:
+            from pyrogram.raw import types as raw_types
+            participants = await client.invoke(
+                functions.channels.GetParticipants(
+                    channel=peer,
+                    filter=raw_types.ChannelParticipantsRecent(),
+                    offset=0,
+                    limit=50
+                )
+            )
+            if hasattr(participants, 'users') and participants.users:
+                for raw_user in participants.users:
+                    users_for_forensics.append(RawUserWrapper(raw_user))
+                # Повторная дедупликация
+                users_for_forensics = _deduplicate_users(users_for_forensics)
+        except Exception:
+            # GetParticipants может не работать (права, тип канала)
+            pass
+
     # v15.2: Пауза перед последним запросом
     await asyncio.sleep(0.5)
 
@@ -495,8 +517,9 @@ async def _get_users_from_reactions(
         return users
 
     # Берём последний пост с реакциями
+    # v65.0: Расширено с 5 до 20 постов для лучшего покрытия forensics
     target_msg = None
-    for msg in messages[:5]:  # Проверяем первые 5 постов
+    for msg in messages[:20]:  # Проверяем первые 20 постов
         if msg.reactions and msg.reactions.reactions:
             target_msg = msg
             break

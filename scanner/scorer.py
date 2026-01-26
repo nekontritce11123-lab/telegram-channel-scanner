@@ -1356,6 +1356,8 @@ def calculate_final_score(
 
     # 3.3 Premium Density (max 5) - из Forensics
     premium_pts = 0
+    premium_ratio = 0  # v65.1: Инициализация до if-блока (fix UnboundLocalError)
+    premium_count = 0  # v65.1: Инициализация до if-блока
     if forensics_result and forensics_result.status == 'complete':
         premium_ratio = forensics_result.premium_density.get('premium_ratio', 0)
         premium_count = forensics_result.premium_density.get('premium_count', 0)
@@ -1363,6 +1365,8 @@ def calculate_final_score(
     reputation_score += premium_pts
     breakdown['premium'] = {
         'value': round(forensics_result.premium_density.get('premium_ratio', 0) * 100, 1) if forensics_result else 0,
+        'ratio': premium_ratio if forensics_result else 0,  # v65.0: для recalculator
+        'count': premium_count if forensics_result else 0,  # v65.0: для recalculator
         'points': premium_pts,
         'max': WEIGHTS['reputation']['premium'],
         'status': 'available' if forensics_result else 'no_data'

@@ -35,19 +35,19 @@ class RecalculateResult:
     errors: int = 0
 
 
-def recalculate_score_from_breakdown(breakdown: dict, members: int = 0) -> tuple[int, dict]:
+def recalculate_score_from_breakdown(breakdown: dict, members: int = 0) -> tuple[int, dict, dict]:
     """
-    Пересчитывает score из сохранённых значений метрик.
+    v55.1: Пересчитывает score из сохранённых значений метрик.
 
     Args:
         breakdown: Сохранённый breakdown из БД
         members: Количество подписчиков
 
     Returns:
-        (new_score, new_categories) - новый score и итоги по категориям
+        (new_score, new_categories, updated_breakdown) - новый score, итоги по категориям, обновлённый breakdown
     """
     if not breakdown:
-        return 0, {}
+        return 0, {}, breakdown
 
     # Извлекаем значения метрик
     def get_value(key: str) -> float:
@@ -60,37 +60,61 @@ def recalculate_score_from_breakdown(breakdown: dict, members: int = 0) -> tuple
         data = breakdown.get(key, {})
         return data if isinstance(data, dict) else {}
 
+    def update_points(key: str, points: int, max_pts: int):
+        """v55.1: Обновляет points и max в breakdown item."""
+        if key in breakdown and isinstance(breakdown[key], dict):
+            breakdown[key]['points'] = points
+            breakdown[key]['max'] = max_pts
+
     # Quality (42 балла)
     cv_views = get_value('cv_views')
     forward_rate = get_value('forward_rate')
     reach = get_value('reach')
     regularity_data = get_dict('regularity')
-    posts_per_day = regularity_data.get('posts_per_day', 0)
+    # v65.1: Ключ 'value' содержит posts_per_day
+    posts_per_day = regularity_data.get('value', regularity_data.get('posts_per_day', 0))
 
-    quality_score = 0
-    quality_score += cv_to_points(cv_views, forward_rate)
-    quality_score += reach_to_points(reach, members)
-    quality_score += forward_rate_to_points(forward_rate, members)
-    quality_score += regularity_to_points(posts_per_day)
+    cv_pts = cv_to_points(cv_views, forward_rate)
+    reach_pts = reach_to_points(reach, members)
+    forward_pts = forward_rate_to_points(forward_rate, members)
+    regularity_pts = regularity_to_points(posts_per_day)
+
+    quality_score = cv_pts + reach_pts + forward_pts + regularity_pts
+
+    # v55.1: Обновляем points в breakdown
+    update_points('cv_views', cv_pts, RAW_WEIGHTS['quality']['cv_views'])
+    update_points('reach', reach_pts, RAW_WEIGHTS['quality']['reach'])
+    update_points('forward_rate', forward_pts, RAW_WEIGHTS['quality']['forward_rate'])
+    if 'regularity' in breakdown and isinstance(breakdown['regularity'], dict):
+        breakdown['regularity']['points'] = regularity_pts
+        breakdown['regularity']['max'] = RAW_WEIGHTS['quality']['regularity']
 
     # Engagement (38 баллов)
     comments_data = get_dict('comments')
     comments_enabled = breakdown.get('comments_enabled', True)
     reactions_enabled = breakdown.get('reactions_enabled', True)
 
-    # comments - нужен avg для расчёта
-    avg_comments = comments_data.get('avg', 0)
-    comments_pts = comments_data.get('points', 0)  # Используем сохранённые, т.к. логика сложная
+    # comments - используем сохранённые points, т.к. логика сложная (floating weights)
+    comments_pts = comments_data.get('points', 0)
 
     reaction_rate = get_value('reaction_rate')
     stability_data = get_dict('reaction_stability') or get_dict('stability')
     er_trend_data = get_dict('er_trend')
 
-    engagement_score = 0
-    engagement_score += comments_pts  # Сохранённый расчёт
-    engagement_score += reaction_rate_to_points(reaction_rate, members) if reactions_enabled else 0
-    engagement_score += stability_to_points(stability_data)
-    engagement_score += er_trend_to_points(er_trend_data)
+    reaction_pts = reaction_rate_to_points(reaction_rate, members) if reactions_enabled else 0
+    stability_pts = stability_to_points(stability_data)
+    er_trend_pts = er_trend_to_points(er_trend_data)
+
+    engagement_score = comments_pts + reaction_pts + stability_pts + er_trend_pts
+
+    # v55.1: Обновляем points в breakdown
+    update_points('reaction_rate', reaction_pts, RAW_WEIGHTS['engagement']['reaction_rate'])
+    if 'reaction_stability' in breakdown and isinstance(breakdown['reaction_stability'], dict):
+        breakdown['reaction_stability']['points'] = stability_pts
+        breakdown['reaction_stability']['max'] = RAW_WEIGHTS['engagement']['stability']
+    if 'er_trend' in breakdown and isinstance(breakdown['er_trend'], dict):
+        breakdown['er_trend']['points'] = er_trend_pts
+        breakdown['er_trend']['max'] = RAW_WEIGHTS['engagement']['er_trend']
 
     # Reputation (20 баллов)
     age = get_value('age')
@@ -101,10 +125,20 @@ def recalculate_score_from_breakdown(breakdown: dict, members: int = 0) -> tuple
     source_max_share = 1 - get_value('source_diversity')  # value = 1 - max_share
     repost_ratio = source_data.get('repost_ratio', 0)
 
-    reputation_score = 0
-    reputation_score += age_to_points(int(age))
-    reputation_score += premium_to_points(premium_ratio, premium_count)
-    reputation_score += source_to_points(source_max_share, repost_ratio)
+    age_pts = age_to_points(int(age))
+    premium_pts = premium_to_points(premium_ratio, premium_count)
+    source_pts = source_to_points(source_max_share, repost_ratio)
+
+    reputation_score = age_pts + premium_pts + source_pts
+
+    # v55.1: Обновляем points в breakdown
+    update_points('age', age_pts, RAW_WEIGHTS['reputation']['age'])
+    if 'premium' in breakdown and isinstance(breakdown['premium'], dict):
+        breakdown['premium']['points'] = premium_pts
+        breakdown['premium']['max'] = RAW_WEIGHTS['reputation']['premium']
+    if 'source_diversity' in breakdown and isinstance(breakdown['source_diversity'], dict):
+        breakdown['source_diversity']['points'] = source_pts
+        breakdown['source_diversity']['max'] = RAW_WEIGHTS['reputation']['source']
 
     # Итоговый score
     raw_score = quality_score + engagement_score + reputation_score
@@ -116,7 +150,7 @@ def recalculate_score_from_breakdown(breakdown: dict, members: int = 0) -> tuple
         'reputation': {'score': reputation_score, 'max': CATEGORY_TOTALS['reputation']},
     }
 
-    return raw_score, categories
+    return raw_score, categories, breakdown
 
 
 def recalculate_local(db: CrawlerDB, verbose: bool = True) -> RecalculateResult:
@@ -133,8 +167,9 @@ def recalculate_local(db: CrawlerDB, verbose: bool = True) -> RecalculateResult:
     result = RecalculateResult()
 
     cursor = db.conn.cursor()
+    # v65.0: Добавлен forensics_json для чтения premium_ratio и premium_count
     cursor.execute("""
-        SELECT username, members, breakdown_json, trust_factor, score
+        SELECT username, members, breakdown_json, trust_factor, score, forensics_json
         FROM channels
         WHERE status IN ('GOOD', 'BAD') AND breakdown_json IS NOT NULL
     """)
@@ -150,6 +185,7 @@ def recalculate_local(db: CrawlerDB, verbose: bool = True) -> RecalculateResult:
         breakdown_json = row[2]
         trust_factor = row[3] or 1.0
         old_score = row[4] or 0
+        forensics_json = row[5]  # v65.0: Для premium данных
 
         try:
             # Парсим breakdown
@@ -163,24 +199,49 @@ def recalculate_local(db: CrawlerDB, verbose: bool = True) -> RecalculateResult:
                 result.skipped += 1
                 continue
 
-            # Пересчитываем
-            raw_score, categories = recalculate_score_from_breakdown(breakdown, members)
+            # v65.0: Добавляем premium данные из forensics_json в breakdown
+            if forensics_json:
+                try:
+                    forensics_data = json.loads(forensics_json)
+                    premium_density = forensics_data.get('premium_density', {})
+                    if premium_density and 'premium' in breakdown:
+                        # Добавляем ratio и count для recalculate_score_from_breakdown
+                        breakdown['premium']['ratio'] = premium_density.get('premium_ratio', 0)
+                        breakdown['premium']['count'] = premium_density.get('premium_count', 0)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # v55.1: Пересчитываем (теперь возвращает и обновлённый breakdown)
+            raw_score, categories, updated_breakdown = recalculate_score_from_breakdown(breakdown, members)
 
             # Применяем trust_factor
             new_score = int(raw_score * trust_factor)
 
+            # v65.1: Расчёт verdict по тем же порогам что в scorer.py
+            if new_score >= 75:
+                new_verdict = 'EXCELLENT'
+            elif new_score >= 55:
+                new_verdict = 'GOOD'
+            elif new_score >= 40:
+                new_verdict = 'MEDIUM'
+            elif new_score >= 25:
+                new_verdict = 'HIGH_RISK'
+            else:
+                new_verdict = 'SCAM'
+
             # Обновляем в БД
             new_status = 'GOOD' if new_score >= GOOD_THRESHOLD else 'BAD'
 
-            # Сохраняем новые categories в breakdown_json
+            # v55.1: Сохраняем обновлённый breakdown и categories
+            data['breakdown'] = updated_breakdown
             data['categories'] = categories
             new_breakdown_json = json.dumps(data, ensure_ascii=False)
 
             cursor.execute("""
                 UPDATE channels
-                SET score = ?, status = ?, breakdown_json = ?
+                SET score = ?, status = ?, verdict = ?, breakdown_json = ?
                 WHERE username = ?
-            """, (new_score, new_status, new_breakdown_json, username))
+            """, (new_score, new_status, new_verdict, new_breakdown_json, username))
 
             result.updated += 1
 
@@ -294,8 +355,8 @@ def recalculate_llm(db: CrawlerDB, verbose: bool = True) -> RecalculateResult:
 
             new_breakdown_json = json.dumps(data, ensure_ascii=False)
 
-            # Пересчитываем score с новым LLM результатом
-            raw_score, _ = recalculate_score_from_breakdown(breakdown_raw, members)
+            # v55.1: Пересчитываем score с новым LLM результатом
+            raw_score, _, _ = recalculate_score_from_breakdown(breakdown_raw, members)
 
             # Применяем trust_factor и LLM modifiers
             final_score = raw_score + llm_result.llm_bonus
