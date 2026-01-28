@@ -231,7 +231,7 @@ class SmartCrawler:
 
         # v38.0: LLM Analyzer для ad_percentage и bot detection
         self.llm_analyzer = LLMAnalyzer()
-        print(f"✓ LLM Analyzer готов")
+        print("[OK] LLM Analyzer готов")
 
     async def stop(self):
         """Останавливает клиент и классификатор."""
@@ -696,11 +696,11 @@ class SmartCrawler:
                 for username in requests:
                     if self.db.add_channel(username, parent="user_request"):
                         added += 1
-                print(f"✓ Синхронизация: {len(requests)} запросов с сервера, {added} добавлено")
+                print(f"[OK] Синхронизация: {len(requests)} запросов с сервера, {added} добавлено")
             else:
-                print("✓ Синхронизация: нет новых запросов")
+                print("[OK] Синхронизация: нет новых запросов")
         except Exception as e:
-            print(f"⚠ Синхронизация: {e}")
+            print(f"[!] Синхронизация: {e}")
 
         # Статистика
         stats = self.db.get_stats()
@@ -898,11 +898,11 @@ class SmartCrawler:
             try:
                 push_database()
             except Exception as e:
-                print(f"⚠ Ошибка отправки БД: {e}")
+                print(f"[!] Ошибка отправки БД: {e}")
 
             # v41.1: Компактная финальная статистика
             stats = self.db.get_stats()
-            print(f"\n{'─'*50}")
+            print(f"\n{'-'*50}")
             print(f"Сессия: {self.processed_count} каналов | +{self.new_links_count} ссылок")
             print(f"База: {stats['good']} GOOD | {stats['bad']} BAD | {stats['waiting']} в очереди")
 

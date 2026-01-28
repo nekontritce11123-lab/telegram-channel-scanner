@@ -168,7 +168,7 @@ def start_ollama() -> bool:
             time.sleep(1)
             ok, _ = check_ollama_available()
             if ok:
-                print(f"✓ Ollama запущен (заняло {i+1} сек)")
+                print(f"[OK] Ollama запущен (заняло {i+1} сек)")
                 return True
             if i % 5 == 4:
                 print(f"  Ожидание Ollama... ({i+1}/30 сек)")
@@ -176,10 +176,10 @@ def start_ollama() -> bool:
         return False
 
     except FileNotFoundError:
-        print("❌ Ollama не установлен! Установи: https://ollama.ai")
+        print("[X] Ollama не установлен! Установи: https://ollama.ai")
         return False
     except Exception as e:
-        print(f"❌ Не удалось запустить Ollama: {e}")
+        print(f"[X] Не удалось запустить Ollama: {e}")
         return False
 
 
@@ -198,10 +198,10 @@ def ensure_ollama_running() -> bool:
     ok, error = check_ollama_available()
 
     if ok:
-        print(f"✓ Ollama работает (модель: {OLLAMA_MODEL})")
+        print(f"[OK] Ollama работает (модель: {OLLAMA_MODEL})")
         return True
 
-    print(f"⚠ {error}")
+    print(f"[!] {error}")
 
     # Пытаемся запустить
     if "не запущен" in error.lower() or "не отвечает" in error.lower():
