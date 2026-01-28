@@ -48,6 +48,42 @@ from .sync import fetch_requests, push_database, sync_channel  # v61.2: + HTTP s
 # v43.0: Централизованная конфигурация
 from .config import GOOD_THRESHOLD, COLLECT_THRESHOLD, ensure_ollama_running
 
+# v66.0: Константа на уровне модуля (DRY — не создаётся при каждом вызове)
+SKIP_WORDS = {
+    # Telegram служебные
+    'addstickers', 'share', 'proxy', 'joinchat', 'stickerpack',
+    # Короткие/зарезервированные
+    's', 'c', 'iv', 'msg', 'vote', 'boost', 'premium', 'emoji',
+    # Python методы/библиотеки
+    'fetchall', 'fetchone', 'fetchmany', 'execute', 'commit', 'cursor',
+    'pytest', 'unittest', 'numpy', 'pandas', 'scipy', 'matplotlib',
+    'torch', 'keras', 'flask', 'django', 'fastapi', 'requests',
+    'asyncio', 'aiohttp', 'httpx', 'redis', 'celery', 'sqlalchemy',
+    # JavaScript/фреймворки
+    'react', 'redux', 'vuejs', 'angular', 'nextjs', 'nodejs',
+    'webpack', 'eslint', 'prettier', 'typescript', 'javascript',
+    # Служебные слова программирования
+    'async', 'await', 'import', 'export', 'const', 'class', 'state',
+    'return', 'function', 'lambda', 'yield', 'static', 'public',
+    'private', 'protected', 'interface', 'abstract', 'override',
+    'binding', 'observable', 'subscribe', 'dispatch', 'middleware',
+    # Переменные окружения
+    'environment', 'production', 'development', 'staging', 'testing',
+    'config', 'settings', 'options', 'params', 'arguments',
+    # Платформы (не Telegram)
+    'google', 'github', 'gitlab', 'bitbucket', 'stackoverflow',
+    'youtube', 'twitter', 'instagram', 'facebook', 'linkedin',
+    'discord', 'slack', 'medium', 'notion', 'figma', 'linux',
+    # Языки программирования
+    'python', 'kotlin', 'swift', 'rustlang', 'golang', 'clojure',
+    'haskell', 'elixir', 'erlang', 'scala', 'groovy',
+    # Прочие технические
+    'admin', 'support', 'helper', 'utils', 'tools', 'service',
+    'handler', 'controller', 'model', 'schema', 'migration',
+    'dockerfile', 'makefile', 'readme', 'changelog', 'license',
+    'tetrad', 'string', 'array', 'object', 'integer', 'boolean',
+}
+
 
 def extract_content_for_classification(
     chat,
@@ -264,56 +300,22 @@ class SmartCrawler:
             # Их обработаем через resolve_invite_link
 
             # Публичные каналы: t.me/username (минимум 5 символов как в Telegram)
-            # Исключаем служебные и популярные слова которые ложно срабатывают
-            skip_words = {
-                # Telegram служебные
-                'addstickers', 'share', 'proxy', 'joinchat', 'stickerpack',
-                # Короткие/зарезервированные
-                's', 'c', 'iv', 'msg', 'vote', 'boost', 'premium', 'emoji',
-                # Python методы/библиотеки
-                'fetchall', 'fetchone', 'fetchmany', 'execute', 'commit', 'cursor',
-                'pytest', 'unittest', 'numpy', 'pandas', 'scipy', 'matplotlib',
-                'torch', 'keras', 'flask', 'django', 'fastapi', 'requests',
-                'asyncio', 'aiohttp', 'httpx', 'redis', 'celery', 'sqlalchemy',
-                # JavaScript/фреймворки
-                'react', 'redux', 'vuejs', 'angular', 'nextjs', 'nodejs',
-                'webpack', 'eslint', 'prettier', 'typescript', 'javascript',
-                # Служебные слова программирования
-                'async', 'await', 'import', 'export', 'const', 'class', 'state',
-                'return', 'function', 'lambda', 'yield', 'static', 'public',
-                'private', 'protected', 'interface', 'abstract', 'override',
-                'binding', 'observable', 'subscribe', 'dispatch', 'middleware',
-                # Переменные окружения
-                'environment', 'production', 'development', 'staging', 'testing',
-                'config', 'settings', 'options', 'params', 'arguments',
-                # Платформы (не Telegram)
-                'google', 'github', 'gitlab', 'bitbucket', 'stackoverflow',
-                'youtube', 'twitter', 'instagram', 'facebook', 'linkedin',
-                'discord', 'slack', 'medium', 'notion', 'figma', 'linux',
-                # Языки программирования
-                'python', 'kotlin', 'swift', 'rustlang', 'golang', 'clojure',
-                'haskell', 'elixir', 'erlang', 'scala', 'groovy',
-                # Прочие технические
-                'admin', 'support', 'helper', 'utils', 'tools', 'service',
-                'handler', 'controller', 'model', 'schema', 'migration',
-                'dockerfile', 'makefile', 'readme', 'changelog', 'license',
-                'tetrad', 'string', 'array', 'object', 'integer', 'boolean',
-            }
+            # v66.0: SKIP_WORDS вынесен на уровень модуля (DRY)
             for match in re.findall(r't\.me/([a-zA-Z0-9_]{5,32})', text):
                 match = match.lower()
-                if match != channel_username and match not in skip_words:
+                if match != channel_username and match not in SKIP_WORDS:
                     links.add(match)
 
             # telegram.me/username
             for match in re.findall(r'telegram\.me/([a-zA-Z0-9_]{5,32})', text):
                 match = match.lower()
-                if match != channel_username and match not in skip_words:
+                if match != channel_username and match not in SKIP_WORDS:
                     links.add(match)
 
             # @упоминания
             for match in re.findall(r'@([a-zA-Z0-9_]{5,32})', text):
                 match = match.lower()
-                if match != channel_username and match not in skip_words:
+                if match != channel_username and match not in SKIP_WORDS:
                     if not match.endswith('bot'):
                         links.add(match)
 

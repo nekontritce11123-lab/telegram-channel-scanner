@@ -15,6 +15,7 @@ from scanner.shared_utils import (
     get_reaction_emoji as _get_reaction_emoji,
     iterate_reactions_with_emoji,
     get_sorted_messages,
+    calculate_cv,
 )
 
 
@@ -133,8 +134,7 @@ class FraudConvictionSystem:
         if mean == 0:
             return FraudFactor('flat_cv', 0, False, 0, 15, "Нет просмотров")
 
-        variance = sum((v - mean) ** 2 for v in self.views) / (len(self.views) - 1)
-        cv = (variance ** 0.5 / mean) * 100
+        cv = calculate_cv(self.views, as_percent=True, sample=True)
 
         triggered = cv < 15
         weight = 25 if cv < 10 else (20 if cv < 15 else 0)
@@ -305,8 +305,7 @@ class FraudConvictionSystem:
         if mean_interval == 0:
             return FraudFactor('bot_regularity', 0, False, None, None, "Нулевой интервал")
 
-        variance = sum((i - mean_interval) ** 2 for i in intervals) / len(intervals)
-        cv = (variance ** 0.5) / mean_interval
+        cv = calculate_cv(intervals, as_percent=False, sample=False)
 
         triggered = cv < 0.15
         weight = 10 if triggered else 0
@@ -343,12 +342,9 @@ class FraudConvictionSystem:
 
             if len(counts) >= 3:  # Минимум 3 типа реакций
                 total_posts_with_reactions += 1
-                mean = sum(counts) / len(counts)
-                if mean > 0:
-                    variance = sum((c - mean) ** 2 for c in counts) / len(counts)
-                    cv = (variance ** 0.5) / mean * 100
-                    if cv < 15:  # Подозрительно ровные реакции
-                        flat_posts += 1
+                cv = calculate_cv(counts, as_percent=True, sample=False)
+                if cv < 15:  # Подозрительно ровные реакции
+                    flat_posts += 1
 
         if total_posts_with_reactions < 3:
             return FraudFactor('flat_reactions', 0, False, None, None, "Недостаточно данных")
@@ -738,15 +734,7 @@ def calculate_cv_views(views: list[int]) -> float:
     if not views or len(views) < 2:
         return 0.0
 
-    mean = sum(views) / len(views)
-    if mean == 0:
-        return 0.0
-
-    # Исправлено: выборочная дисперсия (n-1)
-    variance = sum((v - mean) ** 2 for v in views) / (len(views) - 1)
-    std = variance ** 0.5
-
-    return (std / mean) * 100
+    return calculate_cv(views, as_percent=True, sample=True)
 
 
 def calculate_reach(avg_views: float, members_count: int) -> float:
@@ -1065,13 +1053,8 @@ def calculate_reaction_stability(messages: list) -> dict:
         }
 
     # Расчёт CV
-    mean_count = sum(counts_without_top) / len(counts_without_top)
-    if mean_count > 0:
-        variance = sum((c - mean_count) ** 2 for c in counts_without_top) / (len(counts_without_top) - 1)
-        std_dev = variance ** 0.5
-        cv = (std_dev / mean_count) * 100
-    else:
-        cv = 0
+    cv = calculate_cv(counts_without_top, as_percent=True, sample=True)
+    mean_count = sum(counts_without_top) / len(counts_without_top) if counts_without_top else 0
 
     return {
         'stability_cv': round(cv, 1),
@@ -1102,14 +1085,8 @@ def calculate_er_variation(messages: list) -> float:
     if len(ers) < 5:
         return 50.0  # Мало данных - нейтральное значение
 
-    mean_er = sum(ers) / len(ers)
-    if mean_er == 0:
-        return 50.0
-
-    variance = sum((e - mean_er) ** 2 for e in ers) / len(ers)
-    std_er = variance ** 0.5
-
-    return (std_er / mean_er) * 100
+    cv = calculate_cv(ers, as_percent=True, sample=False)
+    return cv if cv > 0 else 50.0
 
 
 def calculate_er_trend(messages: list) -> dict:

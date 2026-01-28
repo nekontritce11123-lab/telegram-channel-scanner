@@ -35,6 +35,7 @@ Statistical Trust Penalties (v13.5):
 - Ghost: Raw 65 × Trust 0.5 (Ghost Channel) = 32 HIGH_RISK
 """
 from typing import Any
+from .shared_utils import calculate_cv
 from .metrics import (
     check_instant_scam,
     calculate_cv_views,
@@ -995,8 +996,7 @@ def check_f16_reaction_flatness(messages: list) -> dict:
             'description': 'Нет реакций'
         }
 
-    variance = sum((x - mean) ** 2 for x in totals) / len(totals)
-    cv = (variance ** 0.5 / mean) * 100
+    cv = calculate_cv(totals, as_percent=True, sample=False)
 
     # CV < 10% = подозрительно ровно
     if cv < 10:

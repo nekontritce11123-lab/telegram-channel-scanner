@@ -3,6 +3,7 @@ scanner/shared_utils.py - общие утилиты для работы с со�
 
 v1.0: iterate_reactions_with_emoji, get_sorted_messages
      Извлечены из metrics.py для переиспользования в scorer.py и других модулях.
+v1.1: calculate_cv - универсальный расчёт коэффициента вариации (DRY refactoring)
 """
 
 from typing import Any, Generator, Tuple
@@ -91,3 +92,41 @@ def get_sorted_messages(
         and (not require_views or (hasattr(m, 'views') and m.views))
     ]
     return sorted(filtered, key=lambda m: m.date, reverse=reverse)
+
+
+def calculate_cv(values: list, as_percent: bool = True, sample: bool = True) -> float:
+    """
+    Универсальный расчёт коэффициента вариации (CV).
+
+    CV = (стандартное отклонение / среднее) × 100%
+
+    Args:
+        values: Список числовых значений
+        as_percent: Вернуть в процентах (×100). Default: True
+        sample: Использовать sample variance (n-1). Default: True
+                False = population variance (n)
+
+    Returns:
+        CV как float. Если as_percent=True, возвращает 0-100+.
+        Возвращает 0.0 если недостаточно данных или mean=0.
+
+    Example:
+        # CV просмотров постов (sample variance, в процентах)
+        cv = calculate_cv([100, 120, 95, 110])  # ~10%
+
+        # CV интервалов между постами (population variance)
+        cv = calculate_cv(intervals, sample=False)
+    """
+    if not values or len(values) < 2:
+        return 0.0
+
+    mean = sum(values) / len(values)
+    if mean == 0:
+        return 0.0
+
+    divisor = len(values) - 1 if sample else len(values)
+    variance = sum((v - mean) ** 2 for v in values) / divisor
+    std_dev = variance ** 0.5
+    cv = std_dev / mean
+
+    return cv * 100 if as_percent else cv

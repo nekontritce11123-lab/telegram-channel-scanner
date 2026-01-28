@@ -589,6 +589,95 @@ class CrawlerDB:
         row = cursor.fetchone()
         return row['username'] if row else None
 
+    def _build_channel_update_params(
+        self,
+        status: str,
+        score: int,
+        verdict: str,
+        trust_factor: float,
+        members: int,
+        ad_links: list,
+        category: str,
+        category_secondary: str,
+        breakdown: dict,
+        categories: dict,
+        llm_analysis: dict,
+        title: str,
+        description: str,
+        content_json: str,
+        raw_score: int,
+        is_scam: bool,
+        scam_reason: str,
+        tier: str,
+        trust_penalties: list,
+        conviction_score: int,
+        conviction_factors: list,
+        forensics: dict,
+        online_count: int,
+        participants_count: int,
+        channel_age_days: int,
+        avg_views: float,
+        reach_percent: float,
+        forward_rate: float,
+        reaction_rate: float,
+        avg_comments: float,
+        comments_enabled: bool,
+        reactions_enabled: bool,
+        decay_ratio: float,
+        decay_zone: str,
+        er_trend: float,
+        er_trend_status: str,
+        ad_percentage: int,
+        bot_percentage: int,
+        comment_trust: int,
+        safety: dict,
+        posts_raw: list,
+        user_ids: list,
+        linked_chat_id: int,
+        linked_chat_title: str,
+        posts_text_gz: bytes,
+        comments_text_gz: bytes
+    ) -> tuple:
+        """
+        v66.0: Общая логика сериализации для claim_and_complete и mark_done.
+        DRY refactoring — JSON сериализация и params tuple в одном месте.
+
+        Returns:
+            Tuple из 44 параметров для SQL UPDATE.
+        """
+        ad_links_json = json.dumps(ad_links or [], ensure_ascii=False)
+
+        breakdown_json = None
+        if breakdown or categories or llm_analysis:
+            breakdown_json = json.dumps({
+                'breakdown': breakdown,
+                'categories': categories,
+                'llm_analysis': llm_analysis
+            }, ensure_ascii=False)
+
+        trust_penalties_json = json.dumps(trust_penalties, ensure_ascii=False) if trust_penalties else None
+        conviction_factors_json = json.dumps(conviction_factors, ensure_ascii=False) if conviction_factors else None
+        forensics_json = json.dumps(forensics, ensure_ascii=False) if forensics else None
+        safety_json = json.dumps(safety, ensure_ascii=False) if safety else None
+        posts_raw_json = json.dumps(posts_raw, ensure_ascii=False) if posts_raw else None
+        user_ids_json = json.dumps(user_ids, ensure_ascii=False) if user_ids else None
+
+        return (
+            status, score, verdict, trust_factor, members, ad_links_json,
+            category, category_secondary, breakdown_json,
+            title, description, content_json,
+            raw_score, 1 if is_scam else 0, scam_reason, tier,
+            trust_penalties_json, conviction_score, conviction_factors_json,
+            forensics_json, online_count, participants_count, channel_age_days,
+            avg_views, reach_percent, forward_rate, reaction_rate, avg_comments,
+            1 if comments_enabled else 0, 1 if reactions_enabled else 0,
+            decay_ratio, decay_zone, er_trend, er_trend_status,
+            ad_percentage, bot_percentage, comment_trust,
+            safety_json, posts_raw_json, user_ids_json,
+            linked_chat_id, linked_chat_title,
+            posts_text_gz, comments_text_gz
+        )
+
     def claim_and_complete(
         self,
         username: str,
@@ -657,26 +746,25 @@ class CrawlerDB:
             True если успешно записали, False если канал уже обработан
         """
         username = username.lower().lstrip('@')
-        ad_links_json = json.dumps(ad_links or [], ensure_ascii=False)
 
-        breakdown_json = None
-        if breakdown or categories or llm_analysis:
-            breakdown_json = json.dumps({
-                'breakdown': breakdown,
-                'categories': categories,
-                'llm_analysis': llm_analysis
-            }, ensure_ascii=False)
-
-        # v56.0: Сериализуем новые JSON поля
-        trust_penalties_json = json.dumps(trust_penalties, ensure_ascii=False) if trust_penalties else None
-        conviction_factors_json = json.dumps(conviction_factors, ensure_ascii=False) if conviction_factors else None
-        forensics_json = json.dumps(forensics, ensure_ascii=False) if forensics else None
-        safety_json = json.dumps(safety, ensure_ascii=False) if safety else None
-        posts_raw_json = json.dumps(posts_raw, ensure_ascii=False) if posts_raw else None
-        user_ids_json = json.dumps(user_ids, ensure_ascii=False) if user_ids else None
+        # v66.0: DRY — используем общий helper для сериализации
+        params = self._build_channel_update_params(
+            status, score, verdict, trust_factor, members, ad_links,
+            category, category_secondary, breakdown, categories, llm_analysis,
+            title, description, content_json,
+            raw_score, is_scam, scam_reason, tier,
+            trust_penalties, conviction_score, conviction_factors,
+            forensics, online_count, participants_count, channel_age_days,
+            avg_views, reach_percent, forward_rate, reaction_rate, avg_comments,
+            comments_enabled, reactions_enabled,
+            decay_ratio, decay_zone, er_trend, er_trend_status,
+            ad_percentage, bot_percentage, comment_trust,
+            safety, posts_raw, user_ids,
+            linked_chat_id, linked_chat_title,
+            posts_text_gz, comments_text_gz
+        )
 
         cursor = self.conn.cursor()
-        # v57.0: username нормализован на входе (line 483), LOWER() не нужен
         cursor.execute("""
             UPDATE channels SET
                 status = ?,
@@ -726,19 +814,7 @@ class CrawlerDB:
                 scanned_at = datetime('now')
             WHERE LOWER(username) = ? AND status = 'WAITING'
             RETURNING username
-        """, (status, score, verdict, trust_factor, members, ad_links_json,
-              category, category_secondary, breakdown_json,
-              title, description, content_json,
-              raw_score, 1 if is_scam else 0, scam_reason, tier,
-              trust_penalties_json, conviction_score, conviction_factors_json,
-              forensics_json, online_count, participants_count, channel_age_days,
-              avg_views, reach_percent, forward_rate, reaction_rate, avg_comments,
-              1 if comments_enabled else 0, 1 if reactions_enabled else 0,
-              decay_ratio, decay_zone, er_trend, er_trend_status,
-              ad_percentage, bot_percentage, comment_trust,
-              safety_json, posts_raw_json, user_ids_json,
-              linked_chat_id, linked_chat_title,
-              posts_text_gz, comments_text_gz, username))
+        """, params + (username,))
 
         row = cursor.fetchone()
         self.conn.commit()
@@ -872,29 +948,25 @@ class CrawlerDB:
             linked_chat_title: v56.0 - название связанного чата
         """
         username = username.lower().lstrip('@')
-        ad_links_json = json.dumps(ad_links or [])
 
-        # v38.0: Сериализуем breakdown + llm_analysis в JSON
-        breakdown_json = None
-        if breakdown or categories or llm_analysis:
-            breakdown_json = json.dumps({
-                'breakdown': breakdown,
-                'categories': categories,
-                'llm_analysis': llm_analysis  # v38.0
-            }, ensure_ascii=False)
-
-        # v56.0: Сериализуем новые JSON поля
-        trust_penalties_json = json.dumps(trust_penalties, ensure_ascii=False) if trust_penalties else None
-        conviction_factors_json = json.dumps(conviction_factors, ensure_ascii=False) if conviction_factors else None
-        forensics_json = json.dumps(forensics, ensure_ascii=False) if forensics else None
-        safety_json = json.dumps(safety, ensure_ascii=False) if safety else None
-        posts_raw_json = json.dumps(posts_raw, ensure_ascii=False) if posts_raw else None
-        user_ids_json = json.dumps(user_ids, ensure_ascii=False) if user_ids else None
+        # v66.0: DRY — используем общий helper для сериализации
+        params = self._build_channel_update_params(
+            status, score, verdict, trust_factor, members, ad_links,
+            category, category_secondary, breakdown, categories, llm_analysis,
+            title, description, content_json,
+            raw_score, is_scam, scam_reason, tier,
+            trust_penalties, conviction_score, conviction_factors,
+            forensics, online_count, participants_count, channel_age_days,
+            avg_views, reach_percent, forward_rate, reaction_rate, avg_comments,
+            comments_enabled, reactions_enabled,
+            decay_ratio, decay_zone, er_trend, er_trend_status,
+            ad_percentage, bot_percentage, comment_trust,
+            safety, posts_raw, user_ids,
+            linked_chat_id, linked_chat_title,
+            posts_text_gz, comments_text_gz
+        )
 
         cursor = self.conn.cursor()
-        # v24.0: COALESCE чтобы не перезаписывать category/category_secondary если NULL
-        # v22.0: photo_url больше не сохраняем, title/description/content_json добавлены
-        # v56.0: Добавлены 30 новых колонок для полного хранения данных
         cursor.execute('''
             UPDATE channels SET
                 status = ?,
@@ -943,19 +1015,7 @@ class CrawlerDB:
                 comments_text_gz = ?,
                 scanned_at = ?
             WHERE LOWER(username) = ?
-        ''', (status, score, verdict, trust_factor, members, ad_links_json,
-              category, category_secondary, breakdown_json,
-              title, description, content_json,
-              raw_score, 1 if is_scam else 0, scam_reason, tier,
-              trust_penalties_json, conviction_score, conviction_factors_json,
-              forensics_json, online_count, participants_count, channel_age_days,
-              avg_views, reach_percent, forward_rate, reaction_rate, avg_comments,
-              1 if comments_enabled else 0, 1 if reactions_enabled else 0,
-              decay_ratio, decay_zone, er_trend, er_trend_status,
-              ad_percentage, bot_percentage, comment_trust,
-              safety_json, posts_raw_json, user_ids_json,
-              linked_chat_id, linked_chat_title,
-              posts_text_gz, comments_text_gz, datetime.now(), username))
+        ''', params + (datetime.now(), username))
         self.conn.commit()
 
     def set_category(self, username: str, category: str, category_secondary: str = None, percent: int = 100):
