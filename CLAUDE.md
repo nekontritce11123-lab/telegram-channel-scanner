@@ -250,6 +250,38 @@ cursor.execute("ALTER TABLE channels ADD COLUMN photo_url TEXT DEFAULT NULL")
 6. [ ] Проверить API: `curl https://ads-api.factchain-traker.online/api/health`
 7. [ ] Проверить каналы: `curl https://ads-api.factchain-traker.online/api/channels`
 
+### Синхронизация БД (crawler.db) — КРИТИЧЕСКИ ВАЖНО!
+
+**При копировании БД на сервер ОБЯЗАТЕЛЬНО:**
+1. Остановить API (`systemctl stop reklamshik-api`)
+2. Скопировать файл
+3. Проверить integrity (`PRAGMA integrity_check`)
+4. Запустить API
+
+```bash
+# ПРАВИЛЬНЫЙ порядок:
+ssh root@217.60.3.122 "systemctl stop reklamshik-api"
+scp -C ./crawler.db root@217.60.3.122:/root/reklamshik/crawler.db
+ssh root@217.60.3.122 "cd /root/reklamshik && python3 -c 'import sqlite3; c=sqlite3.connect(\"crawler.db\"); print(c.execute(\"PRAGMA integrity_check\").fetchone()[0])'"
+ssh root@217.60.3.122 "systemctl start reklamshik-api"
+```
+
+**БЕЗ остановки API БД может повредиться!** (`database disk image is malformed`)
+
+### Миграция аватарок (v68.0)
+
+Аватарки хранятся в колонке `photo_blob` (BLOB). Новые каналы получают фото при сканировании. Для существующих — скрипт миграции:
+
+```bash
+python rescan_photos.py --check   # Статистика
+python rescan_photos.py           # Загрузить все
+python rescan_photos.py --limit 50  # Загрузить 50
+```
+
+**ВАЖНО:** Telegram FloodWait ограничивает ~150-200 каналов за раз. После FloodWait нужно ждать ~16 часов или использовать другой аккаунт.
+
+Распределение аватарок (январь 2026): ~150 из 438 каналов имеют фото. Остальные показывают плейсхолдер (цветной круг с буквой).
+
 ### Служебные API endpoints
 
 ```bash

@@ -830,6 +830,31 @@
   border-color: var(--button-color);
 }
 
+/* v69.0: Ad Status filter */
+.adStatusChips {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+}
+
+.adStatusChip {
+  min-height: 32px;
+  padding: 6px var(--spacing-md);
+  background: transparent;
+  color: var(--hint-color);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-secondary);
+  cursor: pointer;
+  transition: all 150ms;
+}
+
+.adStatusChip.active {
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border-color: var(--button-color);
+}
+
 /* Verdict toggle */
 .verdictToggle {
   display: flex;
@@ -2708,9 +2733,62 @@
   height: 100%;
 }
 
+/* v70.0: Ad status badges - SVG с 3 цветами */
+.adBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  cursor: help;
+}
+
+.adBadge svg {
+  width: 16px;
+  height: 16px;
+}
+
+.adBadgeGreen {
+  color: #34C759;  /* Зелёный - продаёт рекламу */
+}
+
+.adBadgeBlue {
+  color: var(--accent);  /* Telegram blue - возможно продаёт */
+}
+
+.adBadgeGray {
+  color: var(--hint-color);  /* Серый - не продаёт */
+  opacity: 0.5;
+}
+
+/* v70.0: Ad status flag - в строке флагов (14x14) */
+.adFlag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.adFlag svg {
+  width: 14px;
+  height: 14px;
+}
+
+.adFlagGreen {
+  color: #34C759;
+}
+
+.adFlagBlue {
+  color: var(--accent);
+}
+
+.adFlagGray {
+  color: var(--hint-color);
+  opacity: 0.5;
+}
 
 /* v11.5: Meta line */
 .cardMeta {
+  display: flex;
+  align-items: center;
   font-size: 14px;
   color: var(--hint-color);
   margin-top: 3px;
@@ -3235,6 +3313,44 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
   margin-bottom: 12px;
+}
+
+/* v70.3: Inline flags под @username */
+.inlineFlags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* v70.3: Summary block под хедером */
+.cardSummaryBlock {
+  padding: 0 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 10px;
+}
+
+/* v70.2: Иконки - синие активные, серые неактивные */
+.iconActive {
+  color: var(--accent);
+  display: inline-flex;
+}
+
+.iconDim {
+  color: var(--hint-color);
+  opacity: 0.4;
+  display: inline-flex;
+}
+
+.iconGreen {
+  color: #34C759;
+  display: inline-flex;
+}
+
+.cardSummary {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--hint-color);
 }
 
 .unifiedTop {

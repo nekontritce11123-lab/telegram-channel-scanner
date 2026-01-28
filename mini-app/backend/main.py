@@ -196,6 +196,7 @@ class ChannelSummary(BaseModel):
     cpm_max: Optional[int] = None
     photo_url: Optional[str] = None  # v19.0: аватарка канала
     is_verified: bool = False  # v34.0: Telegram верификация
+    ad_status: Optional[int] = None  # v69.0: 0=нельзя, 1=возможно, 2=можно купить
 
 
 class ChannelListResponse(BaseModel):
@@ -1555,6 +1556,7 @@ async def get_channels(
     max_members: int = Query(10000000, ge=0),
     min_trust: float = Query(0.0, ge=0.0, le=1.0, description="Мин. Trust Factor"),
     verdict: Optional[str] = Query(None, description="good_plus = EXCELLENT+GOOD"),
+    ad_status: Optional[int] = Query(None, ge=0, le=2, description="v69.0: 0=нельзя, 1=возможно, 2=можно"),
     sort_by: str = Query("score", regex="^(score|members|scanned_at|trust_factor)$"),
     sort_order: str = Query("desc", regex="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -1562,7 +1564,8 @@ async def get_channels(
 ):
     """
     Получить список каналов с фильтрацией и пагинацией.
-    Новые фильтры v6.0: min_trust, verdict (good_plus = EXCELLENT + GOOD)
+    v6.0: min_trust, verdict (good_plus = EXCELLENT + GOOD)
+    v69.0: ad_status (0=нельзя, 1=возможно, 2=можно купить рекламу)
     """
     params = [min_score, max_score, min_members, max_members, min_trust]
 
@@ -1582,6 +1585,11 @@ async def get_channels(
         where_clause += " AND (category = ? OR category_secondary = ?)"
         params.extend([category, category])
 
+    # v69.0: Ad status filter
+    if ad_status is not None:
+        where_clause += " AND ad_status = ?"
+        params.append(ad_status)
+
     # Count total
     count_query = f"SELECT COUNT(*) FROM channels {where_clause}"
     cursor = db.conn.execute(count_query, params)
@@ -1589,10 +1597,11 @@ async def get_channels(
 
     # Main query - v34.0: добавлен breakdown_json для is_verified
     # v58.2: добавлен title для отображения названия канала
+    # v69.0: добавлен ad_status для индикатора рекламы
     query = f"""
         SELECT username, score, verdict, trust_factor, members,
                category, category_secondary, scanned_at, photo_url, category_percent,
-               breakdown_json, title
+               breakdown_json, title, ad_status
         FROM channels {where_clause}
     """
 
@@ -1654,6 +1663,7 @@ async def get_channels(
             cpm_max=price_max,
             photo_url=str(row[8]) if row[8] else None,
             is_verified=is_verified,  # v34.0
+            ad_status=safe_int(row[12], None) if row[12] is not None else None,  # v69.0
         ))
 
     return ChannelListResponse(
@@ -1675,10 +1685,12 @@ async def get_channels_count(
     max_members: int = Query(10000000, ge=0),
     min_trust: float = Query(0.0, ge=0.0, le=1.0, description="Мин. Trust Factor"),
     verdict: Optional[str] = Query(None, description="good_plus = EXCELLENT+GOOD"),
+    ad_status: Optional[int] = Query(None, ge=0, le=2, description="v69.0: 0=нельзя, 1=возможно, 2=можно"),
 ):
     """
     Получить количество каналов по фильтрам (без пагинации).
     Используется для preview в кнопке "Показать X шт."
+    v69.0: Добавлен фильтр ad_status
     """
     params = [min_score, max_score, min_members, max_members, min_trust]
 
@@ -1695,6 +1707,11 @@ async def get_channels_count(
     if category:
         where_clause += " AND (category = ? OR category_secondary = ?)"
         params.extend([category, category])
+
+    # v69.0: Ad status filter
+    if ad_status is not None:
+        where_clause += " AND ad_status = ?"
+        params.append(ad_status)
 
     count_query = f"SELECT COUNT(*) FROM channels {where_clause}"
     cursor = db.conn.execute(count_query, params)
@@ -1730,12 +1747,14 @@ async def get_channel(username: str, request: Request):
     # v59.3: Добавлен title
     # v59.4: LOWER() для case-insensitive поиска (в БД могут быть mixed-case)
     # v59.6: Добавлен avg_views для расчёта цены
+    # v69.0: Добавлены ad_status и ai_summary
     # Используем try/except для совместимости с БД без колонки breakdown_json
     try:
         cursor = db.conn.execute("""
             SELECT username, score, verdict, trust_factor, members,
                    category, category_secondary, scanned_at, status,
-                   photo_url, breakdown_json, title, avg_views
+                   photo_url, breakdown_json, title, avg_views,
+                   ad_status, ai_summary
             FROM channels
             WHERE LOWER(username) = ?
         """, (username,))
@@ -1766,6 +1785,9 @@ async def get_channel(username: str, request: Request):
     photo_url = row[9] if len(row) > 9 else None
     title = row[11] if len(row) > 11 else None
     db_avg_views = safe_int(row[12], 0) if len(row) > 12 else None  # v59.6
+    # v69.0: ad_status и ai_summary
+    ad_status_val = safe_int(row[13], None) if len(row) > 13 else None
+    ai_summary_val = str(row[14]) if len(row) > 14 and row[14] else None
 
     # Парсим breakdown_json или используем fallback
     real_breakdown_data = None
@@ -1910,6 +1932,9 @@ async def get_channel(username: str, request: Request):
         "is_verified": is_verified,
         # v54.0: QuickStats (reach, err, comments_avg)
         "quick_stats": quick_stats,
+        # v69.0: Индикатор рекламы и AI описание
+        "ad_status": ad_status_val,
+        "ai_summary": ai_summary_val,
     }
 
 

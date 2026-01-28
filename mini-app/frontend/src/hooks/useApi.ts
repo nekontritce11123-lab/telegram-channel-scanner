@@ -24,6 +24,7 @@ export interface Channel {
   cpm_max: number | null
   photo_url: string | null
   is_verified: boolean  // v34.0: Telegram верификация
+  ad_status: number | null  // v69.0: 0=нельзя, 1=возможно, 2=можно купить
 }
 
 // v7.0: Detailed breakdown structure
@@ -125,6 +126,7 @@ export interface ChannelDetail extends Channel {
   category_rank?: CategoryRank
   llm_analysis?: LLMAnalysis  // v38.0
   quick_stats?: QuickStats  // v54.0
+  ai_summary?: string | null  // v69.0: AI описание канала (500+ символов)
 }
 
 export interface ChannelListResponse {
@@ -177,6 +179,7 @@ export interface ChannelFilters {
   max_members?: number
   min_trust?: number  // v6.0: min Trust Factor (0.0-1.0)
   verdict?: 'good_plus' | null  // v6.0: good_plus = EXCELLENT + GOOD only
+  ad_status?: number | null  // v69.0: 0=нельзя, 1=возможно, 2=можно купить
   sort_by?: 'score' | 'members' | 'scanned_at' | 'trust_factor'
   sort_order?: 'asc' | 'desc'
   page?: number

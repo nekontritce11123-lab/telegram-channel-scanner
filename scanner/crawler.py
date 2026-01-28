@@ -43,6 +43,8 @@ from .json_compression import (
     compress_breakdown, compress_posts_raw, compress_user_ids
 )  # v23.0: JSON compression
 from .sync import fetch_requests, push_database, sync_channel  # v61.2: + HTTP sync
+from .ad_detector import detect_ad_status  # v69.0: 3-уровневая детекция рекламы
+from .summarizer import generate_channel_summary  # v69.0: AI описание канала
 # v46.0: Brand Safety теперь в LLM Analyzer, стоп-слова deprecated
 
 # v43.0: Централизованная конфигурация
@@ -545,6 +547,37 @@ class SmartCrawler:
         result['description'] = content['description']
         result['content_json'] = content['content_json']
 
+        # v69.0: Детекция продажи рекламы (0=нельзя, 1=возможно, 2=можно)
+        result['ad_status'] = detect_ad_status(content['description'])
+
+        # v69.0: AI описание канала (500+ символов)
+        try:
+            # Извлекаем тексты постов для анализа
+            post_texts = []
+            for m in scan_result.messages[:15]:  # Берём больше постов для контекста
+                text = None
+                if hasattr(m, 'message') and m.message:
+                    text = m.message
+                elif hasattr(m, 'text') and m.text:
+                    text = m.text
+                elif hasattr(m, 'caption') and m.caption:
+                    text = m.caption
+                if text and len(text.strip()) > 30:
+                    post_texts.append(text.strip())
+
+            # Генерируем описание только для GOOD каналов (экономим API)
+            if score >= GOOD_THRESHOLD and post_texts:
+                result['ai_summary'] = generate_channel_summary(
+                    title=content['title'] or username,
+                    description=content['description'],
+                    posts=post_texts
+                )
+            else:
+                result['ai_summary'] = None
+        except Exception as e:
+            logger.warning(f"[{username}] AI summary error: {e}")
+            result['ai_summary'] = None
+
         # v56.0: Собираем posts_raw — сырые данные 50 постов для пересчёта
         posts_raw = [{
             'id': m.id if hasattr(m, 'id') else None,
@@ -816,6 +849,9 @@ class SmartCrawler:
                         linked_chat_title=result.get('linked_chat_title'),
                         # v68.0: Аватарка канала
                         photo_blob=result.get('photo_blob'),
+                        # v69.0: Индикатор рекламы и AI описание
+                        ad_status=result.get('ad_status'),
+                        ai_summary=result.get('ai_summary'),
                     )
 
                     if not success:

@@ -45,6 +45,8 @@ from .metrics import get_message_reactions_count  # v57.0: для posts_raw
 from .json_compression import (
     compress_breakdown, compress_posts_raw, compress_user_ids
 )  # v57.0: JSON compression
+from .ad_detector import detect_ad_status  # v69.0: Детекция рекламы
+from .summarizer import generate_channel_summary  # v69.0: AI описание
 
 
 async def scan_channel(channel: str) -> dict:
@@ -191,6 +193,39 @@ async def scan_channel(channel: str) -> dict:
         result['scan_time'] = datetime.now().isoformat()
         result['title'] = getattr(chat, 'title', None)
         result['description'] = getattr(chat, 'description', None)
+
+        # v69.0: Детекция продажи рекламы (0=нельзя, 1=возможно, 2=можно)
+        result['ad_status'] = detect_ad_status(result['description'])
+
+        # v69.0: AI описание канала (для GOOD каналов)
+        try:
+            final_score = result.get('final_score', 0)
+            if final_score >= 60:  # GOOD_THRESHOLD
+                post_texts = []
+                for m in messages[:15]:
+                    text = None
+                    if hasattr(m, 'message') and m.message:
+                        text = m.message
+                    elif hasattr(m, 'text') and m.text:
+                        text = m.text
+                    elif hasattr(m, 'caption') and m.caption:
+                        text = m.caption
+                    if text and len(text.strip()) > 30:
+                        post_texts.append(text.strip())
+
+                if post_texts:
+                    result['ai_summary'] = generate_channel_summary(
+                        title=result['title'] or channel,
+                        description=result['description'],
+                        posts=post_texts
+                    )
+                else:
+                    result['ai_summary'] = None
+            else:
+                result['ai_summary'] = None
+        except Exception as e:
+            print(f"[WARN] AI summary error: {e}")
+            result['ai_summary'] = None
 
         # v57.0: Добавляем channel_health и scan_result для save_to_database
         result['channel_health'] = channel_health
@@ -593,8 +628,9 @@ def save_to_database(result: dict) -> None:
         # v57.0: Compress breakdown для хранения
         breakdown_compressed = compress_breakdown(breakdown)
 
-        # v57.0: Используем claim_and_complete с полным набором данных
-        db.claim_and_complete(
+        # v69.0: Используем mark_done вместо claim_and_complete
+        # чтобы rescan обновлял данные для уже отсканированных каналов
+        db.mark_done(
             username=username,
             status=status,
             score=result.get('score', 0),
@@ -645,6 +681,9 @@ def save_to_database(result: dict) -> None:
             comments_text_gz=result.get('comments_text_gz'),
             # v68.0: Аватарка канала
             photo_blob=result.get('photo_blob'),
+            # v69.0: Индикатор рекламы и AI описание
+            ad_status=result.get('ad_status'),
+            ai_summary=result.get('ai_summary'),
         )
 
         print(f"[OK] Сохранено в БД: @{username} ({status})")

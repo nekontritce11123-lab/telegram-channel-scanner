@@ -90,6 +90,9 @@ class ChannelRecord:
     comments_text_gz: bytes = None
     # v68.0: Аватарка канала (BLOB для вечного кэша)
     photo_blob: bytes = None
+    # v69.0: Индикатор рекламы и AI описание
+    ad_status: int = None  # 0=нельзя, 1=возможно, 2=можно купить
+    ai_summary: str = None  # AI описание канала (500+ символов)
 
 
 class CrawlerDB:
@@ -163,6 +166,9 @@ class CrawlerDB:
 
         # v68.0: Миграция - аватарка канала (BLOB для вечного кэша)
         self._migrate_v68_photo_blob()
+
+        # v69.0: Миграция - ad_status и ai_summary
+        self._migrate_v69_ad_summary()
 
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
@@ -461,6 +467,36 @@ class CrawlerDB:
 
         self.conn.commit()
 
+    def _migrate_v69_ad_summary(self):
+        """v69.0: Индикатор рекламы и AI описание канала."""
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(channels)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        new_columns = [
+            ('ad_status', 'INTEGER DEFAULT NULL'),  # 0=нельзя, 1=возможно, 2=можно
+            ('ai_summary', 'TEXT DEFAULT NULL'),     # AI описание 500+ символов
+        ]
+
+        added = []
+        for col_name, col_def in new_columns:
+            if col_name not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE channels ADD COLUMN {col_name} {col_def}")
+                    added.append(col_name)
+                except sqlite3.OperationalError as e:
+                    logger.debug(f"Migration v69.0 {col_name}: column already exists or table issue: {e}")
+                except sqlite3.Error as e:
+                    logger.error(f"Migration v69.0 {col_name} failed: {e}")
+
+        if added:
+            print(f"Миграция v69.0: добавлены колонки {', '.join(added)}")
+
+        # Индекс для фильтрации по ad_status
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_ad_status ON channels(ad_status)')
+
+        self.conn.commit()
+
     def add_channel(self, username: str, parent: str = "") -> bool:
         """
         Добавляет канал в очередь.
@@ -659,15 +695,18 @@ class CrawlerDB:
         linked_chat_title: str,
         posts_text_gz: bytes,
         comments_text_gz: bytes,
-        photo_blob: bytes
+        photo_blob: bytes,
+        ad_status: int,
+        ai_summary: str
     ) -> tuple:
         """
         v66.0: Общая логика сериализации для claim_and_complete и mark_done.
         v68.0: Добавлен photo_blob для вечного кэша аватарок.
+        v69.0: Добавлены ad_status и ai_summary.
         DRY refactoring — JSON сериализация и params tuple в одном месте.
 
         Returns:
-            Tuple из 45 параметров для SQL UPDATE.
+            Tuple из 47 параметров для SQL UPDATE.
         """
         ad_links_json = json.dumps(ad_links or [], ensure_ascii=False)
 
@@ -700,7 +739,8 @@ class CrawlerDB:
             safety_json, posts_raw_json, user_ids_json,
             linked_chat_id, linked_chat_title,
             posts_text_gz, comments_text_gz,
-            photo_blob
+            photo_blob,
+            ad_status, ai_summary
         )
 
     def claim_and_complete(
@@ -755,11 +795,15 @@ class CrawlerDB:
         posts_text_gz: bytes = None,
         comments_text_gz: bytes = None,
         # v68.0: Аватарка канала (BLOB)
-        photo_blob: bytes = None
+        photo_blob: bytes = None,
+        # v69.0: Индикатор рекламы и AI описание
+        ad_status: int = None,
+        ai_summary: str = None
     ) -> bool:
         """
         v43.0: Атомарно записывает результат ТОЛЬКО если канал в WAITING.
         v56.0: Расширено для полного хранения данных сканирования.
+        v69.0: Добавлены ad_status и ai_summary.
 
         Реализует "всё или ничего" семантику:
         - Если канал в WAITING → записываем ВСЕ данные, возвращаем True
@@ -789,7 +833,8 @@ class CrawlerDB:
             safety, posts_raw, user_ids,
             linked_chat_id, linked_chat_title,
             posts_text_gz, comments_text_gz,
-            photo_blob
+            photo_blob,
+            ad_status, ai_summary
         )
 
         cursor = self.conn.cursor()
@@ -840,6 +885,8 @@ class CrawlerDB:
                 posts_text_gz = ?,
                 comments_text_gz = ?,
                 photo_blob = ?,
+                ad_status = ?,
+                ai_summary = ?,
                 scanned_at = datetime('now')
             WHERE LOWER(username) = ? AND status = 'WAITING'
             RETURNING username
@@ -925,11 +972,15 @@ class CrawlerDB:
         posts_text_gz: bytes = None,
         comments_text_gz: bytes = None,
         # v68.0: Аватарка канала (BLOB)
-        photo_blob: bytes = None
+        photo_blob: bytes = None,
+        # v69.0: Индикатор рекламы и AI описание
+        ad_status: int = None,
+        ai_summary: str = None
     ):
         """
         Помечает канал как проверенный.
         v56.0: Расширено для полного хранения данных сканирования.
+        v69.0: Добавлены ad_status и ai_summary.
 
         Args:
             status: GOOD, BAD, ERROR, PRIVATE
@@ -995,7 +1046,8 @@ class CrawlerDB:
             safety, posts_raw, user_ids,
             linked_chat_id, linked_chat_title,
             posts_text_gz, comments_text_gz,
-            photo_blob
+            photo_blob,
+            ad_status, ai_summary
         )
 
         cursor = self.conn.cursor()
@@ -1046,6 +1098,8 @@ class CrawlerDB:
                 posts_text_gz = ?,
                 comments_text_gz = ?,
                 photo_blob = ?,
+                ad_status = ?,
+                ai_summary = ?,
                 scanned_at = ?
             WHERE LOWER(username) = ?
         ''', params + (datetime.now(), username))
@@ -1140,6 +1194,9 @@ class CrawlerDB:
             comments_text_gz=get_col('comments_text_gz'),
             # v68.0: Аватарка канала
             photo_blob=get_col('photo_blob'),
+            # v69.0: Индикатор рекламы и AI описание
+            ad_status=get_col('ad_status'),
+            ai_summary=get_col('ai_summary'),
         )
 
     def get_stats(self) -> dict:

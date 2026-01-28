@@ -533,6 +533,7 @@ function App() {
   const [minMembers, setMinMembers] = useState(0)
   const [maxMembers, setMaxMembers] = useState(0)
   const [verdictFilter, setVerdictFilter] = useState<'good_plus' | null>(null)
+  const [adStatusFilter, setAdStatusFilter] = useState<number | null>(null)  // v69.0: 0=нельзя, 1=возможно, 2=можно
   const [page, setPage] = useState(1)
   const [selectedChannel, setSelectedChannel] = useState<ChannelDetail | null>(null)
   const [showFilterSheet, setShowFilterSheet] = useState(false)  // v9.0: single unified filter sheet
@@ -603,7 +604,8 @@ function App() {
     min_members: minMembers || undefined,
     max_members: maxMembers || undefined,
     verdict: verdictFilter || undefined,
-  }), [selectedCategory, sortBy, sortOrder, minScore, minTrust, minMembers, maxMembers, verdictFilter])
+    ad_status: adStatusFilter ?? undefined,  // v69.0: фильтр по рекламе
+  }), [selectedCategory, sortBy, sortOrder, minScore, minTrust, minMembers, maxMembers, verdictFilter, adStatusFilter])
 
   // Apply filters
   const applyFilters = useCallback(() => {
@@ -631,6 +633,7 @@ function App() {
         if (minMembers > 0) params.set('min_members', String(minMembers))
         if (maxMembers > 0) params.set('max_members', String(maxMembers))
         if (verdictFilter) params.set('verdict', verdictFilter)
+        if (adStatusFilter !== null) params.set('ad_status', String(adStatusFilter))  // v69.0
 
         const response = await fetch(`${API_BASE}/api/channels/count?${params}`)
         if (response.ok) {
@@ -645,7 +648,7 @@ function App() {
     // Debounce: fetch after 300ms
     const timer = setTimeout(fetchCount, 300)
     return () => clearTimeout(timer)
-  }, [showFilterSheet, selectedCategory, minScore, minTrust, minMembers, maxMembers, verdictFilter])
+  }, [showFilterSheet, selectedCategory, minScore, minTrust, minMembers, maxMembers, verdictFilter, adStatusFilter])
 
   // v9.0: Category selection now happens in filter sheet, applied on "Показать"
 
@@ -741,6 +744,7 @@ function App() {
     setMinMembers(0)
     setMaxMembers(0)
     setVerdictFilter(null)
+    setAdStatusFilter(null)  // v69.0
     setSortBy('scanned_at')
     setSortOrder('desc')
     setPage(1)
@@ -757,7 +761,7 @@ function App() {
 
   // Has active filters
   const hasActiveFilters = selectedCategory || minScore > 0 || minTrust > 0 ||
-    minMembers > 0 || maxMembers > 0 || verdictFilter || sortBy !== 'scanned_at'
+    minMembers > 0 || maxMembers > 0 || verdictFilter || adStatusFilter !== null || sortBy !== 'scanned_at'
 
   // Count active filters
   const activeFilterCount = [
@@ -766,6 +770,7 @@ function App() {
     minTrust > 0,
     minMembers > 0 || maxMembers > 0,
     verdictFilter,
+    adStatusFilter !== null,  // v69.0
   ].filter(Boolean).length
 
   // v7.0: Detailed breakdown from API
@@ -836,16 +841,29 @@ function App() {
                 <div className={styles.unifiedMeta}>
                   @{selectedChannel.username} · {formatNumber(selectedChannel.members)} подп.
                 </div>
-                <div className={styles.unifiedFlags}>
-                  <span className={selectedChannel.is_verified ? styles.flagActive : styles.flagInactive} title="Верификация">
+                {/* v70.3: Flags - под @username */}
+                <div className={styles.inlineFlags}>
+                  <span className={selectedChannel.is_verified ? styles.iconActive : styles.iconDim}>
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
                   </span>
-                  <span className={breakdown?.comments_enabled !== false ? styles.flagActive : styles.flagInactive} title="Комментарии">
+                  <span className={breakdown?.comments_enabled !== false ? styles.iconActive : styles.iconDim}>
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M21 6h-2v9H6v2c0 .55.45 1 1 1h11l4 4V7c0-.55-.45-1-1-1zm-4 6V3c0-.55-.45-1-1-1H3c-.55 0-1 .45-1 1v14l4-4h10c.55 0 1-.45 1-1z"/></svg>
                   </span>
-                  <span className={breakdown?.reactions_enabled !== false ? styles.flagActive : styles.flagInactive} title="Реакции">
+                  <span className={breakdown?.reactions_enabled !== false ? styles.iconActive : styles.iconDim}>
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
                   </span>
+                  {selectedChannel.ad_status != null && (
+                    <span className={
+                      selectedChannel.ad_status === 2 ? styles.iconGreen :
+                      selectedChannel.ad_status === 1 ? styles.iconActive :
+                      styles.iconDim
+                    }>
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="9"/>
+                        <path d="M14.8 9a2 2 0 0 0-1.8-1h-2a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4h-2a2 2 0 0 1-1.8-1M12 6v2m0 8v2"/>
+                      </svg>
+                    </span>
+                  )}
                 </div>
               </div>
               {/* v53.1: Score + Price column */}
@@ -863,6 +881,12 @@ function App() {
                 )}
               </div>
             </div>
+            {/* v70.3: AI Summary - отдельно под хедером */}
+            {selectedChannel.ai_summary && (
+              <div className={styles.cardSummaryBlock}>
+                <div className={styles.cardSummary}>{selectedChannel.ai_summary}</div>
+              </div>
+            )}
           </div>
 
           {/* v51.0: SCAM Banner - показываем предупреждение, но ВСЕ данные доступны */}
@@ -1158,6 +1182,37 @@ function App() {
               </div>
             </div>
 
+            {/* v69.0: Ad Status Filter */}
+            <div className={styles.filterGroup}>
+              <label className={styles.filterLabel}>Реклама</label>
+              <div className={styles.adStatusChips}>
+                <button
+                  className={`${styles.adStatusChip} ${adStatusFilter === null ? styles.active : ''}`}
+                  onClick={() => setAdStatusFilter(null)}
+                >
+                  Все
+                </button>
+                <button
+                  className={`${styles.adStatusChip} ${adStatusFilter === 2 ? styles.active : ''}`}
+                  onClick={() => setAdStatusFilter(2)}
+                >
+                  💰 Можно
+                </button>
+                <button
+                  className={`${styles.adStatusChip} ${adStatusFilter === 1 ? styles.active : ''}`}
+                  onClick={() => setAdStatusFilter(1)}
+                >
+                  💰 Возможно
+                </button>
+                <button
+                  className={`${styles.adStatusChip} ${adStatusFilter === 0 ? styles.active : ''}`}
+                  onClick={() => setAdStatusFilter(0)}
+                >
+                  Нет
+                </button>
+              </div>
+            </div>
+
             {/* Actions */}
             <div className={styles.sheetActions}>
               <button className={styles.filterReset} onClick={() => {
@@ -1167,6 +1222,7 @@ function App() {
                 setMinMembers(0)
                 setMaxMembers(0)
                 setVerdictFilter(null)
+                setAdStatusFilter(null)  // v69.0
                 setSortBy('score')  // v59.6: По умолчанию по Score
                 setSortOrder('desc')
               }}>
@@ -1247,10 +1303,10 @@ function App() {
                         )}
                       </div>
                       {/* Meta line */}
-                      <span className={styles.cardMeta}>
+                      <div className={styles.cardMeta}>
                         @{channel.username} • {formatNumber(channel.members)}
                         {channel.scanned_at && ` • ${formatRelativeDate(channel.scanned_at)}`}
-                      </span>
+                      </div>
                     </div>
                     {/* v59.3: Score Ring small - синхронизирован с детальной страницей */}
                     <ScoreRing
