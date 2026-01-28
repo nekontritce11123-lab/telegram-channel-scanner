@@ -930,8 +930,12 @@ def calculate_trust_factor(
                 'combo': False
             }
 
-    # Выбираем ХУДШИЙ (минимальный) множитель
-    trust_factor = min(multipliers) if multipliers else 1.0
+    # v68.1: Перемножаем все штрафы (не min!)
+    # 0.66 × 0.80 = 0.53 — правильное поведение
+    trust_factor = 1.0
+    for mult in multipliers:
+        trust_factor *= mult
+    trust_factor = max(0.1, trust_factor)  # Floor 0.1
 
     return trust_factor, details
 
@@ -1596,12 +1600,15 @@ def calculate_final_score(
             'hidden_flags': forensics_result.hidden_flags
         }
 
+    # v68.1: Объединённый trust_factor = forensic × LLM
+    combined_trust = max(0.1, trust_factor * llm_trust_factor)
+
     return {
         'channel': channel_username or str(getattr(chat, 'id', 'unknown')),
         'members': members,
-        # v37.2: Trust Multiplier System + Tier Cap
+        # v68.1: trust_factor теперь КОМБИНИРОВАННЫЙ (forensic × LLM)
         'raw_score': raw_score,
-        'trust_factor': round(trust_factor, 2),
+        'trust_factor': round(combined_trust, 2),  # v68.1: combined!
         'trust_details': trust_details,
         'score': final_score,
         'final_score': final_score,  # v37.2: алиас для совместимости
@@ -1612,7 +1619,8 @@ def calculate_final_score(
         # v37.2: Tier System
         'tier': tier,
         'tier_cap': tier_cap,
-        'llm_trust_factor': round(llm_trust_factor, 2),
+        'llm_trust_factor': round(llm_trust_factor, 2),  # v68.1: оставляем для совместимости
+        'forensic_trust_factor': round(trust_factor, 2),  # v68.1: отдельно forensic
         'scoring_mode': scoring_mode,
         'categories': categories,
         'breakdown': breakdown,

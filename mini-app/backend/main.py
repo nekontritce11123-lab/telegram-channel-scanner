@@ -11,6 +11,7 @@ import hmac
 import hashlib
 import asyncio
 import time
+import base64
 from pathlib import Path
 from datetime import datetime
 from io import BytesIO
@@ -235,6 +236,11 @@ class ScanResponse(BaseModel):
     success: bool
     channel: Optional[dict] = None
     error: Optional[str] = None
+
+
+# v68.0: Prefetch model для batch загрузки фото
+class PrefetchPhotosRequest(BaseModel):
+    usernames: List[str]
 
 
 # Глобальные переменные
@@ -1473,6 +1479,49 @@ async def get_channel_photo(username: str):
 async def get_user_photo(user_id: int):
     """Загружает аватарку пользователя. См. photo.py"""
     return await _get_user_photo(user_id)
+
+
+@app.post("/api/photos/prefetch")
+async def prefetch_photos(request: PrefetchPhotosRequest):
+    """
+    v68.0: Batch загрузка фото из БД.
+
+    Загружает аватарки нескольких каналов за один запрос.
+    Возвращает base64-encoded изображения.
+
+    Args:
+        usernames: Список username'ов (max 100)
+
+    Returns:
+        {
+            "photos": {"username1": "data:image/jpeg;base64,...", ...},
+            "failed": ["username2", ...]
+        }
+    """
+    if len(request.usernames) > 100:
+        raise HTTPException(status_code=400, detail="Maximum 100 usernames per request")
+
+    result = {"photos": {}, "failed": []}
+
+    for username in request.usernames:
+        username_clean = username.lower().lstrip('@')
+
+        # Валидация
+        if not USERNAME_REGEX.match(username_clean):
+            result["failed"].append(username_clean)
+            continue
+
+        # Получаем из БД
+        channel = db.get_channel(username_clean)
+
+        if channel and getattr(channel, 'photo_blob', None):
+            photo_blob = channel.photo_blob
+            b64 = base64.b64encode(photo_blob).decode('ascii')
+            result["photos"][username_clean] = f"data:image/jpeg;base64,{b64}"
+        else:
+            result["failed"].append(username_clean)
+
+    return result
 
 
 @app.get("/api/health")

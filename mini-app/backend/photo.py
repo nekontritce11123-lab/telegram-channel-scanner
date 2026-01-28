@@ -1,23 +1,18 @@
 """
-photo.py - Изолированный модуль для работы с аватарками Telegram
+photo.py - Модуль для работы с аватарками каналов
 
-v67.0: Вынесен из main.py для стабильности.
-       Не зависит от других модулей проекта.
+v68.0: Упрощённая версия — только SELECT из БД.
+       Аватарки загружаются при сканировании и хранятся в photo_blob.
+       Telegram API больше не используется (0 внешних запросов).
 
 Функционал:
-- Загрузка аватарок каналов через Bot API
-- Загрузка аватарок пользователей через Bot API
-- In-memory кэширование с TTL
-- Fallback на base64 из БД (legacy)
+- get_channel_photo(): Отдаёт фото из БД
+- get_user_photo(): Deprecated (не используется)
 """
 
-import os
 import re
-import time
-import base64
 from typing import Optional
 
-import httpx
 from fastapi import HTTPException
 from fastapi.responses import Response
 
@@ -27,88 +22,28 @@ from fastapi.responses import Response
 
 USERNAME_REGEX = re.compile(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$')
 
-# Кэш настройки
-_PHOTO_CACHE_MAX = 1000
-_PHOTO_CACHE_TTL = 86400  # 24 часа (аватарки редко меняются)
-
-# Кэши (изолированные от main.py)
-_channel_photo_cache: dict = {}  # {username: (bytes, timestamp)}
-_user_photo_cache: dict = {}     # {user_id: (bytes, timestamp)}
-
 
 # ============================================================================
-# ВНУТРЕННИЕ ФУНКЦИИ
+# ПУБЛИЧНЫЕ ФУНКЦИИ
 # ============================================================================
 
-def _cache_cleanup(cache: dict) -> None:
-    """Удаляет записи старше TTL."""
-    now = time.time()
-    expired = [k for k, (_, ts) in cache.items() if now - ts > _PHOTO_CACHE_TTL]
-    for k in expired:
-        del cache[k]
-
-
-def _get_bot_token() -> str:
-    """Получает BOT_TOKEN из окружения."""
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        raise HTTPException(status_code=500, detail="BOT_TOKEN not configured")
-    return token
-
-
-async def _download_telegram_file(client: httpx.AsyncClient, bot_token: str, file_id: str) -> bytes:
+async def get_channel_photo(username: str, db) -> Response:
     """
-    Скачивает файл из Telegram по file_id.
+    Отдаёт аватарку канала из БД.
 
-    1. getFile -> file_path
-    2. Скачиваем по file_path
-    """
-    # Получаем file_path
-    file_resp = await client.get(
-        f"https://api.telegram.org/bot{bot_token}/getFile",
-        params={"file_id": file_id},
-        timeout=10.0
-    )
-    file_data = file_resp.json()
-
-    if not file_data.get("ok"):
-        raise HTTPException(status_code=404, detail="Cannot get file info")
-
-    file_path = file_data.get("result", {}).get("file_path")
-    if not file_path:
-        raise HTTPException(status_code=404, detail="No file_path")
-
-    # Скачиваем файл
-    photo_resp = await client.get(
-        f"https://api.telegram.org/file/bot{bot_token}/{file_path}",
-        timeout=30.0
-    )
-
-    if photo_resp.status_code != 200:
-        raise HTTPException(status_code=404, detail="Cannot download photo")
-
-    return photo_resp.content
-
-
-# ============================================================================
-# ПУБЛИЧНЫЕ ФУНКЦИИ (endpoints)
-# ============================================================================
-
-async def get_channel_photo(username: str, db=None) -> Response:
-    """
-    Загружает аватарку канала из Telegram.
-
-    Порядок:
-    1. Проверяем кэш
-    2. Пробуем из БД (legacy base64)
-    3. Загружаем через Bot API
+    v68.0: Telegram API больше не используется.
+    Фото загружается при сканировании и хранится в photo_blob.
 
     Args:
         username: Username канала (без @)
-        db: Опциональный объект БД для legacy fallback
+        db: Объект БД с методом get_channel()
 
     Returns:
         Response с image/jpeg
+
+    Raises:
+        HTTPException 400: Неверный формат username
+        HTTPException 404: Канал не найден или нет фото
     """
     username = username.lower().lstrip('@')
 
@@ -116,157 +51,36 @@ async def get_channel_photo(username: str, db=None) -> Response:
     if not USERNAME_REGEX.match(username):
         raise HTTPException(status_code=400, detail="Invalid username format")
 
-    # Очищаем старые записи
-    _cache_cleanup(_channel_photo_cache)
+    # Получаем канал из БД
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
 
-    # 1. Проверяем кэш
-    if username in _channel_photo_cache:
-        photo_bytes, ts = _channel_photo_cache[username]
-        if time.time() - ts < _PHOTO_CACHE_TTL:
-            return Response(content=photo_bytes, media_type="image/jpeg")
+    channel = db.get_channel(username)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
 
-    # 2. Пробуем из БД (legacy)
-    if db is not None:
-        try:
-            channel = db.get_channel(username)
-            if channel and hasattr(channel, 'photo_url') and channel.photo_url:
-                if channel.photo_url.startswith('data:image'):
-                    b64_data = channel.photo_url.split(',')[1]
-                    photo_bytes = base64.b64decode(b64_data)
+    # Получаем photo_blob
+    photo_blob = getattr(channel, 'photo_blob', None)
+    if not photo_blob:
+        raise HTTPException(status_code=404, detail="No photo available")
 
-                    # Кэшируем
-                    if len(_channel_photo_cache) < _PHOTO_CACHE_MAX:
-                        _channel_photo_cache[username] = (photo_bytes, time.time())
-
-                    return Response(content=photo_bytes, media_type="image/jpeg")
-        except Exception:
-            pass  # Игнорируем ошибки БД
-
-    # 3. Загружаем через Bot API
-    bot_token = _get_bot_token()
-
-    try:
-        async with httpx.AsyncClient() as client:
-            # Получаем информацию о канале
-            chat_resp = await client.get(
-                f"https://api.telegram.org/bot{bot_token}/getChat",
-                params={"chat_id": f"@{username}"},
-                timeout=10.0
-            )
-            chat_data = chat_resp.json()
-
-            if not chat_data.get("ok"):
-                raise HTTPException(status_code=404, detail="Channel not found")
-
-            chat = chat_data.get("result", {})
-            photo = chat.get("photo")
-
-            if not photo:
-                raise HTTPException(status_code=404, detail="Channel has no photo")
-
-            # v67.1: small_file_id быстрее загружается (160x160 vs 640x640)
-            file_id = photo.get("small_file_id") or photo.get("big_file_id")
-            if not file_id:
-                raise HTTPException(status_code=404, detail="No photo file_id")
-
-            # Скачиваем
-            photo_bytes = await _download_telegram_file(client, bot_token, file_id)
-
-            # Кэшируем
-            if len(_channel_photo_cache) < _PHOTO_CACHE_MAX:
-                _channel_photo_cache[username] = (photo_bytes, time.time())
-
-            return Response(content=photo_bytes, media_type="image/jpeg")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[PHOTO ERROR] {username}: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail="Internal error")
+    return Response(content=photo_blob, media_type="image/jpeg")
 
 
 async def get_user_photo(user_id: int) -> Response:
     """
-    Загружает аватарку пользователя из Telegram.
+    Deprecated: Аватарки пользователей не используются в mini-app.
 
-    Args:
-        user_id: Telegram user ID
-
-    Returns:
-        Response с image/jpeg
+    Оставлено для обратной совместимости.
     """
-    if user_id <= 0:
-        raise HTTPException(status_code=400, detail="Invalid user_id")
-
-    # Очищаем старые записи
-    _cache_cleanup(_user_photo_cache)
-
-    # Проверяем кэш
-    if user_id in _user_photo_cache:
-        photo_bytes, ts = _user_photo_cache[user_id]
-        if time.time() - ts < _PHOTO_CACHE_TTL:
-            return Response(content=photo_bytes, media_type="image/jpeg")
-
-    # Загружаем через Bot API
-    bot_token = _get_bot_token()
-
-    try:
-        async with httpx.AsyncClient() as client:
-            # Получаем список фото пользователя
-            photos_resp = await client.get(
-                f"https://api.telegram.org/bot{bot_token}/getUserProfilePhotos",
-                params={"user_id": user_id, "limit": 1},
-                timeout=10.0
-            )
-            photos_data = photos_resp.json()
-
-            if not photos_data.get("ok"):
-                raise HTTPException(status_code=404, detail="Cannot get user photos")
-
-            photos = photos_data.get("result", {}).get("photos", [])
-            if not photos:
-                raise HTTPException(status_code=404, detail="User has no photo")
-
-            # Берём самое большое фото
-            photo_sizes = photos[0]
-            if not photo_sizes:
-                raise HTTPException(status_code=404, detail="No photo sizes")
-
-            big_photo = max(photo_sizes, key=lambda x: x.get("width", 0) * x.get("height", 0))
-            file_id = big_photo.get("file_id")
-
-            if not file_id:
-                raise HTTPException(status_code=404, detail="No file_id")
-
-            # Скачиваем
-            photo_bytes = await _download_telegram_file(client, bot_token, file_id)
-
-            # Кэшируем
-            if len(_user_photo_cache) < _PHOTO_CACHE_MAX:
-                _user_photo_cache[user_id] = (photo_bytes, time.time())
-
-            return Response(content=photo_bytes, media_type="image/jpeg")
-
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error")
+    raise HTTPException(status_code=501, detail="User photos not implemented")
 
 
 def clear_cache(username: Optional[str] = None, user_id: Optional[int] = None) -> None:
     """
-    Очищает кэш фото.
+    Deprecated: Кэш больше не используется.
 
-    Args:
-        username: Если указан, очищает только для этого канала
-        user_id: Если указан, очищает только для этого пользователя
-        Если ничего не указано, очищает весь кэш
+    v68.0: Фото хранятся в БД, кэш не нужен.
+    Оставлено для обратной совместимости.
     """
-    if username:
-        username = username.lower().lstrip('@')
-        _channel_photo_cache.pop(username, None)
-    elif user_id:
-        _user_photo_cache.pop(user_id, None)
-    else:
-        _channel_photo_cache.clear()
-        _user_photo_cache.clear()
+    pass

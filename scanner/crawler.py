@@ -33,7 +33,7 @@ from loguru import logger
 from pyrogram import Client
 
 from .database import CrawlerDB
-from .client import get_client, smart_scan_safe, download_photos_from_messages
+from .client import get_client, smart_scan_safe, download_photos_from_messages, download_channel_avatar
 from .scorer import calculate_final_score
 from .vision import analyze_images_batch, format_for_prompt, unload_model as unload_vision
 from .classifier import get_classifier, ChannelClassifier
@@ -380,6 +380,10 @@ class SmartCrawler:
                 result['delete'] = True
                 result['elapsed'] = _time.time() - _start_time
                 return result
+
+        # v68.0: Загружаем аватарку канала для сохранения в БД
+        photo_blob = await download_channel_avatar(self.client, scan_result.chat)
+        result['photo_blob'] = photo_blob
 
         # v22.1: Извлекаем контент для хранения и переклассификации
         # Включает 50 постов + 30 комментариев для AI анализа
@@ -810,6 +814,8 @@ class SmartCrawler:
                         user_ids=result.get('user_ids'),
                         linked_chat_id=result.get('linked_chat_id'),
                         linked_chat_title=result.get('linked_chat_title'),
+                        # v68.0: Аватарка канала
+                        photo_blob=result.get('photo_blob'),
                     )
 
                     if not success:

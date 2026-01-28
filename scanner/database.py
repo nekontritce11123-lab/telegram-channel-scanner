@@ -88,6 +88,8 @@ class ChannelRecord:
     # v52.0: Gzip-сжатые тексты для пересчёта LLM
     posts_text_gz: bytes = None
     comments_text_gz: bytes = None
+    # v68.0: Аватарка канала (BLOB для вечного кэша)
+    photo_blob: bytes = None
 
 
 class CrawlerDB:
@@ -158,6 +160,9 @@ class CrawlerDB:
 
         # v52.0: Миграция - хранение текстов для пересчёта LLM
         self._migrate_v52_texts()
+
+        # v68.0: Миграция - аватарка канала (BLOB для вечного кэша)
+        self._migrate_v68_photo_blob()
 
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
@@ -439,6 +444,23 @@ class CrawlerDB:
 
         self.conn.commit()
 
+    def _migrate_v68_photo_blob(self):
+        """v68.0: Аватарка канала хранится в БД (вечный кэш, 0 запросов к TG API)."""
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(channels)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if 'photo_blob' not in columns:
+            try:
+                cursor.execute("ALTER TABLE channels ADD COLUMN photo_blob BLOB DEFAULT NULL")
+                print("Миграция v68.0: добавлена колонка photo_blob")
+            except sqlite3.OperationalError as e:
+                logger.debug(f"Migration v68.0 photo_blob: column already exists or table issue: {e}")
+            except sqlite3.Error as e:
+                logger.error(f"Migration v68.0 photo_blob failed: {e}")
+
+        self.conn.commit()
+
     def add_channel(self, username: str, parent: str = "") -> bool:
         """
         Добавляет канал в очередь.
@@ -636,14 +658,16 @@ class CrawlerDB:
         linked_chat_id: int,
         linked_chat_title: str,
         posts_text_gz: bytes,
-        comments_text_gz: bytes
+        comments_text_gz: bytes,
+        photo_blob: bytes
     ) -> tuple:
         """
         v66.0: Общая логика сериализации для claim_and_complete и mark_done.
+        v68.0: Добавлен photo_blob для вечного кэша аватарок.
         DRY refactoring — JSON сериализация и params tuple в одном месте.
 
         Returns:
-            Tuple из 44 параметров для SQL UPDATE.
+            Tuple из 45 параметров для SQL UPDATE.
         """
         ad_links_json = json.dumps(ad_links or [], ensure_ascii=False)
 
@@ -675,7 +699,8 @@ class CrawlerDB:
             ad_percentage, bot_percentage, comment_trust,
             safety_json, posts_raw_json, user_ids_json,
             linked_chat_id, linked_chat_title,
-            posts_text_gz, comments_text_gz
+            posts_text_gz, comments_text_gz,
+            photo_blob
         )
 
     def claim_and_complete(
@@ -728,7 +753,9 @@ class CrawlerDB:
         linked_chat_title: str = None,
         # v52.0: Gzip-сжатые тексты для пересчёта LLM
         posts_text_gz: bytes = None,
-        comments_text_gz: bytes = None
+        comments_text_gz: bytes = None,
+        # v68.0: Аватарка канала (BLOB)
+        photo_blob: bytes = None
     ) -> bool:
         """
         v43.0: Атомарно записывает результат ТОЛЬКО если канал в WAITING.
@@ -761,7 +788,8 @@ class CrawlerDB:
             ad_percentage, bot_percentage, comment_trust,
             safety, posts_raw, user_ids,
             linked_chat_id, linked_chat_title,
-            posts_text_gz, comments_text_gz
+            posts_text_gz, comments_text_gz,
+            photo_blob
         )
 
         cursor = self.conn.cursor()
@@ -811,6 +839,7 @@ class CrawlerDB:
                 linked_chat_title = ?,
                 posts_text_gz = ?,
                 comments_text_gz = ?,
+                photo_blob = ?,
                 scanned_at = datetime('now')
             WHERE LOWER(username) = ? AND status = 'WAITING'
             RETURNING username
@@ -894,7 +923,9 @@ class CrawlerDB:
         linked_chat_title: str = None,
         # v52.0: Gzip-сжатые тексты для пересчёта LLM
         posts_text_gz: bytes = None,
-        comments_text_gz: bytes = None
+        comments_text_gz: bytes = None,
+        # v68.0: Аватарка канала (BLOB)
+        photo_blob: bytes = None
     ):
         """
         Помечает канал как проверенный.
@@ -963,7 +994,8 @@ class CrawlerDB:
             ad_percentage, bot_percentage, comment_trust,
             safety, posts_raw, user_ids,
             linked_chat_id, linked_chat_title,
-            posts_text_gz, comments_text_gz
+            posts_text_gz, comments_text_gz,
+            photo_blob
         )
 
         cursor = self.conn.cursor()
@@ -1013,6 +1045,7 @@ class CrawlerDB:
                 linked_chat_title = ?,
                 posts_text_gz = ?,
                 comments_text_gz = ?,
+                photo_blob = ?,
                 scanned_at = ?
             WHERE LOWER(username) = ?
         ''', params + (datetime.now(), username))
@@ -1105,6 +1138,8 @@ class CrawlerDB:
             # v52.0: Gzip-сжатые тексты для пересчёта LLM
             posts_text_gz=get_col('posts_text_gz'),
             comments_text_gz=get_col('comments_text_gz'),
+            # v68.0: Аватарка канала
+            photo_blob=get_col('photo_blob'),
         )
 
     def get_stats(self) -> dict:

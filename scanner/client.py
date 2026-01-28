@@ -266,6 +266,50 @@ async def download_photos_from_messages(
     return photos
 
 
+# ============================================================================
+# v68.0: CHANNEL AVATAR DOWNLOAD
+# ============================================================================
+
+async def download_channel_avatar(client: Client, chat) -> bytes | None:
+    """
+    Скачивает аватарку канала для сохранения в БД.
+
+    v68.0: Аватарка сохраняется при сканировании,
+    backend отдаёт из БД (0 запросов к Telegram API).
+
+    Args:
+        client: Pyrogram клиент
+        chat: Pyrogram Chat объект (resolved)
+
+    Returns:
+        bytes аватарки или None если нет фото
+    """
+    if not chat:
+        return None
+
+    if not hasattr(chat, 'photo') or not chat.photo:
+        return None
+
+    # small_file_id для 160x160 (быстрее загружается)
+    file_id = getattr(chat.photo, 'small_file_id', None)
+    if not file_id:
+        file_id = getattr(chat.photo, 'big_file_id', None)
+    if not file_id:
+        return None
+
+    try:
+        # Скачиваем в память
+        photo_file = await client.download_media(file_id, in_memory=True)
+        if photo_file:
+            data = photo_file.getvalue() if hasattr(photo_file, 'getvalue') else photo_file
+            if isinstance(data, bytes) and len(data) > 0:
+                return data
+    except Exception as e:
+        logger.warning(f"Channel avatar download failed: {e}")
+
+    return None
+
+
 @dataclass
 class ScanResult:
     """

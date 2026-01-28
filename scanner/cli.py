@@ -34,7 +34,7 @@ if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-from .client import get_client, smart_scan, download_photos_from_messages
+from .client import get_client, smart_scan, download_photos_from_messages, download_channel_avatar
 from .scorer import calculate_final_score
 from .llm_analyzer import LLMAnalyzer, LLMAnalysisResult, OLLAMA_URL, OLLAMA_MODEL
 from .classifier import get_classifier
@@ -93,6 +93,11 @@ async def scan_channel(channel: str) -> dict:
         if channel_health.get('status') == 'complete':
             online = channel_health.get('online_count', 0)
             print(f"Ghost Protocol: {online:,} юзеров онлайн")
+
+        # v68.0: Загружаем аватарку канала для сохранения в БД
+        photo_blob = await download_channel_avatar(client, chat)
+        if photo_blob:
+            print(f"[PHOTO] Avatar downloaded ({len(photo_blob):,} bytes)")
 
         # v38.0: LLM анализ
         print("\n--- LLM ANALYSIS ---")
@@ -179,8 +184,8 @@ async def scan_channel(channel: str) -> dict:
             }
             result['user_ids'] = compress_user_ids(user_ids)
 
-        # v22.0: Аватарки загружаются через /api/photo/{username}, не храним base64
-        result['photo_url'] = None
+        # v68.0: Аватарка сохраняется в БД (вечный кэш)
+        result['photo_blob'] = photo_blob
 
         # Добавляем метаданные
         result['scan_time'] = datetime.now().isoformat()
@@ -638,9 +643,11 @@ def save_to_database(result: dict) -> None:
             # v52.0: Gzip-сжатые тексты для пересчёта LLM
             posts_text_gz=result.get('posts_text_gz'),
             comments_text_gz=result.get('comments_text_gz'),
+            # v68.0: Аватарка канала
+            photo_blob=result.get('photo_blob'),
         )
 
-        print(f"✓ Сохранено в БД: @{username} ({status})")
+        print(f"[OK] Сохранено в БД: @{username} ({status})")
 
     except Exception as e:
         print(f"⚠ Ошибка сохранения в БД: {e}")
