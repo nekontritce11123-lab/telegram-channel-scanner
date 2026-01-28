@@ -23,6 +23,9 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# v67.0: Изолированный модуль для фото (не ломается при обновлениях)
+from photo import get_channel_photo as _get_channel_photo, get_user_photo as _get_user_photo
 from typing import Optional, List
 from dotenv import load_dotenv
 import httpx
@@ -1456,223 +1459,20 @@ def extract_quick_stats_from_breakdown(breakdown: dict) -> dict:
     return quick_stats
 
 
-# v22.0: Кэш для фото каналов (in-memory, до 1000 каналов)
-# v48.0: Добавлен TTL для автоочистки старых записей
-import time
-_photo_cache: dict = {}  # {username: (bytes, timestamp)}
-_PHOTO_CACHE_MAX = 1000
-_PHOTO_CACHE_TTL = 3600  # 1 час
-
-
-def _cache_cleanup():
-    """Удаляет записи старше TTL."""
-    now = time.time()
-    expired = [k for k, (_, ts) in _photo_cache.items() if now - ts > _PHOTO_CACHE_TTL]
-    for k in expired:
-        del _photo_cache[k]
-
+# ============================================================================
+# v67.0: ФОТО ENDPOINTS (изолированы в photo.py)
+# ============================================================================
 
 @app.get("/api/photo/{username}")
 async def get_channel_photo(username: str):
-    """
-    v22.0: Загружает аватарку канала из Telegram.
-
-    Фото кэшируются в памяти для быстрого доступа.
-    Если бот не может получить фото — возвращает 404.
-    """
-    username = username.lower().lstrip('@')
-
-    # v48.1: Валидация username
-    if not USERNAME_REGEX.match(username):
-        raise HTTPException(status_code=400, detail="Invalid username format")
-
-    # v48.0: Очищаем старые записи перед проверкой
-    _cache_cleanup()
-
-    # Проверяем кэш (с TTL)
-    if username in _photo_cache:
-        photo_bytes, ts = _photo_cache[username]
-        if time.time() - ts < _PHOTO_CACHE_TTL:
-            return Response(content=photo_bytes, media_type="image/jpeg")
-
-    # Пробуем получить из БД (старые каналы с photo_url)
-    if db:
-        channel = db.get_channel(username)
-        if channel and channel.photo_url and channel.photo_url.startswith('data:image'):
-            # Декодируем base64
-            import base64
-            try:
-                b64_data = channel.photo_url.split(',')[1]
-                photo_bytes = base64.b64decode(b64_data)
-
-                # Кэшируем с TTL
-                if len(_photo_cache) < _PHOTO_CACHE_MAX:
-                    _photo_cache[username] = (photo_bytes, time.time())
-
-                return Response(content=photo_bytes, media_type="image/jpeg")
-            except Exception:
-                pass
-
-    # Пробуем загрузить через Telegram Bot API
-    bot_token = os.getenv("BOT_TOKEN")
-    if not bot_token:
-        raise HTTPException(status_code=500, detail="BOT_TOKEN not configured")
-
-    try:
-        async with httpx.AsyncClient() as client:
-            # 1. Получаем информацию о канале
-            chat_resp = await client.get(
-                f"https://api.telegram.org/bot{bot_token}/getChat",
-                params={"chat_id": f"@{username}"},
-                timeout=10.0
-            )
-            chat_data = chat_resp.json()
-
-            if not chat_data.get("ok"):
-                raise HTTPException(status_code=404, detail="Channel not found")
-
-            chat = chat_data.get("result", {})
-            photo = chat.get("photo")
-
-            if not photo:
-                raise HTTPException(status_code=404, detail="Channel has no photo")
-
-            # 2. Получаем file_path для big_file_id
-            big_file_id = photo.get("big_file_id")
-            if not big_file_id:
-                raise HTTPException(status_code=404, detail="No photo file_id")
-
-            file_resp = await client.get(
-                f"https://api.telegram.org/bot{bot_token}/getFile",
-                params={"file_id": big_file_id},
-                timeout=10.0
-            )
-            file_data = file_resp.json()
-
-            if not file_data.get("ok"):
-                raise HTTPException(status_code=404, detail="Cannot get file info")
-
-            file_path = file_data.get("result", {}).get("file_path")
-            if not file_path:
-                raise HTTPException(status_code=404, detail="No file_path")
-
-            # 3. Скачиваем фото
-            photo_resp = await client.get(
-                f"https://api.telegram.org/file/bot{bot_token}/{file_path}",
-                timeout=30.0
-            )
-
-            if photo_resp.status_code != 200:
-                raise HTTPException(status_code=404, detail="Cannot download photo")
-
-            photo_bytes = photo_resp.content
-
-            # Кэшируем с TTL
-            if len(_photo_cache) < _PHOTO_CACHE_MAX:
-                _photo_cache[username] = (photo_bytes, time.time())
-
-            return Response(content=photo_bytes, media_type="image/jpeg")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        # v65.1: Логируем ошибку для отладки
-        print(f"[PHOTO ERROR] {username}: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail="Internal error")
-
-
-# v54.0: Кэш фото пользователей
-_user_photo_cache: dict[int, tuple[bytes, float]] = {}
+    """Загружает аватарку канала. См. photo.py"""
+    return await _get_channel_photo(username, db=db)
 
 
 @app.get("/api/user/photo/{user_id}")
 async def get_user_photo(user_id: int):
-    """
-    v54.0: Загружает аватарку пользователя из Telegram.
-
-    Использует getUserProfilePhotos API.
-    Фото кэшируются в памяти для быстрого доступа.
-    """
-    # Валидация user_id
-    if user_id <= 0:
-        raise HTTPException(status_code=400, detail="Invalid user_id")
-
-    # Проверяем кэш
-    if user_id in _user_photo_cache:
-        photo_bytes, ts = _user_photo_cache[user_id]
-        if time.time() - ts < _PHOTO_CACHE_TTL:
-            return Response(content=photo_bytes, media_type="image/jpeg")
-
-    # Загружаем через Telegram Bot API
-    bot_token = os.getenv("BOT_TOKEN")
-    if not bot_token:
-        raise HTTPException(status_code=500, detail="BOT_TOKEN not configured")
-
-    try:
-        async with httpx.AsyncClient() as client:
-            # 1. Получаем список фото пользователя
-            photos_resp = await client.get(
-                f"https://api.telegram.org/bot{bot_token}/getUserProfilePhotos",
-                params={"user_id": user_id, "limit": 1},
-                timeout=10.0
-            )
-            photos_data = photos_resp.json()
-
-            if not photos_data.get("ok"):
-                raise HTTPException(status_code=404, detail="Cannot get user photos")
-
-            photos = photos_data.get("result", {}).get("photos", [])
-            if not photos:
-                raise HTTPException(status_code=404, detail="User has no photo")
-
-            # 2. Берём самое большое фото из первого набора
-            photo_sizes = photos[0]
-            if not photo_sizes:
-                raise HTTPException(status_code=404, detail="No photo sizes")
-
-            # Выбираем самое большое
-            big_photo = max(photo_sizes, key=lambda x: x.get("width", 0) * x.get("height", 0))
-            file_id = big_photo.get("file_id")
-
-            if not file_id:
-                raise HTTPException(status_code=404, detail="No file_id")
-
-            # 3. Получаем file_path
-            file_resp = await client.get(
-                f"https://api.telegram.org/bot{bot_token}/getFile",
-                params={"file_id": file_id},
-                timeout=10.0
-            )
-            file_data = file_resp.json()
-
-            if not file_data.get("ok"):
-                raise HTTPException(status_code=404, detail="Cannot get file info")
-
-            file_path = file_data.get("result", {}).get("file_path")
-            if not file_path:
-                raise HTTPException(status_code=404, detail="No file_path")
-
-            # 4. Скачиваем фото
-            photo_resp = await client.get(
-                f"https://api.telegram.org/file/bot{bot_token}/{file_path}",
-                timeout=30.0
-            )
-
-            if photo_resp.status_code != 200:
-                raise HTTPException(status_code=404, detail="Cannot download photo")
-
-            photo_bytes = photo_resp.content
-
-            # Кэшируем с TTL
-            if len(_user_photo_cache) < _PHOTO_CACHE_MAX:
-                _user_photo_cache[user_id] = (photo_bytes, time.time())
-
-            return Response(content=photo_bytes, media_type="image/jpeg")
-
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Internal error")
+    """Загружает аватарку пользователя. См. photo.py"""
+    return await _get_user_photo(user_id)
 
 
 @app.get("/api/health")
