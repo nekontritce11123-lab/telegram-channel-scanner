@@ -29,7 +29,7 @@ USERNAME_REGEX = re.compile(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$')
 
 # Кэш настройки
 _PHOTO_CACHE_MAX = 1000
-_PHOTO_CACHE_TTL = 3600  # 1 час
+_PHOTO_CACHE_TTL = 86400  # 24 часа (аватарки редко меняются)
 
 # Кэши (изолированные от main.py)
 _channel_photo_cache: dict = {}  # {username: (bytes, timestamp)}
@@ -164,12 +164,13 @@ async def get_channel_photo(username: str, db=None) -> Response:
             if not photo:
                 raise HTTPException(status_code=404, detail="Channel has no photo")
 
-            big_file_id = photo.get("big_file_id")
-            if not big_file_id:
+            # v67.1: small_file_id быстрее загружается (160x160 vs 640x640)
+            file_id = photo.get("small_file_id") or photo.get("big_file_id")
+            if not file_id:
                 raise HTTPException(status_code=404, detail="No photo file_id")
 
             # Скачиваем
-            photo_bytes = await _download_telegram_file(client, bot_token, big_file_id)
+            photo_bytes = await _download_telegram_file(client, bot_token, file_id)
 
             # Кэшируем
             if len(_channel_photo_cache) < _PHOTO_CACHE_MAX:
