@@ -39,18 +39,25 @@
   --font-secondary: clamp(13px, 2vw, 15px);
   --font-meta: clamp(12px, 1.5vw, 14px);
 
-  /* v7.0 Increased spacing */
-  --spacing-xs: 6px;
+  /* v72.8 Apple HIG 8-point grid */
+  --spacing-xs: 4px;
   --spacing-sm: 8px;
-  --spacing-md: 14px;
-  --spacing-lg: 20px;
-  --spacing-xl: 24px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
 
-  /* Border radius */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-pill: 9999px;
+  /* v72.8 Apple HIG border radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 20px;
+
+  /* v72.8 Apple HIG font sizes */
+  --font-xs: 11px;
+  --font-sm: 13px;
+  --font-md: 15px;
+  --font-lg: 17px;
+  --font-xl: 20px;
 }
 
 /* ============================================
@@ -653,13 +660,13 @@
   }
 }
 
+/* v72.8: Apple HIG drag handle */
 .sheetHandle {
-  width: 40px;
-  height: 4px;
-  background: var(--hint-color);
-  border-radius: 2px;
-  margin: 0 auto var(--spacing-md);
-  opacity: 0.3;
+  width: 36px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2.5px;
+  margin: 8px auto 16px;
 }
 
 .sheetTitle {
@@ -4789,6 +4796,80 @@
 }
 
 /* ============================================
+   v72.1: PROJECTS BUTTON & SHEET (Header button style)
+   ============================================ */
+
+.projectsBtn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-sm);
+  color: var(--text-color);
+  cursor: pointer;
+  transition: all 150ms;
+  position: relative;
+}
+
+.projectsBtn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.projectsBtn:active {
+  transform: scale(0.95);
+}
+
+.projectsSheet {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  background: var(--bg-color);
+  border-radius: 0;
+  animation: fadeIn 150ms ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.projectsSheetHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.projectsSheetTitle {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-color);
+}
+
+.projectsSheetContent {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Override Projects Page styles when inside sheet */
+.projectsSheetContent .projectsPage,
+.projectsSheetContent .projectDetail,
+.projectsSheetContent .projectsEmpty {
+  padding-top: 0;
+}
+
+.projectsSheetContent .projectsHeader {
+  display: none; /* Header is already in sheet */
+}
+
+/* ============================================
    v59.1 DESKTOP COMPONENT OVERRIDES
    На всю ширину, равномерные отступы
    ============================================ */
@@ -4993,4 +5074,1725 @@
   .channelFooter {
     margin-top: auto;
   }
+
+  /* v72.0: Bottom Nav - desktop */
+  .bottomNav {
+    height: 64px;
+  }
+
+  .navIcon svg {
+    width: 28px;
+    height: 28px;
+  }
+
+  .navLabel {
+    font-size: 13px;
+  }
+}
+
+/* ============================================
+   v72.0: BOTTOM NAVIGATION - 3 TABS
+   ============================================ */
+.bottomNav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  display: flex;
+  justify-content: space-around;
+  align-items: stretch;
+  background: var(--section-bg);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: var(--safe-bottom);
+  z-index: 200;
+}
+
+.navItem {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  color: var(--hint-color);
+  cursor: pointer;
+  position: relative;
+  transition: color 150ms ease;
+  padding: 8px 0;
+}
+
+.navItem:active {
+  transform: scale(0.95);
+}
+
+.navItemActive {
+  color: var(--button-color);
+}
+
+/* Active indicator line */
+.navItemActive::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 3px;
+  background: var(--button-color);
+  border-radius: 0 0 3px 3px;
+}
+
+.navIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.navIcon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.navLabel {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.navBadge {
+  position: absolute;
+  top: 4px;
+  right: calc(50% - 20px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* v72.0: App container with bottom nav spacing */
+.appWithNav {
+  padding-bottom: calc(56px + var(--safe-bottom));
+}
+
+/* ============================================
+   v72.0: PROJECTS PAGE STYLES
+   ============================================ */
+
+/* Empty state */
+.projectsEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--spacing-xl);
+  min-height: 60vh;
+}
+
+.projectsEmptyIcon {
+  font-size: 64px;
+  margin-bottom: var(--spacing-lg);
+}
+
+.projectsEmptyTitle {
+  font-size: var(--font-title);
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+  color: var(--text-color);
+}
+
+.projectsEmptyText {
+  font-size: var(--font-secondary);
+  color: var(--hint-color);
+  margin-bottom: var(--spacing-xl);
+}
+
+.projectsEmptyForm {
+  width: 100%;
+  max-width: 320px;
+}
+
+/* Input field */
+.projectsInput {
+  display: flex;
+  align-items: center;
+  background: var(--section-bg);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-md);
+  padding: 0 var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.projectsInputPrefix {
+  color: var(--hint-color);
+  font-size: var(--font-body);
+  margin-right: var(--spacing-xs);
+}
+
+.projectsInput input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-color);
+  font-size: var(--font-body);
+  padding: 14px 0;
+  outline: none;
+}
+
+.projectsInput input::placeholder {
+  color: var(--hint-color);
+}
+
+/* Buttons */
+.projectsCreateBtn {
+  width: 100%;
+  padding: 14px var(--spacing-lg);
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-body);
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 150ms;
+}
+
+.projectsCreateBtn:disabled {
+  opacity: 0.5;
+}
+
+.projectsError {
+  color: var(--verdict-scam);
+  font-size: var(--font-meta);
+  margin-top: var(--spacing-md);
+}
+
+/* Projects list page */
+.projectsPage {
+  padding: var(--spacing-md);
+}
+
+.projectsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-lg);
+}
+
+.projectsTitle {
+  font-size: var(--font-title);
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.projectsAddBtn {
+  width: 40px;
+  height: 40px;
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border: none;
+  border-radius: 50%;
+  font-size: 24px;
+  font-weight: 300;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* v72.7: Bottom sheet backdrop */
+.sheetBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 199;
+  animation: fadeIn 150ms ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* v72.7: Create form as bottom sheet */
+.projectsCreateForm {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--section-bg);
+  border-radius: 14px 14px 0 0;
+  padding: var(--spacing-lg);
+  padding-bottom: calc(var(--spacing-lg) + var(--safe-bottom));
+  z-index: 200;
+  animation: slideUp 200ms ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.projectsFormActions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.projectsCancelBtn {
+  flex: 1;
+  padding: 12px;
+  background: transparent;
+  color: var(--hint-color);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-secondary);
+  cursor: pointer;
+}
+
+.projectsFormActions .projectsCreateBtn {
+  flex: 1;
+  padding: 12px;
+}
+
+/* Projects grid */
+.projectsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-md);
+}
+
+.projectCard {
+  background: var(--section-bg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  cursor: pointer;
+  transition: transform 150ms;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.projectCard:active {
+  transform: scale(0.97);
+}
+
+.projectCard > img,
+.projectCard > div:first-child {
+  margin-bottom: var(--spacing-sm);
+}
+
+.projectCardName {
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: var(--spacing-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.projectCardStats {
+  font-size: var(--font-meta);
+  color: var(--hint-color);
+}
+
+/* Project detail */
+.projectDetail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.projectDetailHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.projectDetailTitle {
+  flex: 1;
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.projectDeleteBtn {
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  color: var(--hint-color);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Project tabs */
+.projectTabs {
+  display: flex;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.projectTab {
+  flex: 1;
+  padding: var(--spacing-md);
+  background: transparent;
+  border: none;
+  color: var(--hint-color);
+  font-size: var(--font-secondary);
+  font-weight: 500;
+  cursor: pointer;
+  position: relative;
+  transition: color 150ms;
+}
+
+.projectTabActive {
+  color: var(--button-color);
+}
+
+.projectTabActive::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--button-color);
+}
+
+.projectTabContent {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-md);
+}
+
+/* Recommendations */
+.recommendationsList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.recommendationCard {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+}
+
+.recommendationInfo {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.recommendationName {
+  display: block;
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: 2px;
+}
+
+.recommendationMeta {
+  display: block;
+  font-size: var(--font-meta);
+  color: var(--hint-color);
+}
+
+.recommendationPrice {
+  display: block;
+  font-size: var(--font-secondary);
+  color: var(--accent);
+  margin-top: 4px;
+}
+
+.addToTrackerBtn {
+  padding: 8px 12px;
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-meta);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Tracker */
+.trackerList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.purchaseCard {
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+}
+
+.purchaseCardTop {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.purchaseCardInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.purchaseHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-xs);
+}
+
+.purchaseStatus {
+  font-size: var(--font-meta);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.purchaseDate {
+  font-size: var(--font-meta);
+  color: var(--hint-color);
+  flex-shrink: 0;
+}
+
+.purchaseChannel {
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.purchasePrice,
+.purchaseStats {
+  font-size: var(--font-meta);
+  color: var(--hint-color);
+}
+
+.trackerStats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-md);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  margin-top: var(--spacing-md);
+  font-size: var(--font-secondary);
+  color: var(--hint-color);
+}
+
+/* ============================================
+   v72.3: Projects UI Redesign
+   ============================================ */
+
+/* Floating add button */
+.projectsAddBtnFloat {
+  position: fixed;
+  bottom: calc(80px + var(--safe-bottom));
+  right: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  transition: transform 150ms;
+}
+
+.projectsAddBtnFloat:active {
+  transform: scale(0.92);
+}
+
+/* Tab chips (categoryChip style) */
+.projectTabsNew {
+  display: flex;
+  gap: 8px;
+  padding: var(--spacing-md);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tabChip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--hint-color);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 150ms;
+}
+
+.tabChip.active {
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border-color: var(--button-color);
+}
+
+.tabChip svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Section header */
+.sectionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  margin-bottom: 8px;
+}
+
+.sectionTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.sectionMeta {
+  font-size: 13px;
+  color: var(--hint-color);
+}
+
+/* v72.5: Clean recommendation card (catalog style) */
+.recommendationCardNew {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--section-bg);
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.recommendationCardNew:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.recommendationCardNew.inPlan {
+  background: rgba(52, 199, 89, 0.06);
+}
+
+.recommendationCardNew .cardRow1 {
+  display: contents;
+}
+
+.recommendationCardNew .cardInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.recommendationCardNew .cardName {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recommendationCardNew .cardMeta {
+  font-size: 13px;
+  color: var(--hint-color);
+  margin-top: 2px;
+}
+
+.recommendationCardNew .cardPrice {
+  font-size: 13px;
+  color: var(--accent);
+  margin-top: 4px;
+}
+
+.recommendationCardNew .cardNameLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.addToTrackerBtnNew {
+  width: 100%;
+  padding: 10px;
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: opacity 150ms;
+}
+
+.addToTrackerBtnNew:active {
+  opacity: 0.8;
+}
+
+/* v72.5: Status badge (small colored label) */
+.statusBadge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border: 1px solid;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+/* v72.8: Purchase status badge with icon and background */
+.purchaseStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* v72.8: Purchase stats row (price, subs, date) */
+.purchaseStatsRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--hint-color);
+  margin-top: 4px;
+}
+
+.purchaseStatsRow span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* v72.5: Clean purchase card (like catalog) */
+.purchaseCardClean {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--section-bg);
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.purchaseCardClean:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.purchaseCardClean .cardRow1 {
+  display: contents;
+}
+
+.purchaseCardClean .cardInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.purchaseCardClean .cardNameLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.purchaseCardClean .cardName {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.purchaseCardClean .cardMeta {
+  font-size: 13px;
+  color: var(--hint-color);
+  margin-top: 2px;
+}
+
+/* Old purchase card (with status banner) - deprecated */
+.purchaseCardNew {
+  background: var(--section-bg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.purchaseStatusBanner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.purchaseStatusLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.purchaseStatusLabel svg {
+  width: 14px;
+  height: 14px;
+}
+
+.purchaseStatusDate {
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.purchaseCardContent {
+  padding: 12px;
+}
+
+.purchaseCardContent .cardRow1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.purchaseCardContent .cardInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.purchaseCardContent .cardName {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.purchaseCardContent .cardMeta {
+  font-size: 13px;
+  color: var(--hint-color);
+  margin-top: 2px;
+}
+
+.purchaseStatsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.purchaseStat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.purchaseStatValue {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.purchaseStatLabel {
+  font-size: 11px;
+  color: var(--hint-color);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Loading and empty states */
+.loadingState,
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--spacing-xl);
+  color: var(--hint-color);
+  font-size: var(--font-secondary);
+}
+
+.emptyHint {
+  font-size: var(--font-meta);
+  margin-top: var(--spacing-xs);
+}
+
+/* ============================================
+   v72.0: FAVORITES PAGE STYLES
+   ============================================ */
+
+.favoritesEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--spacing-xl);
+  min-height: 60vh;
+}
+
+.favoritesEmptyIcon {
+  margin-bottom: var(--spacing-lg);
+  opacity: 0.5;
+}
+
+.favoritesEmptyTitle {
+  font-size: var(--font-title);
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+  color: var(--text-color);
+}
+
+.favoritesEmptyText {
+  font-size: var(--font-secondary);
+  color: var(--hint-color);
+  max-width: 280px;
+}
+
+.favoritesPage {
+  padding: var(--spacing-md);
+}
+
+.favoritesHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-lg);
+}
+
+.favoritesTitle {
+  font-size: var(--font-title);
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.favoritesCount {
+  background: var(--section-bg);
+  color: var(--hint-color);
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-meta);
+  font-weight: 600;
+}
+
+.favoritesClearBtn {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--verdict-scam);
+  font-size: var(--font-meta);
+  cursor: pointer;
+  padding: 8px;
+}
+
+.favoritesList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.favoriteCard {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  background: var(--section-bg);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  cursor: pointer;
+  transition: transform 150ms;
+}
+
+.favoriteCard:active {
+  transform: scale(0.98);
+}
+
+.favAvatar {
+  border-radius: 50%;
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--button-color), #ff6b6b);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 600;
+  color: white;
+  flex-shrink: 0;
+}
+
+.favAvatarImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.favAvatarFallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.favoriteInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.favoriteName {
+  display: block;
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.favoriteMeta {
+  display: block;
+  font-size: var(--font-meta);
+  color: var(--hint-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.favoriteScore {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-secondary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.favoriteRemoveBtn {
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  color: var(--hint-color);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.favoriteRemoveBtn:hover {
+  color: var(--verdict-scam);
+}
+
+/* =====================================================
+   v72.3: Projects Page Improvements
+   ===================================================== */
+
+/* Projects list header */
+.projectsListHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 14px;
+  border-bottom: 0.5px solid rgba(255,255,255,0.08);
+}
+
+.projectsListTitle {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-color);
+  margin: 0;
+}
+
+.projectsCloseBtn {
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  color: var(--hint-color);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 150ms, color 150ms;
+}
+
+.projectsCloseBtn:hover {
+  background: rgba(255,255,255,0.1);
+  color: var(--text-color);
+}
+
+/* Empty state content wrapper */
+.projectsEmptyContent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+/* Make purchase cards clickable */
+.purchaseCardNew {
+  cursor: pointer;
+  transition: transform 150ms, box-shadow 150ms;
+}
+
+.purchaseCardNew:active {
+  transform: scale(0.98);
+}
+
+/* Improve purchase card spacing */
+.purchaseCardContent {
+  padding: 14px;
+}
+
+/* Edit hint on purchase card */
+.purchaseEditHint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  font-size: 13px;
+  color: var(--hint-color);
+  border-top: 0.5px solid rgba(255,255,255,0.08);
+}
+
+.purchaseEditHint svg {
+  opacity: 0.6;
+}
+
+/* v72.3: Purchase inline editor */
+.purchaseEditor {
+  padding: 14px;
+  border-top: 0.5px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.2);
+}
+
+/* Status selector - horizontal scroll */
+.statusSelector {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.statusSelector::-webkit-scrollbar {
+  display: none;
+}
+
+.statusOption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 70px;
+  padding: 10px 8px;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 150ms;
+  flex-shrink: 0;
+}
+
+.statusOption span {
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.statusOption.active {
+  border-width: 2px;
+}
+
+.statusOption svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Delete button */
+.purchaseDeleteBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  background: rgba(255, 59, 48, 0.15);
+  border: none;
+  border-radius: 10px;
+  color: var(--verdict-scam);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.purchaseDeleteBtn:hover {
+  background: rgba(255, 59, 48, 0.25);
+}
+
+/* ===== v72.8: Purchase Editor Bottom Sheet (Apple HIG) ===== */
+.purchaseEditorSheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-height: 90vh;
+  background: var(--section-bg);
+  border-radius: 14px 14px 0 0;
+  padding: 0 0 calc(24px + var(--safe-bottom));
+  overflow-y: auto;
+  z-index: 300;
+  animation: slideUp 200ms ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.purchaseEditorHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 0.5px solid rgba(255,255,255,0.08);
+}
+
+.purchaseEditorInfo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.purchaseEditorName {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.purchaseEditorMeta {
+  font-size: 13px;
+  color: var(--hint-color);
+}
+
+/* v72.9: Compact form (like "Подписки") */
+.purchaseEditorForm {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.formLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--hint-color);
+}
+
+.formInput {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-color);
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  color: var(--text-color);
+  outline: none;
+}
+
+.formInput:focus {
+  /* v72.9: no border, clean look */
+}
+
+.formInput::placeholder {
+  color: var(--hint-color);
+}
+
+/* v72.8: Status Chips Section */
+.statusChipsSection {
+  padding: 16px;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+}
+
+.sectionLabel {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--hint-color);
+  margin-bottom: 12px;
+}
+
+.statusChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.statusChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--hint-color);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 150ms;
+}
+
+.statusChip:active {
+  transform: scale(0.96);
+}
+
+.statusChip.active {
+  background: var(--chip-bg);
+  color: var(--chip-color);
+  border-color: var(--chip-color);
+}
+
+.formTextarea {
+  width: 100%;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  color: var(--text-color);
+  resize: none;
+  outline: none;
+  font-family: inherit;
+}
+
+.formTextarea:focus {
+  /* v72.9: no border */
+}
+
+.formTextarea::placeholder {
+  color: var(--hint-color);
+}
+
+/* CPF display */
+.cpfDisplay {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  background: rgba(52, 199, 89, 0.1);
+  border-radius: 10px;
+}
+
+.cpfLabel {
+  font-size: 13px;
+  color: var(--hint-color);
+}
+
+.cpfValue {
+  font-size: 16px;
+  font-weight: 600;
+  color: #34c759;
+}
+
+/* Actions */
+.purchaseEditorActions {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  border-top: 0.5px solid rgba(255,255,255,0.08);
+}
+
+.saveBtn {
+  flex: 1;
+  padding: 14px;
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 150ms;
+}
+
+.saveBtn:active {
+  opacity: 0.8;
+}
+
+.deleteBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 20px;
+  background: rgba(255, 59, 48, 0.15);
+  color: #ff3b30;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.deleteBtn:active {
+  background: rgba(255, 59, 48, 0.25);
+}
+
+/* ===== v73.3: Compact Calendar with облачко ===== */
+.calendar {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 12px;
+  padding: 8px;
+  margin-top: 4px;
+}
+
+.calendarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.calendarNavBtn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--button-color);
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.calendarNavBtn:active {
+  background: rgba(51, 144, 236, 0.1);
+}
+
+.calendarTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.calendarWeekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0;
+  margin-bottom: 4px;
+}
+
+.calendarWeekday {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--hint-color);
+  padding: 2px;
+}
+
+.calendarDays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0;
+}
+
+.calendarDayCell {
+  aspect-ratio: 1;
+  min-width: 0;
+}
+
+.calendarDay {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 150ms;
+}
+
+.calendarDay:active {
+  transform: scale(0.95);
+}
+
+.calendarDay.today {
+  border: 1px solid var(--button-color);
+}
+
+.calendarDay.selected {
+  background: var(--button-color);
+  color: var(--button-text-color);
+}
+
+.calendarDay.disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.calendarDay.disabled:active {
+  transform: none;
+}
+
+/* ===== v72.9: Date Section (calendar always visible) ===== */
+.dateSection {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dateLabel {
+  font-size: 13px;
+  color: var(--hint-color);
+  font-weight: 500;
+}
+
+/* ===== v73.3: Input wrapper (облачко) — rgba для гарантированного контраста ===== */
+.inputWrapper {
+  display: flex;
+  align-items: center;
+  background-color: rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  padding: 12px 14px;
+  height: 44px;
+}
+
+.inputWrapper input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  font-size: 17px;
+  color: var(--text-color);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.inputWrapper input::placeholder {
+  color: var(--hint-color);
+}
+
+/* v73.4: Hide number input spinners */
+.inputWrapper input[type="number"]::-webkit-inner-spin-button,
+.inputWrapper input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.inputWrapper input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* v74.0: Three fields - Price | Subs (adaptive) | Status (fixed right) */
+.rowThree {
+  display: grid;
+  grid-template-columns: 1fr 1fr 95px;
+  gap: 8px;
+  align-items: stretch;
+}
+
+/* v73.9: Цена и подп. адаптивные (1fr), статус и день фиксированные */
+.rowFour {
+  display: grid;
+  grid-template-columns: 1fr 90px 1fr 80px;
+  gap: 6px;
+  align-items: stretch;
+}
+
+/* Status button (dropdown trigger) */
+/* v73.5: Status button with icon + label */
+.statusButton {
+  height: 44px;
+  border: none;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 6px;
+  transition: transform 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.statusButton:active {
+  transform: scale(0.95);
+}
+
+/* v73.5: Status icon and label */
+.statusIcon {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.statusIcon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.statusLabel {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status picker popup */
+.statusPicker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  animation: slideDown 0.15s ease-out;
+}
+
+.statusPickerOption {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--chip-bg);
+  color: var(--chip-color);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.statusPickerOption:active {
+  transform: scale(0.95);
+}
+
+.statusPickerOption.active {
+  outline: 2px solid var(--chip-color);
+  outline-offset: 1px;
+}
+
+/* Field wrapper (label + inputWrapper) */
+.fieldWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  color: var(--hint-color);
+  font-weight: 500;
+  padding-left: 4px;
+}
+
+/* Currency suffix inside input */
+.inputWrapper .currencySuffix {
+  color: var(--button-color);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  margin: -4px -4px -4px 0;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.inputWrapper .currencySuffix:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Day wrapper (day + month badge) */
+.dayInputWrapper {
+  display: flex;
+  align-items: baseline;
+  background-color: rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  padding: 0 10px;
+  padding-top: 12px;
+  height: 44px;
+  gap: 2px;
+}
+
+.dayInputWrapper input {
+  width: 24px;
+  background: none;
+  border: none;
+  color: var(--text-color);
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+  outline: none;
+  padding: 0;
+}
+
+.dayInputWrapper input::placeholder {
+  color: var(--hint-color);
+}
+
+.monthBadge {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-color);
 }

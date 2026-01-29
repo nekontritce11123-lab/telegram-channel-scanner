@@ -499,3 +499,337 @@ export function useWatchlist() {
 
   return { watchlist, isInWatchlist, addToWatchlist, removeFromWatchlist, clearWatchlist }
 }
+
+
+// ============================================================================
+// v72.0: PROJECTS HOOK - "Мои Проекты" feature
+// ============================================================================
+
+export interface Project {
+  id: number
+  user_id: number
+  channel_username: string
+  name: string | null
+  category: string | null
+  created_at: string
+  // Joined from channel
+  channel_title?: string
+  channel_members?: number
+  channel_score?: number
+  channel_verdict?: string
+  // Stats
+  purchases_count?: number
+  total_spent?: number
+}
+
+export interface Purchase {
+  id: number
+  project_id: number
+  channel_username: string
+  status: PurchaseStatus
+  price: number | null
+  scheduled_at: string | null
+  posted_at: string | null
+  views: number | null
+  subscribers_gained: number | null
+  notes: string | null
+  created_at: string
+  updated_at: string | null
+  // Joined from channel
+  channel_title?: string
+  channel_members?: number
+  channel_score?: number
+  // Calculated by backend
+  cpm?: number | null
+  cpf?: number | null
+}
+
+export type PurchaseStatus =
+  | 'PLANNED'
+  | 'CONTACTED'
+  | 'NEGOTIATING'
+  | 'PAID'
+  | 'POSTED'
+  | 'COMPLETED'
+  | 'CANCELLED'
+
+export interface ProjectStats {
+  purchases_count: number
+  by_status: Record<string, number>
+  total_spent: number
+  total_views: number
+  total_subscribers_gained: number
+  avg_cpm: number | null
+  avg_cpf: number | null
+}
+
+// Helper to get initData from Telegram WebApp
+function getInitData(): string {
+  return window.Telegram?.WebApp?.initData || ''
+}
+
+export function useProjects() {
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchProjects = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_BASE}/api/projects`, {
+        headers: {
+          'X-Telegram-Init-Data': getInitData()
+        }
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      setProjects(data.projects || [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to fetch projects')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const createProject = useCallback(async (channelUsername: string, name?: string): Promise<Project | null> => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_BASE}/api/projects`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': getInitData()
+        },
+        body: JSON.stringify({ channel_username: channelUsername, name })
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to create project')
+      }
+      if (data.project) {
+        setProjects(prev => [data.project, ...prev])
+        return data.project
+      }
+      return null
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create project')
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const deleteProject = useCallback(async (projectId: number): Promise<boolean> => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Telegram-Init-Data': getInitData()
+        }
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${res.status}`)
+      }
+      setProjects(prev => prev.filter(p => p.id !== projectId))
+      return true
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete project')
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const getRecommendations = useCallback(async (projectId: number, filters?: {
+    max_price?: number
+    min_trust?: number
+    min_members?: number
+    max_members?: number
+  }): Promise<Channel[]> => {
+    try {
+      const params = new URLSearchParams()
+      if (filters?.max_price) params.set('max_price', String(filters.max_price))
+      if (filters?.min_trust) params.set('min_trust', String(filters.min_trust))
+      if (filters?.min_members) params.set('min_members', String(filters.min_members))
+      if (filters?.max_members) params.set('max_members', String(filters.max_members))
+
+      const url = `${API_BASE}/api/projects/${projectId}/recommendations${params.toString() ? '?' + params : ''}`
+      const res = await fetch(url, {
+        headers: {
+          'X-Telegram-Init-Data': getInitData()
+        }
+      })
+      if (!res.ok) return []
+      const data = await res.json()
+      return data.recommendations || []
+    } catch {
+      return []
+    }
+  }, [])
+
+  return { projects, loading, error, fetchProjects, createProject, deleteProject, getRecommendations }
+}
+
+
+// ============================================================================
+// v72.0: PURCHASES HOOK - Purchase tracker
+// ============================================================================
+
+export function usePurchases(projectId: number | null) {
+  const [purchases, setPurchases] = useState<Purchase[]>([])
+  const [stats, setStats] = useState<ProjectStats | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchPurchases = useCallback(async () => {
+    if (!projectId) return
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/purchases`, {
+        headers: {
+          'X-Telegram-Init-Data': getInitData()
+        }
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      setPurchases(data.purchases || [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to fetch purchases')
+    } finally {
+      setLoading(false)
+    }
+  }, [projectId])
+
+  const fetchStats = useCallback(async () => {
+    if (!projectId) return
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/stats`, {
+        headers: {
+          'X-Telegram-Init-Data': getInitData()
+        }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setStats(data)
+      }
+    } catch {
+      // Stats are optional, don't set error
+    }
+  }, [projectId])
+
+  const createPurchase = useCallback(async (channelUsername: string, notes?: string): Promise<Purchase | null> => {
+    if (!projectId) return null
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/purchases`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': getInitData()
+        },
+        body: JSON.stringify({ channel_username: channelUsername, notes })
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${res.status}`)
+      }
+      const purchase = await res.json()
+      setPurchases(prev => [purchase, ...prev])
+      return purchase
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create purchase')
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }, [projectId])
+
+  const updatePurchase = useCallback(async (purchaseId: number, updates: {
+    status?: PurchaseStatus
+    price?: number
+    scheduled_at?: string
+    posted_at?: string
+    views?: number
+    subscribers_gained?: number
+    notes?: string
+  }): Promise<Purchase | null> => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_BASE}/api/purchases/${purchaseId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': getInitData()
+        },
+        body: JSON.stringify(updates)
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${res.status}`)
+      }
+      const updated = await res.json()
+      setPurchases(prev => prev.map(p => p.id === purchaseId ? updated : p))
+      return updated
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update purchase')
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const deletePurchase = useCallback(async (purchaseId: number): Promise<boolean> => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_BASE}/api/purchases/${purchaseId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Telegram-Init-Data': getInitData()
+        }
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${res.status}`)
+      }
+      setPurchases(prev => prev.filter(p => p.id !== purchaseId))
+      return true
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete purchase')
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Fetch purchases when projectId changes
+  useEffect(() => {
+    if (projectId) {
+      fetchPurchases()
+      fetchStats()
+    } else {
+      setPurchases([])
+      setStats(null)
+    }
+  }, [projectId, fetchPurchases, fetchStats])
+
+  return { purchases, stats, loading, error, fetchPurchases, fetchStats, createPurchase, updatePurchase, deletePurchase }
+}

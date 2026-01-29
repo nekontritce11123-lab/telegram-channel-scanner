@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, JSX } from 'react'
 import { useTelegram } from './hooks/useTelegram'
 import { useChannels, useStats, useScan, useScanRequest, useHistory, useWatchlist, Channel, ChannelDetail, ChannelFilters, BotInfo, StoredChannel, API_BASE, QuickStats } from './hooks/useApi'
 import { useYandexMetrika } from './hooks/useYandexMetrika'
+import { ProjectsPage } from './pages/ProjectsPage'
 import styles from './App.module.css'
 
 // All 17 categories
@@ -523,6 +524,9 @@ function App() {
   // v62.0: Яндекс.Метрика analytics
   const { reachGoal, hit } = useYandexMetrika()
 
+  // v72.1: Projects sheet state (header button instead of BottomNav)
+  const [showProjectsSheet, setShowProjectsSheet] = useState(false)
+
   // State
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategories, setSelectedCategories] = useState<string[]>([])  // v71.0: multiselect
@@ -1042,10 +1046,10 @@ function App() {
 
 
 
-  // v55.0: Main List View - No Bottom Nav
+  // v72.1: Main List View with Projects button in header
   return (
     <div className={styles.app}>
-      {/* v55.0: Sticky Header - Search + Filters + Watchlist */}
+      {/* v55.0: Sticky Header - Search + Filters + Projects + Watchlist */}
       <div className={styles.stickyHeader}>
         <div className={styles.searchRow}>
           {/* Search Bar */}
@@ -1083,6 +1087,18 @@ function App() {
               <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
             </svg>
             {activeFilterCount > 0 && <span className={styles.filterBadge}>{activeFilterCount}</span>}
+          </button>
+          {/* v72.1: Projects button */}
+          <button
+            className={styles.projectsBtn}
+            onClick={() => { hapticLight(); setShowProjectsSheet(true) }}
+          >
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09Z"/>
+              <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2Z"/>
+              <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/>
+              <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>
+            </svg>
           </button>
           {/* v55.0: Watchlist button */}
           <button
@@ -1419,12 +1435,30 @@ function App() {
         </div>
       )}
 
+      {/* v72.3: Projects Sheet - no header (back button inside ProjectsPage) */}
+      {showProjectsSheet && (
+        <div className={styles.sheetOverlay} onClick={() => setShowProjectsSheet(false)}>
+          <div className={styles.projectsSheet} onClick={e => e.stopPropagation()}>
+            <div className={styles.projectsSheetContent}>
+              <ProjectsPage
+                onChannelClick={(username) => {
+                  setShowProjectsSheet(false)
+                  setSearchQuery(`@${username}`)
+                }}
+                onClose={() => setShowProjectsSheet(false)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* v58.0: Toast Notifications */}
       {toast && (
         <div className={`${styles.toast} ${styles[`toast_${toast.type}`]}`}>
           {toast.type === 'success' ? '✓' : '✕'} {toast.text}
         </div>
       )}
+
     </div>
   )
 }
