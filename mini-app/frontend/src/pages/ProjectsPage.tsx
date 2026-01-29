@@ -237,6 +237,61 @@ function formatNumber(num: number): string {
 // v72.8: Currency type
 type Currency = 'RUB' | 'USD'
 
+// v75.0: Filter icon
+const FilterIcon = ({ size = 16 }: { size?: number }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2">
+    <line x1="4" y1="21" x2="4" y2="14"/>
+    <line x1="4" y1="10" x2="4" y2="3"/>
+    <line x1="12" y1="21" x2="12" y2="12"/>
+    <line x1="12" y1="8" x2="12" y2="3"/>
+    <line x1="20" y1="21" x2="20" y2="16"/>
+    <line x1="20" y1="12" x2="20" y2="3"/>
+    <line x1="1" y1="14" x2="7" y2="14"/>
+    <line x1="9" y1="8" x2="15" y2="8"/>
+    <line x1="17" y1="16" x2="23" y2="16"/>
+  </svg>
+)
+
+// v75.0: Recommendation filters interface
+interface RecommendationFilters {
+  maxPrice: number | null
+  minTrust: number | null
+  minMembers: number | null
+  maxMembers: number | null
+}
+
+const DEFAULT_FILTERS: RecommendationFilters = {
+  maxPrice: null,
+  minTrust: null,
+  minMembers: null,
+  maxMembers: null
+}
+
+// v75.0: Size presets for quick selection
+const SIZE_PRESETS = [
+  { label: 'Все', min: null, max: null },
+  { label: '<5K', min: null, max: 5000 },
+  { label: '5-20K', min: 5000, max: 20000 },
+  { label: '20-100K', min: 20000, max: 100000 },
+  { label: '>100K', min: 100000, max: null },
+]
+
+// v75.0: Trust presets
+const TRUST_PRESETS = [
+  { label: 'Любой', value: null },
+  { label: '≥50%', value: 0.5 },
+  { label: '≥70%', value: 0.7 },
+  { label: '≥90%', value: 0.9 },
+]
+
+// v75.0: Budget presets (in rubles)
+const BUDGET_PRESETS = [
+  { label: 'Любой', value: null },
+  { label: '≤10K', value: 10000 },
+  { label: '≤50K', value: 50000 },
+  { label: '≤100K', value: 100000 },
+]
+
 // v72.9: Custom DatePicker (calendar style like "Подписки")
 interface DatePickerProps {
   value: string // YYYY-MM-DD format
@@ -594,6 +649,14 @@ export function ProjectsPage({ onChannelClick, onClose }: ProjectsPageProps) {
   const [recommendations, setRecommendations] = useState<Channel[]>([])
   const [loadingRecs, setLoadingRecs] = useState(false)
 
+  // v75.0: Filters
+  const [filters, setFilters] = useState<RecommendationFilters>(DEFAULT_FILTERS)
+  const [showFilters, setShowFilters] = useState(false)
+
+  // v75.0: Check if any filters are active
+  const hasActiveFilters = filters.maxPrice !== null || filters.minTrust !== null ||
+    filters.minMembers !== null || filters.maxMembers !== null
+
   // Purchases for selected project
   const { purchases: rawPurchases, stats, loading: loadingPurchases, createPurchase, updatePurchase, deletePurchase } = usePurchases(selectedProject?.id ?? null)
 
@@ -622,15 +685,20 @@ export function ProjectsPage({ onChannelClick, onClose }: ProjectsPageProps) {
     fetchProjects()
   }, [fetchProjects])
 
-  // Load recommendations when project selected
+  // Load recommendations when project selected or filters change
   useEffect(() => {
     if (selectedProject && activeProjectTab === 'recommendations') {
       setLoadingRecs(true)
-      getRecommendations(selectedProject.id)
+      getRecommendations(selectedProject.id, {
+        max_price: filters.maxPrice ?? undefined,
+        min_trust: filters.minTrust ?? undefined,
+        min_members: filters.minMembers ?? undefined,
+        max_members: filters.maxMembers ?? undefined,
+      })
         .then(setRecommendations)
         .finally(() => setLoadingRecs(false))
     }
-  }, [selectedProject, activeProjectTab, getRecommendations])
+  }, [selectedProject, activeProjectTab, getRecommendations, filters])
 
   // Handle create project
   const handleCreate = useCallback(async () => {
@@ -770,7 +838,92 @@ export function ProjectsPage({ onChannelClick, onClose }: ProjectsPageProps) {
           >
             <ChartIcon size={14} /> Трекер {purchases.length > 0 && `(${purchases.length})`}
           </button>
+          {/* v75.0: Filter button (only on recommendations tab) */}
+          {activeProjectTab === 'recommendations' && (
+            <button
+              className={`${styles.filterChip} ${hasActiveFilters ? styles.active : ''}`}
+              onClick={() => { hapticLight(); setShowFilters(!showFilters) }}
+            >
+              <FilterIcon size={14} />
+              {hasActiveFilters && <span className={styles.filterDot} />}
+            </button>
+          )}
         </div>
+
+        {/* v75.0: Filter panel */}
+        {showFilters && activeProjectTab === 'recommendations' && (
+          <div className={styles.filterPanel}>
+            {/* Budget filter */}
+            <div className={styles.filterSection}>
+              <span className={styles.filterSectionLabel}>Бюджет</span>
+              <div className={styles.filterChips}>
+                {BUDGET_PRESETS.map(p => (
+                  <button
+                    key={p.label}
+                    className={`${styles.filterOption} ${filters.maxPrice === p.value ? styles.active : ''}`}
+                    onClick={() => {
+                      hapticLight()
+                      setFilters(f => ({ ...f, maxPrice: p.value }))
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Trust filter */}
+            <div className={styles.filterSection}>
+              <span className={styles.filterSectionLabel}>Минимальный Trust</span>
+              <div className={styles.filterChips}>
+                {TRUST_PRESETS.map(p => (
+                  <button
+                    key={p.label}
+                    className={`${styles.filterOption} ${filters.minTrust === p.value ? styles.active : ''}`}
+                    onClick={() => {
+                      hapticLight()
+                      setFilters(f => ({ ...f, minTrust: p.value }))
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Size filter */}
+            <div className={styles.filterSection}>
+              <span className={styles.filterSectionLabel}>Размер канала</span>
+              <div className={styles.filterChips}>
+                {SIZE_PRESETS.map(p => (
+                  <button
+                    key={p.label}
+                    className={`${styles.filterOption} ${filters.minMembers === p.min && filters.maxMembers === p.max ? styles.active : ''}`}
+                    onClick={() => {
+                      hapticLight()
+                      setFilters(f => ({ ...f, minMembers: p.min, maxMembers: p.max }))
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Reset button */}
+            {hasActiveFilters && (
+              <button
+                className={styles.filterResetBtn}
+                onClick={() => {
+                  hapticLight()
+                  setFilters(DEFAULT_FILTERS)
+                }}
+              >
+                Сбросить фильтры
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Tab content */}
         <div className={styles.projectTabContent}>
@@ -866,11 +1019,17 @@ export function ProjectsPage({ onChannelClick, onClose }: ProjectsPageProps) {
                             <div className={styles.cardMeta}>
                               {purchase.channel_members ? formatNumber(purchase.channel_members) + ' подп.' : ''}
                             </div>
-                            {/* v72.8: Stats row (price, subs, date) */}
+                            {/* v72.8: Stats row (price, subs, date, CPF) */}
                             {(purchase.price || purchase.subscribers_gained || purchase.scheduled_at) && (
                               <div className={styles.purchaseStatsRow}>
                                 {purchase.price && <span>💰 {formatNumber(purchase.price)} ₽</span>}
                                 {purchase.subscribers_gained && <span>+{purchase.subscribers_gained} подп.</span>}
+                                {/* v75.0: Show CPF if we have price and subscribers */}
+                                {purchase.price && purchase.subscribers_gained && purchase.subscribers_gained > 0 && (
+                                  <span className={styles.cpfBadge}>
+                                    CPF {Math.round(purchase.price / purchase.subscribers_gained)} ₽
+                                  </span>
+                                )}
                                 {purchase.scheduled_at && <span>📅 {new Date(purchase.scheduled_at).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</span>}
                               </div>
                             )}

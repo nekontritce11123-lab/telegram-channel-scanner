@@ -69,8 +69,9 @@ export function useTelegram() {
     const tg = window.Telegram?.WebApp
     if (tg) {
       setWebApp(tg)
-      setIsReady(true)
     }
+    // v72.5: Always set ready after short delay (for PC/browser without Telegram)
+    setTimeout(() => setIsReady(true), 100)
   }, [])
 
   const openLink = useCallback((url: string) => {

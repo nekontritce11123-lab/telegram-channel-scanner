@@ -5667,6 +5667,103 @@
   height: 14px;
 }
 
+/* v75.0: Filter chip button (in tabs row) */
+.filterChip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  color: var(--hint-color);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 150ms;
+  margin-left: auto;
+}
+
+.filterChip.active {
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border-color: var(--button-color);
+}
+
+.filterChip svg {
+  width: 16px;
+  height: 16px;
+}
+
+.filterDot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  background: var(--verdict-excellent);
+  border-radius: 50%;
+}
+
+/* v75.0: Filter panel */
+.filterPanel {
+  padding: var(--spacing-md);
+  background: var(--section-bg);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.filterSection {
+  margin-bottom: var(--spacing-md);
+}
+
+.filterSection:last-of-type {
+  margin-bottom: 0;
+}
+
+.filterSectionLabel {
+  display: block;
+  font-size: var(--font-meta);
+  color: var(--hint-color);
+  margin-bottom: var(--spacing-xs);
+}
+
+.filterChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filterOption {
+  min-height: 30px;
+  padding: 4px 12px;
+  background: transparent;
+  color: var(--hint-color);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 150ms;
+}
+
+.filterOption.active {
+  background: var(--button-color);
+  color: var(--button-text-color);
+  border-color: var(--button-color);
+}
+
+.filterResetBtn {
+  width: 100%;
+  margin-top: var(--spacing-md);
+  padding: 10px;
+  background: transparent;
+  color: var(--accent);
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
 /* Section header */
 .sectionHeader {
   display: flex;
@@ -5798,6 +5895,15 @@
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* v75.0: CPF badge in tracker */
+.cpfBadge {
+  background: rgba(52, 199, 89, 0.15);
+  color: var(--verdict-excellent);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
 }
 
 /* v72.5: Clean purchase card (like catalog) */
