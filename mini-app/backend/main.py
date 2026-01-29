@@ -1549,14 +1549,14 @@ async def health_check():
 
 @app.get("/api/channels", response_model=ChannelListResponse)
 async def get_channels(
-    category: Optional[str] = Query(None, description="Фильтр по категории"),
+    categories: Optional[str] = Query(None, description="v71.0: comma-separated категории"),
     min_score: int = Query(0, ge=0, le=100),
     max_score: int = Query(100, ge=0, le=100),
     min_members: int = Query(0, ge=0),
     max_members: int = Query(10000000, ge=0),
     min_trust: float = Query(0.0, ge=0.0, le=1.0, description="Мин. Trust Factor"),
     verdict: Optional[str] = Query(None, description="good_plus = EXCELLENT+GOOD"),
-    ad_status: Optional[int] = Query(None, ge=0, le=2, description="v69.0: 0=нельзя, 1=возможно, 2=можно"),
+    ad_statuses: Optional[str] = Query(None, description="v71.0: comma-separated статусы (0,1,2)"),
     sort_by: str = Query("score", regex="^(score|members|scanned_at|trust_factor)$"),
     sort_order: str = Query("desc", regex="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -1565,7 +1565,7 @@ async def get_channels(
     """
     Получить список каналов с фильтрацией и пагинацией.
     v6.0: min_trust, verdict (good_plus = EXCELLENT + GOOD)
-    v69.0: ad_status (0=нельзя, 1=возможно, 2=можно купить рекламу)
+    v71.0: categories и ad_statuses теперь multiselect (comma-separated)
     """
     params = [min_score, max_score, min_members, max_members, min_trust]
 
@@ -1581,14 +1581,21 @@ async def get_channels(
     if verdict == "good_plus":
         where_clause += " AND verdict IN ('EXCELLENT', 'GOOD')"
 
-    if category:
-        where_clause += " AND (category = ? OR category_secondary = ?)"
-        params.extend([category, category])
+    # v71.0: Categories multiselect
+    if categories:
+        cat_list = [c.strip() for c in categories.split(',') if c.strip()]
+        if cat_list:
+            placeholders = ','.join(['?' for _ in cat_list])
+            where_clause += f" AND (category IN ({placeholders}) OR category_secondary IN ({placeholders}))"
+            params.extend(cat_list * 2)  # для обоих IN
 
-    # v69.0: Ad status filter
-    if ad_status is not None:
-        where_clause += " AND ad_status = ?"
-        params.append(ad_status)
+    # v71.0: Ad statuses multiselect
+    if ad_statuses:
+        status_list = [int(s.strip()) for s in ad_statuses.split(',') if s.strip().isdigit()]
+        if status_list:
+            placeholders = ','.join(['?' for _ in status_list])
+            where_clause += f" AND ad_status IN ({placeholders})"
+            params.extend(status_list)
 
     # Count total
     count_query = f"SELECT COUNT(*) FROM channels {where_clause}"
@@ -1678,19 +1685,19 @@ async def get_channels(
 # v59.7: Endpoint для подсчёта каналов (для preview в фильтрах)
 @app.get("/api/channels/count")
 async def get_channels_count(
-    category: Optional[str] = Query(None, description="Фильтр по категории"),
+    categories: Optional[str] = Query(None, description="v71.0: comma-separated категории"),
     min_score: int = Query(0, ge=0, le=100),
     max_score: int = Query(100, ge=0, le=100),
     min_members: int = Query(0, ge=0),
     max_members: int = Query(10000000, ge=0),
     min_trust: float = Query(0.0, ge=0.0, le=1.0, description="Мин. Trust Factor"),
     verdict: Optional[str] = Query(None, description="good_plus = EXCELLENT+GOOD"),
-    ad_status: Optional[int] = Query(None, ge=0, le=2, description="v69.0: 0=нельзя, 1=возможно, 2=можно"),
+    ad_statuses: Optional[str] = Query(None, description="v71.0: comma-separated статусы"),
 ):
     """
     Получить количество каналов по фильтрам (без пагинации).
     Используется для preview в кнопке "Показать X шт."
-    v69.0: Добавлен фильтр ad_status
+    v71.0: categories и ad_statuses теперь multiselect
     """
     params = [min_score, max_score, min_members, max_members, min_trust]
 
@@ -1704,14 +1711,21 @@ async def get_channels_count(
     if verdict == "good_plus":
         where_clause += " AND verdict IN ('EXCELLENT', 'GOOD')"
 
-    if category:
-        where_clause += " AND (category = ? OR category_secondary = ?)"
-        params.extend([category, category])
+    # v71.0: Categories multiselect
+    if categories:
+        cat_list = [c.strip() for c in categories.split(',') if c.strip()]
+        if cat_list:
+            placeholders = ','.join(['?' for _ in cat_list])
+            where_clause += f" AND (category IN ({placeholders}) OR category_secondary IN ({placeholders}))"
+            params.extend(cat_list * 2)
 
-    # v69.0: Ad status filter
-    if ad_status is not None:
-        where_clause += " AND ad_status = ?"
-        params.append(ad_status)
+    # v71.0: Ad statuses multiselect
+    if ad_statuses:
+        status_list = [int(s.strip()) for s in ad_statuses.split(',') if s.strip().isdigit()]
+        if status_list:
+            placeholders = ','.join(['?' for _ in status_list])
+            where_clause += f" AND ad_status IN ({placeholders})"
+            params.extend(status_list)
 
     count_query = f"SELECT COUNT(*) FROM channels {where_clause}"
     cursor = db.conn.execute(count_query, params)

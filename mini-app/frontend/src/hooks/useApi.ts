@@ -172,14 +172,14 @@ export interface StoredChannel {
 }
 
 export interface ChannelFilters {
-  category?: string
+  categories?: string[]  // v71.0: multiselect
   min_score?: number
   max_score?: number
   min_members?: number
   max_members?: number
   min_trust?: number  // v6.0: min Trust Factor (0.0-1.0)
   verdict?: 'good_plus' | null  // v6.0: good_plus = EXCELLENT + GOOD only
-  ad_status?: number | null  // v69.0: 0=нельзя, 1=возможно, 2=можно купить
+  ad_statuses?: number[]  // v71.0: multiselect [0, 1, 2]
   sort_by?: 'score' | 'members' | 'scanned_at' | 'trust_factor'
   sort_order?: 'asc' | 'desc'
   page?: number
@@ -231,7 +231,12 @@ export function useChannels() {
       const params = new URLSearchParams()
       Object.entries(filters).forEach(([key, value]) => {
         if (value !== undefined && value !== null && value !== '') {
-          params.set(key, String(value))
+          // v71.0: массивы передаём как comma-separated
+          if (Array.isArray(value) && value.length > 0) {
+            params.set(key, value.join(','))
+          } else if (!Array.isArray(value)) {
+            params.set(key, String(value))
+          }
         }
       })
 

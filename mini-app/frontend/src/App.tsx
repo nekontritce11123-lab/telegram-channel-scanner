@@ -525,7 +525,7 @@ function App() {
 
   // State
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([])  // v71.0: multiselect
   const [sortBy, setSortBy] = useState<ChannelFilters['sort_by']>('score')  // v59.6: По умолчанию по Score
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [minScore, setMinScore] = useState(0)
@@ -533,7 +533,7 @@ function App() {
   const [minMembers, setMinMembers] = useState(0)
   const [maxMembers, setMaxMembers] = useState(0)
   const [verdictFilter, setVerdictFilter] = useState<'good_plus' | null>(null)
-  const [adStatusFilter, setAdStatusFilter] = useState<number | null>(null)  // v69.0: 0=нельзя, 1=возможно, 2=можно
+  const [adStatusFilters, setAdStatusFilters] = useState<number[]>([])  // v71.0: multiselect
   const [page, setPage] = useState(1)
   const [selectedChannel, setSelectedChannel] = useState<ChannelDetail | null>(null)
   const [showFilterSheet, setShowFilterSheet] = useState(false)  // v9.0: single unified filter sheet
@@ -596,7 +596,7 @@ function App() {
   const buildFilters = useCallback((pageNum: number): ChannelFilters => ({
     page: pageNum,
     page_size: 30,
-    category: selectedCategory || undefined,
+    categories: selectedCategories.length > 0 ? selectedCategories : undefined,  // v71.0: multiselect
     sort_by: sortBy,
     sort_order: sortOrder,
     min_score: minScore || undefined,
@@ -604,8 +604,8 @@ function App() {
     min_members: minMembers || undefined,
     max_members: maxMembers || undefined,
     verdict: verdictFilter || undefined,
-    ad_status: adStatusFilter ?? undefined,  // v69.0: фильтр по рекламе
-  }), [selectedCategory, sortBy, sortOrder, minScore, minTrust, minMembers, maxMembers, verdictFilter, adStatusFilter])
+    ad_statuses: adStatusFilters.length > 0 ? adStatusFilters : undefined,  // v71.0: multiselect
+  }), [selectedCategories, sortBy, sortOrder, minScore, minTrust, minMembers, maxMembers, verdictFilter, adStatusFilters])
 
   // Apply filters
   const applyFilters = useCallback(() => {
@@ -614,8 +614,8 @@ function App() {
     fetchChannels(buildFilters(1))
     setShowFilterSheet(false)
     // v62.0: Analytics
-    reachGoal('filter_applied', { category: selectedCategory, minScore, sortBy })
-  }, [buildFilters, reset, fetchChannels, reachGoal, selectedCategory, minScore, sortBy])
+    reachGoal('filter_applied', { categories: selectedCategories, minScore, sortBy })
+  }, [buildFilters, reset, fetchChannels, reachGoal, selectedCategories, minScore, sortBy])
 
   // v59.7: Fetch filter preview count when filter sheet is open
   useEffect(() => {
@@ -627,13 +627,13 @@ function App() {
     const fetchCount = async () => {
       try {
         const params = new URLSearchParams()
-        if (selectedCategory) params.set('category', selectedCategory)
+        if (selectedCategories.length > 0) params.set('categories', selectedCategories.join(','))  // v71.0
         if (minScore > 0) params.set('min_score', String(minScore))
         if (minTrust > 0) params.set('min_trust', String(minTrust))
         if (minMembers > 0) params.set('min_members', String(minMembers))
         if (maxMembers > 0) params.set('max_members', String(maxMembers))
         if (verdictFilter) params.set('verdict', verdictFilter)
-        if (adStatusFilter !== null) params.set('ad_status', String(adStatusFilter))  // v69.0
+        if (adStatusFilters.length > 0) params.set('ad_statuses', adStatusFilters.join(','))  // v71.0
 
         const response = await fetch(`${API_BASE}/api/channels/count?${params}`)
         if (response.ok) {
@@ -648,7 +648,7 @@ function App() {
     // Debounce: fetch after 300ms
     const timer = setTimeout(fetchCount, 300)
     return () => clearTimeout(timer)
-  }, [showFilterSheet, selectedCategory, minScore, minTrust, minMembers, maxMembers, verdictFilter, adStatusFilter])
+  }, [showFilterSheet, selectedCategories, minScore, minTrust, minMembers, maxMembers, verdictFilter, adStatusFilters])
 
   // v9.0: Category selection now happens in filter sheet, applied on "Показать"
 
@@ -738,13 +738,13 @@ function App() {
   // Clear filters
   const clearFilters = useCallback(() => {
     hapticLight()
-    setSelectedCategory(null)
+    setSelectedCategories([])  // v71.0: multiselect
     setMinScore(0)
     setMinTrust(0)
     setMinMembers(0)
     setMaxMembers(0)
     setVerdictFilter(null)
-    setAdStatusFilter(null)  // v69.0
+    setAdStatusFilters([])  // v71.0: multiselect
     setSortBy('scanned_at')
     setSortOrder('desc')
     setPage(1)
@@ -760,18 +760,17 @@ function App() {
   }, [scanError, hapticError])
 
   // Has active filters
-  const hasActiveFilters = selectedCategory || minScore > 0 || minTrust > 0 ||
-    minMembers > 0 || maxMembers > 0 || verdictFilter || adStatusFilter !== null || sortBy !== 'scanned_at'
+  const hasActiveFilters = selectedCategories.length > 0 || minScore > 0 || minTrust > 0 ||
+    minMembers > 0 || maxMembers > 0 || verdictFilter || adStatusFilters.length > 0 || sortBy !== 'scanned_at'
 
-  // Count active filters
-  const activeFilterCount = [
-    selectedCategory,
-    minScore > 0,
-    minTrust > 0,
-    minMembers > 0 || maxMembers > 0,
-    verdictFilter,
-    adStatusFilter !== null,  // v69.0
-  ].filter(Boolean).length
+  // Count active filters - v71.0: каждый выбранный элемент = отдельный фильтр
+  const activeFilterCount =
+    selectedCategories.length +  // v71.0: каждая категория = 1 фильтр
+    (minScore > 0 ? 1 : 0) +
+    (minTrust > 0 ? 1 : 0) +
+    (minMembers > 0 || maxMembers > 0 ? 1 : 0) +
+    (verdictFilter ? 1 : 0) +
+    adStatusFilters.length  // v71.0: каждый статус = 1 фильтр
 
   // v7.0: Detailed breakdown from API
   const breakdown = useMemo(() => {
@@ -1111,15 +1110,29 @@ function App() {
               <button className={styles.sheetClose} onClick={() => setShowFilterSheet(false)}>×</button>
             </div>
 
-            {/* Category - moved from separate sheet */}
+            {/* Category - v71.0: multiselect */}
             <div className={styles.filterGroup}>
               <label className={styles.filterLabel}>Категория</label>
               <div className={styles.categoryChips}>
                 {ALL_CATEGORIES.map((cat) => (
                   <button
                     key={cat.id || 'all'}
-                    className={`${styles.categoryChip} ${selectedCategory === cat.id ? styles.active : ''}`}
-                    onClick={() => setSelectedCategory(cat.id)}
+                    className={`${styles.categoryChip} ${
+                      cat.id === null
+                        ? selectedCategories.length === 0 ? styles.active : ''
+                        : selectedCategories.includes(cat.id) ? styles.active : ''
+                    }`}
+                    onClick={() => {
+                      if (cat.id === null) {
+                        setSelectedCategories([])  // "Все" - сброс
+                      } else {
+                        setSelectedCategories(prev =>
+                          prev.includes(cat.id!)
+                            ? prev.filter(c => c !== cat.id)  // убрать
+                            : [...prev, cat.id!]  // добавить
+                        )
+                      }
+                    }}
                   >
                     {cat.label}
                   </button>
@@ -1182,31 +1195,37 @@ function App() {
               </div>
             </div>
 
-            {/* v69.0: Ad Status Filter */}
+            {/* v71.0: Ad Status Filter - multiselect */}
             <div className={styles.filterGroup}>
               <label className={styles.filterLabel}>Реклама</label>
               <div className={styles.adStatusChips}>
                 <button
-                  className={`${styles.adStatusChip} ${adStatusFilter === null ? styles.active : ''}`}
-                  onClick={() => setAdStatusFilter(null)}
+                  className={`${styles.adStatusChip} ${adStatusFilters.length === 0 ? styles.active : ''}`}
+                  onClick={() => setAdStatusFilters([])}
                 >
                   Все
                 </button>
                 <button
-                  className={`${styles.adStatusChip} ${adStatusFilter === 2 ? styles.active : ''}`}
-                  onClick={() => setAdStatusFilter(2)}
+                  className={`${styles.adStatusChip} ${adStatusFilters.includes(2) ? styles.active : ''}`}
+                  onClick={() => setAdStatusFilters(prev =>
+                    prev.includes(2) ? prev.filter(s => s !== 2) : [...prev, 2]
+                  )}
                 >
                   💰 Можно
                 </button>
                 <button
-                  className={`${styles.adStatusChip} ${adStatusFilter === 1 ? styles.active : ''}`}
-                  onClick={() => setAdStatusFilter(1)}
+                  className={`${styles.adStatusChip} ${adStatusFilters.includes(1) ? styles.active : ''}`}
+                  onClick={() => setAdStatusFilters(prev =>
+                    prev.includes(1) ? prev.filter(s => s !== 1) : [...prev, 1]
+                  )}
                 >
                   💰 Возможно
                 </button>
                 <button
-                  className={`${styles.adStatusChip} ${adStatusFilter === 0 ? styles.active : ''}`}
-                  onClick={() => setAdStatusFilter(0)}
+                  className={`${styles.adStatusChip} ${adStatusFilters.includes(0) ? styles.active : ''}`}
+                  onClick={() => setAdStatusFilters(prev =>
+                    prev.includes(0) ? prev.filter(s => s !== 0) : [...prev, 0]
+                  )}
                 >
                   Нет
                 </button>
@@ -1216,13 +1235,13 @@ function App() {
             {/* Actions */}
             <div className={styles.sheetActions}>
               <button className={styles.filterReset} onClick={() => {
-                setSelectedCategory(null)
+                setSelectedCategories([])  // v71.0
                 setMinScore(0)
                 setMinTrust(0)
                 setMinMembers(0)
                 setMaxMembers(0)
                 setVerdictFilter(null)
-                setAdStatusFilter(null)  // v69.0
+                setAdStatusFilters([])  // v71.0
                 setSortBy('score')  // v59.6: По умолчанию по Score
                 setSortOrder('desc')
               }}>
