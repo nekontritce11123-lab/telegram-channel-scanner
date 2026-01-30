@@ -27,6 +27,41 @@ from .json_compression import decompress_breakdown
 from .config import GOOD_THRESHOLD
 
 
+def recalculate_trust_from_breakdown(breakdown: dict, llm_analysis: dict = None) -> float:
+    """
+    Пересчитывает trust_factor из сохранённых trust_details и llm_analysis.
+
+    Args:
+        breakdown: Breakdown dict containing trust_details
+        llm_analysis: Optional LLM analysis dict with llm_trust_factor
+
+    Returns:
+        float: Recalculated trust factor (0.1-1.0)
+    """
+    multipliers = []
+
+    # 1. Trust details (spam_posting, hollow_views, ghost_channel, etc.)
+    trust_details = breakdown.get('trust_details', {})
+    for key, detail in trust_details.items():
+        if isinstance(detail, dict) and 'multiplier' in detail:
+            mult = detail['multiplier']
+            if isinstance(mult, (int, float)) and mult < 1.0:
+                multipliers.append(mult)
+
+    # 2. LLM trust factor
+    if llm_analysis:
+        llm_trust = llm_analysis.get('llm_trust_factor', 1.0)
+        if llm_trust and isinstance(llm_trust, (int, float)) and llm_trust < 1.0:
+            multipliers.append(llm_trust)
+
+    # Multiply all penalties together
+    trust_factor = 1.0
+    for mult in multipliers:
+        trust_factor *= mult
+
+    return max(0.1, round(trust_factor, 2))  # Floor 0.1, round to 2 decimals
+
+
 @dataclass
 class RecalculateResult:
     """Результат пересчёта."""
@@ -190,7 +225,7 @@ def recalculate_local(db: CrawlerDB, verbose: bool = True) -> RecalculateResult:
         username = row[0]
         members = row[1] or 0
         breakdown_json = row[2]
-        trust_factor = row[3] or 1.0
+        old_trust_factor = row[3] or 1.0
         old_score = row[4] or 0
         forensics_json = row[5]  # v65.0: Для premium данных
 
@@ -198,6 +233,10 @@ def recalculate_local(db: CrawlerDB, verbose: bool = True) -> RecalculateResult:
             # Парсим breakdown
             data = json.loads(breakdown_json)
             breakdown = data.get('breakdown', {}) if isinstance(data, dict) else {}
+
+            # Recalculate trust_factor from breakdown's trust_details
+            llm_analysis = data.get('llm_analysis', {})
+            trust_factor = recalculate_trust_from_breakdown(breakdown, llm_analysis)
 
             # Декомпрессируем если сжат (короткие ключи cv, re и т.д.)
             breakdown = decompress_breakdown(breakdown)
@@ -246,9 +285,9 @@ def recalculate_local(db: CrawlerDB, verbose: bool = True) -> RecalculateResult:
 
             cursor.execute("""
                 UPDATE channels
-                SET score = ?, status = ?, verdict = ?, breakdown_json = ?
+                SET score = ?, status = ?, verdict = ?, breakdown_json = ?, trust_factor = ?
                 WHERE username = ?
-            """, (new_score, new_status, new_verdict, new_breakdown_json, username))
+            """, (new_score, new_status, new_verdict, new_breakdown_json, trust_factor, username))
 
             result.updated += 1
 
