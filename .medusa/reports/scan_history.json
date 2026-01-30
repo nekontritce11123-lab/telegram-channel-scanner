@@ -1,0 +1,15 @@
+[
+  {
+    "timestamp": "2026-01-30T05:40:12.608593",
+    "security_score": 65,
+    "risk_level": "CONCERNING",
+    "total_issues": 7,
+    "severity_breakdown": {
+      "CRITICAL": 3,
+      "HIGH": 0,
+      "MEDIUM": 1,
+      "LOW": 3,
+      "UNDEFINED": 0
+    }
+  }
+]

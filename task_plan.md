@@ -1,305 +1,209 @@
-# Task Plan: Архитектурный рефакторинг v61.0
+# Task Plan: Mini-App v72.0 — "Мои Проекты" (Excel Killer)
 
 ## Goal
-Упростить архитектуру до модели "один источник истины": локальная БД → SCP → сервер (read-only).
+Превратить приложение из "поисковика каналов" в "рабочее место рекламщика". Пользователь указывает СВОЙ канал и получает персонализированные рекомендации + трекинг закупок.
+
+## Features
+1. **Bottom Navigation** — 3 вкладки: Поиск, Проекты, Избранное
+2. **Smart Match** — алгоритмический подбор каналов по категории/trust/размеру
+3. **Трекер закупок** — статусы, цены, даты, авто-расчёт CPM/CPF
+4. **Серверное хранение** — привязка к Telegram user_id
 
 ## Current Phase
-COMPLETED ✅
-
-## Проблема (почему рефакторинг нужен)
-
-### Текущая архитектура (СЛОЖНАЯ):
-```
-Локал ←→ Сервер (двусторонняя синхронизация)
-├── _sync_from_server()      # Забираем запросы
-├── _sync_to_server()        # Отправляем результаты
-├── _sync_full_db_from_server() # Забираем обновления
-└── 5 API endpoints для синхронизации
-```
-
-**Проблемы:**
-- 2 копии БД → конфликты при обновлении
-- Каждое изменение схемы = баги синхронизации
-- 350+ строк кода только на синхронизацию
-- Сложно отлаживать
-
-### Новая архитектура (ПРОСТАЯ):
-```
-Локал → Сервер (односторонняя)
-├── fetch_requests()  # SCP: забираем requests.json
-├── push_database()   # SCP: копируем crawler.db
-└── Сервер только читает БД
-```
+Phase 5: Integration
 
 ---
-
-## Phases
-
-### Phase 1: Создание sync.py
-- [x] Создать `scanner/sync.py` с функциями:
-  - `fetch_requests()` - SCP скачать requests.json, очистить
-  - `push_database()` - SCP скопировать crawler.db
-- [x] Проверить что paramiko установлен
-- [x] Протестировать SCP соединение
-- **Status:** ✅ COMPLETED
-- **Files:** `scanner/sync.py`
-- **Lines:** ~60 новых
-
-### Phase 2: Рефакторинг crawler.py
-- [x] Удалить `_sync_from_server()` (строки 227-283, 56 строк)
-- [x] Удалить `_sync_full_db_from_server()` (строки 285-377, 92 строки)
-- [x] Удалить `_sync_to_server()` (строки 379-435, 56 строк)
-- [x] Удалить `import httpx` и связанные импорты
-- [x] Удалить вызовы в `run()` (строки 873, 876, 879)
-- [x] Добавить `from scanner.sync import fetch_requests, push_database`
-- [x] Изменить `run()` с fetch_requests() и push_database()
-- [x] Протестировать локально
-- **Status:** ✅ COMPLETED
-- **Files:** `scanner/crawler.py`
-- **Lines:** -204 удалить, +15 добавить
-
-### Phase 3: Рефакторинг backend (main.py)
-- [ ] Удалить `/api/channels/export` (строки 1656-1691, 35 строк)
-- [ ] Удалить `/api/channels/import` (строки 1694-1767, 73 строки)
-- [ ] Удалить `/api/channels/reset` (строки 1770-1794, 24 строки)
-- [ ] Удалить `/api/queue/pending` (строки 2227-2248, 21 строка)
-- [ ] Удалить `/api/queue/sync` (строки 2251-2269, 18 строк)
-- [ ] Переписать `/api/scan/request`:
-  ```python
-  @app.post("/api/scan/request")
-  async def add_scan_request(data: dict):
-      username = data.get("username", "").strip().lstrip("@").lower()
-
-      # Читаем текущие запросы
-      requests_file = Path("/root/reklamshik/requests.json")
-      requests = json.loads(requests_file.read_text()) if requests_file.exists() else []
-
-      # Проверяем дубликат
-      if username in [r["username"] for r in requests]:
-          return {"success": False, "error": "Already in queue"}
-
-      # Добавляем
-      requests.append({
-          "username": username,
-          "requested_at": datetime.now().isoformat()
-      })
-      requests_file.write_text(json.dumps(requests, indent=2))
-
-      return {"success": True, "position": len(requests)}
-  ```
-- [ ] Добавить `/api/scan/queue` для UI:
-  ```python
-  @app.get("/api/scan/queue")
-  async def get_scan_queue():
-      requests_file = Path("/root/reklamshik/requests.json")
-      requests = json.loads(requests_file.read_text()) if requests_file.exists() else []
-      return {"queue": requests, "count": len(requests)}
-  ```
-- [x] Деплой backend
-- **Status:** ✅ COMPLETED
-- **Files:** `mini-app/backend/main.py`
-- **Lines:** -171 удалить, +40 добавить
-
-### Phase 4: Упрощение database.py
-- [x] Убрать priority из `add_channel()` - параметр больше не нужен
-- [x] Убрать ORDER BY priority из `get_next()` и `peek_next()`
-- [x] НЕ удалять колонку priority (миграция не нужна, просто игнорируем)
-- **Status:** ✅ COMPLETED
-- **Files:** `scanner/database.py`
-- **Lines:** ~-15
-
-### Phase 5: Обновление deploy скриптов
-- [x] Проверить `sync_db.py` — уже имеет нужную SCP логику
-- [x] deploy_backend.py — без изменений (уже работает)
-- **Status:** ✅ COMPLETED
-- **Files:** `mini-app/deploy/sync_db.py`, `mini-app/deploy/deploy_backend.py`
-
-### Phase 6: End-to-End тестирование
-- [x] Создать пустой `requests.json` на сервере
-- [x] Запросить канал через curl → {"success": true}
-- [x] Проверить что запрос появился в requests.json ✅
-- [x] Запустить fetch_requests() локально ✅
-- [x] Проверить что requests.json очистился ✅
-- [x] Запустить push_database() локально ✅
-- **Status:** ✅ COMPLETED
-
----
-
-## Детали реализации
-
-### scanner/sync.py (новый файл)
-
-```python
-"""
-v61.0: Простая синхронизация через SCP.
-Заменяет сложную HTTP синхронизацию.
-"""
-import json
-import logging
-import paramiko
-from pathlib import Path
-
-logger = logging.getLogger(__name__)
-
-# Конфигурация сервера
-SERVER_HOST = "217.60.3.122"
-SERVER_USER = "root"
-SERVER_KEY = Path.home() / ".ssh" / "id_rsa"  # или из .env
-REMOTE_DIR = "/root/reklamshik"
-
-
-def _get_sftp():
-    """Создать SFTP соединение."""
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(SERVER_HOST, username=SERVER_USER, key_filename=str(SERVER_KEY))
-    return ssh, ssh.open_sftp()
-
-
-def fetch_requests() -> list[str]:
-    """
-    Забрать запросы с сервера и очистить файл.
-    Returns: список username'ов для обработки.
-    """
-    ssh, sftp = _get_sftp()
-    try:
-        remote_file = f"{REMOTE_DIR}/requests.json"
-        local_file = Path("requests_temp.json")
-
-        try:
-            sftp.get(remote_file, str(local_file))
-        except FileNotFoundError:
-            logger.info("requests.json не найден на сервере")
-            return []
-
-        # Парсим запросы
-        data = json.loads(local_file.read_text())
-        usernames = [r["username"] for r in data]
-
-        # Очищаем файл на сервере
-        sftp.putfo(io.BytesIO(b"[]"), remote_file)
-
-        # Удаляем временный файл
-        local_file.unlink()
-
-        logger.info(f"Забрано {len(usernames)} запросов с сервера")
-        return usernames
-
-    finally:
-        sftp.close()
-        ssh.close()
-
-
-def push_database():
-    """
-    Скопировать локальную БД на сервер.
-    """
-    ssh, sftp = _get_sftp()
-    try:
-        local_db = Path("crawler.db")
-        remote_db = f"{REMOTE_DIR}/crawler.db"
-
-        if not local_db.exists():
-            logger.error("Локальная БД не найдена!")
-            return False
-
-        sftp.put(str(local_db), remote_db)
-        logger.info(f"БД ({local_db.stat().st_size / 1024:.1f} KB) скопирована на сервер")
-        return True
-
-    finally:
-        sftp.close()
-        ssh.close()
-```
-
-### Структура requests.json
-
-```json
-[
-  {
-    "username": "durov",
-    "requested_at": "2026-01-22T10:00:00"
-  },
-  {
-    "username": "telegram",
-    "requested_at": "2026-01-22T10:05:00"
-  }
-]
-```
-
----
-
-## Key Questions
-
-| # | Вопрос | Ответ |
-|---|--------|-------|
-| 1 | Где хранить requests.json? | `/root/reklamshik/requests.json` |
-| 2 | Как обрабатывать concurrent writes? | Маловероятно (1 запрос/сек макс), JSON atomic write |
-| 3 | Что если краулер упал посреди обработки? | Запросы уже в локальной БД, не потеряются |
-| 4 | Нужна ли история запросов? | Нет, после обработки канал в БД |
-| 5 | Как показывать статус запроса в UI? | GET /api/scan/queue + проверка есть ли в БД |
-| 6 | Где брать SSH ключ? | Из существующего deploy/.env |
 
 ## Decisions Made
 
 | Decision | Rationale |
 |----------|-----------|
-| JSON файл вместо отдельной БД | Простота, нет синхронизации, легко читать |
-| SCP через Paramiko | Уже используется в deploy скриптах |
-| Оставить priority колонку | Удаление требует пересоздание таблицы |
-| requests.json на сервере | Сервер 24/7, запросы не теряются |
-| Push БД после каждого запуска | ~1MB, SCP за секунду |
-| Очищать requests.json сразу | Предотвращает дублирование |
-
-## Errors Encountered
-
-| Error | Attempt | Resolution |
-|-------|---------|------------|
-| (пока нет) | - | - |
+| Серверная БД (не localStorage) | Синхронизация между устройствами, данные не потеряются |
+| Рефакторинг App.tsx на компоненты | Монолит 68KB слишком большой для поддержки |
+| Сначала Smart Match, потом Трекер | Пользователь хочет сначала "подбор" |
+| Алгоритмы вместо AI | Проще реализовать: фильтр по category + sort by trust |
+| Мониторинг постов вручную | Автоматический мониторинг сложнее, пока не нужен |
 
 ---
 
-## Файлы для изменения (summary)
+## Phases
 
-| # | Файл | Действие | Строк |
-|---|------|----------|-------|
-| 1 | `scanner/sync.py` | CREATE | +60 |
-| 2 | `scanner/crawler.py` | MODIFY | -204, +15 |
-| 3 | `mini-app/backend/main.py` | MODIFY | -171, +40 |
-| 4 | `scanner/database.py` | MODIFY | -15 |
-| 5 | `mini-app/deploy/sync_db.py` | REWRITE | ~30 |
-| 6 | `mini-app/deploy/deploy_backend.py` | MODIFY | -20 |
+### Phase 1: Backend Infrastructure
+- [x] Создать таблицы `projects` и `purchases` в database.py
+- [x] Добавить API endpoints в main.py:
+  - POST/GET/DELETE `/api/projects`
+  - GET `/api/projects/{id}/recommendations`
+  - POST/GET/PUT/DELETE `/api/purchases`
+- [x] Авторизация через Telegram initData (user_id)
+- **Status:** `completed`
+- **Files:** `scanner/database.py`, `mini-app/backend/main.py`
 
-**Итого:** ~400 строк удаляется, ~145 добавляется = **-255 строк**
+### Phase 2: Frontend Refactoring
+- [x] Разбить App.tsx на компоненты:
+  - `components/BottomNav.tsx` ✓
+  - `pages/SearchPage.tsx` (текущий каталог остаётся в App.tsx)
+  - `pages/ProjectsPage.tsx` ✓ (список + detail + подбор + трекер)
+  - `pages/FavoritesPage.tsx` ✓
+- [x] Добавить простой роутинг (useState для activeTab)
+- [x] Хуки: `useProjects()`, `usePurchases()` в useApi.ts
+- **Status:** `completed`
+- **Files:** `mini-app/frontend/src/App.tsx`, `mini-app/frontend/src/App.module.css`, `mini-app/frontend/src/components/BottomNav.tsx`, `mini-app/frontend/src/pages/ProjectsPage.tsx`, `mini-app/frontend/src/pages/FavoritesPage.tsx`, `mini-app/frontend/src/hooks/useApi.ts`
+
+### Phase 3: Smart Match (Подбор каналов)
+- [x] Страница "Мои проекты" (пустое состояние + список)
+- [x] Создание проекта (ввод @username)
+- [x] Вкладка "Подбор" с алгоритмическим ранжированием
+- [x] Фильтры: бюджет, минимальный trust, размер (v75.0)
+- [x] Кнопка "В план" → добавляет в трекер
+- **Status:** `completed`
+- **Files:** `pages/ProjectsPage.tsx`
+
+### Phase 4: Трекер закупок (Excel Killer)
+- [x] Вкладка "Трекер" со списком закупок
+- [x] Карточка закупки с полями: статус, цена, дата
+- [x] Pipeline статусов (редактирование статуса в Bottom Sheet) - PurchaseEditorSheet
+- [x] Авто-расчёт CPM/CPF (v75.0: CPF badge on purchase cards)
+- [x] Итоговая статистика проекта
+- **Status:** `completed`
+- **Files:** `pages/ProjectsPage.tsx`
+
+### Phase 5: Integration
+- [ ] Bottom Sheet "Добавить в проект" при нажатии ❤️
+- [ ] Избранное как отдельная вкладка в BottomNav
+- [ ] Toast уведомления при действиях
+- **Status:** `pending`
+- **Files:** `components/AddToSheet.tsx`, `pages/FavoritesPage.tsx`
+
+---
+
+## Database Schema
+
+### projects
+```sql
+CREATE TABLE projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,           -- Telegram user ID
+    channel_username TEXT NOT NULL,      -- @crypto_blog
+    name TEXT,                           -- Опциональное название
+    category TEXT,                       -- Авто-определённая категория
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, channel_username)
+);
+```
+
+### purchases
+```sql
+CREATE TABLE purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    channel_username TEXT NOT NULL,      -- Канал где купили рекламу
+    status TEXT DEFAULT 'PLANNED',       -- PLANNED, CONTACTED, NEGOTIATING, PAID, POSTED, COMPLETED, CANCELLED
+    price INTEGER,                       -- Цена в рублях
+    scheduled_at DATETIME,               -- Дата выхода
+    views INTEGER,                       -- Охват
+    subscribers_gained INTEGER,          -- Прирост подписчиков
+    notes TEXT,                          -- Заметки
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME,
+    FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+```
+
+---
+
+## API Endpoints
+
+**Авторизация:** `X-Telegram-Init-Data` header с initData из Telegram WebApp.
+
+```
+# Проекты
+POST   /api/projects                     -- Создать проект
+GET    /api/projects                     -- Список проектов пользователя
+GET    /api/projects/{id}                -- Детали проекта
+DELETE /api/projects/{id}                -- Удалить проект
+GET    /api/projects/{id}/recommendations -- Алгоритмический подбор
+
+# Закупки
+POST   /api/projects/{id}/purchases      -- Добавить закупку
+GET    /api/projects/{id}/purchases      -- Список закупок
+PUT    /api/purchases/{id}               -- Обновить закупку
+DELETE /api/purchases/{id}               -- Удалить закупку
+GET    /api/projects/{id}/stats          -- Статистика проекта
+```
+
+---
+
+## UI Architecture
+
+### Bottom Navigation
+```
+┌─────────────────────────────────────────────────────┐
+│                                                     │
+│              [Текущий контент]                      │
+│                                                     │
+├─────────────────────────────────────────────────────┤
+│   🔍 Поиск    │   🚀 Проекты   │   ⭐ Избранное    │
+└─────────────────────────────────────────────────────┘
+```
+
+### Status Pipeline
+| Статус | English | Цвет |
+|--------|---------|------|
+| Планируется | PLANNED | #8e8e93 (gray) |
+| Связались | CONTACTED | #3390ec (blue) |
+| Переговоры | NEGOTIATING | #ffcc00 (yellow) |
+| Оплачено | PAID | #ff9500 (orange) |
+| Опубликовано | POSTED | #5ac8fa (light blue) |
+| Завершено | COMPLETED | #34c759 (green) |
+| Отменено | CANCELLED | #ff3b30 (red) |
+
+---
+
+## Files to Modify
+
+| File | Action | Est. Lines |
+|------|--------|------------|
+| `scanner/database.py` | ADD tables | +50 |
+| `mini-app/backend/main.py` | ADD endpoints | +200 |
+| `mini-app/frontend/src/App.tsx` | REFACTOR | -500, +100 |
+| `mini-app/frontend/src/App.module.css` | ADD styles | +200 |
+| `mini-app/frontend/src/components/BottomNav.tsx` | CREATE | +80 |
+| `mini-app/frontend/src/pages/SearchPage.tsx` | CREATE | +300 |
+| `mini-app/frontend/src/pages/ProjectsPage.tsx` | CREATE | +200 |
+| `mini-app/frontend/src/pages/ProjectDetailPage.tsx` | CREATE | +400 |
+| `mini-app/frontend/src/pages/FavoritesPage.tsx` | CREATE | +150 |
+| `mini-app/frontend/src/hooks/useProjects.ts` | CREATE | +100 |
+| `mini-app/frontend/src/hooks/usePurchases.ts` | CREATE | +100 |
 
 ---
 
 ## Verification Checklist
 
 ```bash
-# 1. Локальный тест sync.py
-python -c "from scanner.sync import fetch_requests, push_database; print(fetch_requests())"
-
-# 2. Локальный тест краулера
-python crawler.py --stats  # должно работать без HTTP
-
-# 3. Проверка backend
+# 1. Backend API
 curl https://ads-api.factchain-traker.online/api/health
+curl -X POST https://ads-api.factchain-traker.online/api/projects \
+  -H "X-Telegram-Init-Data: ..." \
+  -d '{"channel_username": "test_channel"}'
 
-# 4. Тест полного цикла
-curl -X POST https://ads-api.factchain-traker.online/api/scan/request \
-  -H "Content-Type: application/json" \
-  -d '{"username": "test_channel"}'
+# 2. Frontend
+npm run build  # должен собраться без ошибок
+npm run dev    # должен показать 3 вкладки внизу
 
-# На сервере:
-cat /root/reklamshik/requests.json  # должен быть test_channel
-
-# Локально:
-python crawler.py  # должен забрать и обработать
-
-# На сервере:
-cat /root/reklamshik/requests.json  # должен быть пустой []
+# 3. E2E Flow
+- Открыть Проекты → Добавить проект
+- Перейти в Подбор → Увидеть рекомендации
+- Добавить канал в Трекер → Изменить статус
+- Проверить расчёт CPM/CPF
 ```
+
+---
+
+## Errors Encountered
+
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| (пока нет) | - | - |
 
 ---
 

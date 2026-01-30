@@ -1,0 +1,490 @@
+{
+  "timestamp": "2026-01-30T05:40:12.608593",
+  "medusa_version": "2025.9.1.1",
+  "scan_summary": {
+    "total_issues": 7,
+    "files_scanned": 152,
+    "lines_scanned": 155230,
+    "security_score": 65,
+    "risk_level": "CONCERNING"
+  },
+  "severity_breakdown": {
+    "CRITICAL": 3,
+    "HIGH": 0,
+    "MEDIUM": 1,
+    "LOW": 3,
+    "UNDEFINED": 0
+  },
+  "findings": [
+    {
+      "scanner": "batscanner",
+      "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+      "line": 27,
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "issue": "Errorlevel handling difference between .bat/.cmd: Commands like APPEND, DPATH, FTYPE, SET, PATH, ASSOC handle errorlevel differently in .bat vs .cmd files",
+      "cwe": null,
+      "code": null,
+      "fp_analysis": {
+        "is_likely_fp": false,
+        "confidence": 0.0,
+        "reason": null,
+        "explanation": ""
+      }
+    },
+    {
+      "scanner": "batscanner",
+      "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+      "line": 1,
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "issue": "BAT extension used instead of CMD for newer Windows: The .cmd file extension is recommended over .bat for Windows NT and newer versions (Windows 2000+). CMD files support additional features and have better error handling in newer Windows environments",
+      "cwe": null,
+      "code": null,
+      "fp_analysis": {
+        "is_likely_fp": false,
+        "confidence": 0.0,
+        "reason": null,
+        "explanation": ""
+      }
+    },
+    {
+      "scanner": "batscanner",
+      "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+      "line": 1,
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "issue": "Missing file header documentation: Scripts should include header documentation for maintainability",
+      "cwe": null,
+      "code": null,
+      "fp_analysis": {
+        "is_likely_fp": false,
+        "confidence": 0.0,
+        "reason": null,
+        "explanation": ""
+      }
+    },
+    {
+      "scanner": "batscanner",
+      "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+      "line": 2,
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "issue": "Magic numbers in code: Numeric literals should be replaced with named constants for clarity",
+      "cwe": null,
+      "code": null,
+      "fp_analysis": {
+        "is_likely_fp": false,
+        "confidence": 0.0,
+        "reason": null,
+        "explanation": ""
+      }
+    },
+    {
+      "scanner": "batscanner",
+      "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+      "line": 114,
+      "severity": "CRITICAL",
+      "confidence": "HIGH",
+      "issue": "Potential command injection vulnerability: User input used in commands without validation could allow malicious code execution",
+      "cwe": null,
+      "code": null,
+      "fp_analysis": {
+        "is_likely_fp": false,
+        "confidence": 0.0,
+        "reason": null,
+        "explanation": ""
+      }
+    },
+    {
+      "scanner": "batscanner",
+      "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+      "line": 137,
+      "severity": "CRITICAL",
+      "confidence": "HIGH",
+      "issue": "Unvalidated path traversal: Path operations may allow directory traversal attacks with .. sequences",
+      "cwe": null,
+      "code": null,
+      "fp_analysis": {
+        "is_likely_fp": false,
+        "confidence": 0.0,
+        "reason": null,
+        "explanation": ""
+      }
+    },
+    {
+      "scanner": "react2shellscanner",
+      "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\mini-app\\frontend\\package.json",
+      "line": null,
+      "severity": "CRITICAL",
+      "confidence": "HIGH",
+      "issue": "CVE-2025-55182 (React2Shell): React 19.0.0 may be vulnerable if using Server Components. Upgrade to 19.0.1. See: https://react.dev/blog/2025/12/03/critical-security-vulnerability-in-react-server-components",
+      "cwe": null,
+      "code": null,
+      "fp_analysis": {
+        "is_likely_fp": false,
+        "confidence": 0.0,
+        "reason": null,
+        "explanation": ""
+      }
+    }
+  ],
+  "aggregations": {
+    "by_severity": {
+      "MEDIUM": [
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 27,
+          "severity": "MEDIUM",
+          "confidence": "HIGH",
+          "issue": "Errorlevel handling difference between .bat/.cmd: Commands like APPEND, DPATH, FTYPE, SET, PATH, ASSOC handle errorlevel differently in .bat vs .cmd files",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        }
+      ],
+      "LOW": [
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 1,
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue": "BAT extension used instead of CMD for newer Windows: The .cmd file extension is recommended over .bat for Windows NT and newer versions (Windows 2000+). CMD files support additional features and have better error handling in newer Windows environments",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 1,
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue": "Missing file header documentation: Scripts should include header documentation for maintainability",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 2,
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue": "Magic numbers in code: Numeric literals should be replaced with named constants for clarity",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        }
+      ],
+      "CRITICAL": [
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 114,
+          "severity": "CRITICAL",
+          "confidence": "HIGH",
+          "issue": "Potential command injection vulnerability: User input used in commands without validation could allow malicious code execution",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 137,
+          "severity": "CRITICAL",
+          "confidence": "HIGH",
+          "issue": "Unvalidated path traversal: Path operations may allow directory traversal attacks with .. sequences",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "react2shellscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\mini-app\\frontend\\package.json",
+          "line": null,
+          "severity": "CRITICAL",
+          "confidence": "HIGH",
+          "issue": "CVE-2025-55182 (React2Shell): React 19.0.0 may be vulnerable if using Server Components. Upgrade to 19.0.1. See: https://react.dev/blog/2025/12/03/critical-security-vulnerability-in-react-server-components",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        }
+      ]
+    },
+    "by_file": {
+      "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat": [
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 27,
+          "severity": "MEDIUM",
+          "confidence": "HIGH",
+          "issue": "Errorlevel handling difference between .bat/.cmd: Commands like APPEND, DPATH, FTYPE, SET, PATH, ASSOC handle errorlevel differently in .bat vs .cmd files",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 1,
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue": "BAT extension used instead of CMD for newer Windows: The .cmd file extension is recommended over .bat for Windows NT and newer versions (Windows 2000+). CMD files support additional features and have better error handling in newer Windows environments",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 1,
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue": "Missing file header documentation: Scripts should include header documentation for maintainability",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 2,
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue": "Magic numbers in code: Numeric literals should be replaced with named constants for clarity",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 114,
+          "severity": "CRITICAL",
+          "confidence": "HIGH",
+          "issue": "Potential command injection vulnerability: User input used in commands without validation could allow malicious code execution",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 137,
+          "severity": "CRITICAL",
+          "confidence": "HIGH",
+          "issue": "Unvalidated path traversal: Path operations may allow directory traversal attacks with .. sequences",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        }
+      ],
+      "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\mini-app\\frontend\\package.json": [
+        {
+          "scanner": "react2shellscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\mini-app\\frontend\\package.json",
+          "line": null,
+          "severity": "CRITICAL",
+          "confidence": "HIGH",
+          "issue": "CVE-2025-55182 (React2Shell): React 19.0.0 may be vulnerable if using Server Components. Upgrade to 19.0.1. See: https://react.dev/blog/2025/12/03/critical-security-vulnerability-in-react-server-components",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        }
+      ]
+    },
+    "by_scanner": {
+      "batscanner": [
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 27,
+          "severity": "MEDIUM",
+          "confidence": "HIGH",
+          "issue": "Errorlevel handling difference between .bat/.cmd: Commands like APPEND, DPATH, FTYPE, SET, PATH, ASSOC handle errorlevel differently in .bat vs .cmd files",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 1,
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue": "BAT extension used instead of CMD for newer Windows: The .cmd file extension is recommended over .bat for Windows NT and newer versions (Windows 2000+). CMD files support additional features and have better error handling in newer Windows environments",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 1,
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue": "Missing file header documentation: Scripts should include header documentation for maintainability",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 2,
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue": "Magic numbers in code: Numeric literals should be replaced with named constants for clarity",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 114,
+          "severity": "CRITICAL",
+          "confidence": "HIGH",
+          "issue": "Potential command injection vulnerability: User input used in commands without validation could allow malicious code execution",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        },
+        {
+          "scanner": "batscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\crawler.bat",
+          "line": 137,
+          "severity": "CRITICAL",
+          "confidence": "HIGH",
+          "issue": "Unvalidated path traversal: Path operations may allow directory traversal attacks with .. sequences",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        }
+      ],
+      "react2shellscanner": [
+        {
+          "scanner": "react2shellscanner",
+          "file": "F:\\Code\\\u0420\u0435\u043a\u043b\u0430\u043c\u0449\u0438\u043a\\mini-app\\frontend\\package.json",
+          "line": null,
+          "severity": "CRITICAL",
+          "confidence": "HIGH",
+          "issue": "CVE-2025-55182 (React2Shell): React 19.0.0 may be vulnerable if using Server Components. Upgrade to 19.0.1. See: https://react.dev/blog/2025/12/03/critical-security-vulnerability-in-react-server-components",
+          "cwe": null,
+          "code": null,
+          "fp_analysis": {
+            "is_likely_fp": false,
+            "confidence": 0.0,
+            "reason": null,
+            "explanation": ""
+          }
+        }
+      ]
+    }
+  }
+}
