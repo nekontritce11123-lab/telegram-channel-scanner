@@ -43,3 +43,9 @@ nul
 
 # Database
 crawler.db
+
+# Security scan reports
+.medusa/
+
+# Source maps
+*.map

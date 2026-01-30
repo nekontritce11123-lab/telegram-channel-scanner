@@ -29,8 +29,8 @@
 - `cd mini-app/deploy && python deploy_backend.py` — деплой бэка
 
 ## 🚧 Current Session Status
-- **Focus:** Trust Factor Recalculation Fix
-- **Current Step:** ✅ Bug исправлен, 246 каналов пересчитаны
+- **Focus:** v80.0 Smart Rescan System
+- **Current Step:** ✅ Completed
 - **Blockers:** Нет
 
 ## 📋 Roadmap & Tasks
@@ -38,10 +38,212 @@
 ### 🔄 In Progress
 - Нет активных задач
 
+### ✅ Completed (2026-01-30) — v80.0 Smart Rescan System
+
+**Создан модуль `rescan/` с Clean Architecture:**
+
+| Компонент | Описание |
+|-----------|----------|
+| `rescan/domain/metric_registry.py` | 25 core метрик с MetricSource enum |
+| `rescan/domain/metric_checker.py` | Анализ полноты данных по всей БД |
+| `rescan/fillers/llm_filler.py` | Заполнение ai_summary, bot%, ad% |
+| `rescan/fillers/forensics_filler.py` | Заполнение id_clustering, geo_dc |
+| `rescan/fillers/photo_filler.py` | Скачивание аватарок каналов |
+| `rescan/cli.py` | CLI интерфейс |
+
+**CLI Usage:**
+```bash
+python -m rescan --status              # Анализ полноты данных
+python -m rescan --fill llm            # Заполнить LLM метрики
+python -m rescan --fill forensics      # Заполнить forensics
+python -m rescan --metric ai_summary   # Проверить конкретную метрику
+python -m rescan --fill llm --dry-run  # Превью без записи
+```
+
+**Результаты верификации:**
+- 25 метрик в реестре
+- 521 канал проанализирован
+- 490 каналов без ai_summary (94%)
+- Все тесты прошли
+
+### ✅ Completed (2026-01-30) — v79.2 Bug Analysis & Fixes
+**Критические исправления после аудита v79.0-v79.1:**
+
+**Найдено и исправлено 8 багов:**
+
+| # | Баг | Severity | Impact |
+|---|-----|----------|--------|
+| 1 | Missing reaction_stability | HIGH | -5 pts на все каналы |
+| 2 | Wrong floating weight keys | MEDIUM | Неправильные веса |
+| 3 | comments_enabled extraction | MEDIUM | Floating weights broken |
+| 4 | members not passed | HIGH | reach/forward = 0 |
+| 5 | llm_analysis: null crash | CRITICAL | 3 канала в WAITING |
+| 6 | No data validation | CRITICAL | 104+ false scores |
+| 7 | False positive defaults | HIGH | +16 pts garbage data |
+| 8 | 63 stuck in WAITING | MEDIUM | 161 канал не обработан |
+
+**Исправления в коде:**
+
+| Файл | Изменения |
+|------|-----------|
+| `recalc/modes/local.py` | +11 null-safe `.get() or {}`, +validation guard |
+| `recalc/domain/score_calculator.py` | +15 null-safe chains, fixed defaults |
+| `recalc/infrastructure/db_repository.py` | +WHERE clause для валидных данных |
+| `tests/test_recalc_domain.py` | +6 тестов null handling |
+
+**Результаты:**
+
+| Метрика | До | После |
+|---------|-----|-------|
+| GOOD | 290 | 334 |
+| BAD | 67 | 187 |
+| WAITING | 195 | 31 |
+| Тестов | 359 | 365 |
+
+**Восстановленные каналы:**
+- @thefactchain: WAITING → EXCELLENT (78)
+- @ssttaannookk: WAITING → MEDIUM (45)
+- 161 канал восстановлен из WAITING
+
+**31 оставшийся WAITING** — нет breakdown данных, требуется rescan.
+
+### ✅ Completed (2026-01-30) — v79.1 Score Calculator Bugfixes
+**Критические исправления в recalc модуле:**
+
+**1. score_calculator.py:**
+
+| Баг | Исправление |
+|-----|-------------|
+| Missing import | +`stability_to_points` from scorer |
+| ScoreInput incomplete | +`stability_cv`, +`stability_points` fields |
+| Wrong weight keys | `comments_max` → `comments`, `reaction_rate_max` → `reaction_rate`, `forward_rate_max` → `forward_rate` |
+| Missing 5 points! | +reaction_stability calculation (was entirely missing) |
+| Wrong extraction path | `comments_enabled`/`reactions_enabled` now from breakdown root, not metadata |
+| Missing parameter | `extract_score_input_from_breakdown()` now accepts `members` param |
+
+**2. local.py:**
+- Pass `members` from DB row to `extract_score_input_from_breakdown()`
+
+**Результаты пересчёта:**
+```
+524 channels recalculated
+@levaki: 74 → 91 (correct!)
+Distribution: 304 GOOD, 220 BAD
+Invalid scores: 0
+```
+
+**Файлы изменены:**
+- recalc/domain/score_calculator.py
+- recalc/modes/local.py
+
+### ✅ Completed (2026-01-30) — v79.0 Unified Recalculation System
+**Создан новый модуль `recalc/` с Clean Architecture:**
+
+| Компонент | Описание |
+|-----------|----------|
+| `recalc/domain/trust_calculator.py` | ЕДИНАЯ функция trust с 20+ множителями |
+| `recalc/domain/score_calculator.py` | Пересчёт raw_score из breakdown |
+| `recalc/domain/verdict.py` | Verdict thresholds и статусы |
+| `recalc/modes/local.py` | --mode local (быстрый, из БД) |
+| `recalc/modes/forensics.py` | --mode forensics (заменяет recalc_trust.py) |
+| `recalc/infrastructure/db_repository.py` | Batch операции с БД |
+| `recalc/infrastructure/batch_processor.py` | Progress bar и параллелизм |
+| `recalc/cli.py` | CLI интерфейс |
+
+**CLI Usage:**
+```bash
+python -m recalc --status              # Статистика БД
+python -m recalc --mode local          # Полный пересчёт из breakdown
+python -m recalc --mode forensics      # Только trust_factor (20+ множителей)
+python -m recalc --mode local --dry-run  # Превью изменений
+```
+
+**Критическое улучшение:**
+- recalc_trust.py использовал только 3 множителя (bot, ad, premium)
+- Новый forensics mode использует 20+ множителей:
+  - ID Clustering (FATALITY/suspicious)
+  - Geo/DC Mismatch
+  - Conviction (critical/high)
+  - Hollow Views, Zombie Engagement, Satellite
+  - Ghost Protocol (ghost_channel, zombie_audience)
+  - Spam Posting (category-aware via SpamPostingTiers)
+  - Private Links (100%/80%/60% + combos)
+  - Hidden Comments, Dying Engagement
+
+**Тесты:**
+- 41 новый тест в tests/test_recalc_domain.py
+- 361 тест всего (359 passed, 1 skipped, 1 xpass)
+
+**Файлы:**
+- recalc/__init__.py
+- recalc/__main__.py
+- recalc/cli.py
+- recalc/domain/ (3 файла)
+- recalc/modes/ (4 файла)
+- recalc/infrastructure/ (2 файла)
+- tests/test_recalc_domain.py
+
+### ✅ Completed (2026-01-30) — Claude Context Optimization
+**8 агентов проанализировали кодовую базу:**
+
+| Агент | Анализ | Найдено |
+|-------|--------|---------|
+| #1 | .claudeignore research | Нет такого файла! Используется settings.json |
+| #2 | Dependencies | node_modules 72MB, __pycache__ 1MB |
+| #3 | Build artifacts | dist/ 408KB, .cache/ 566KB |
+| #4 | Logs/temp | crawler.db 14MB, *.session 600KB |
+| #5 | Media/binary | Нет медиа файлов (чисто!) |
+| #6 | IDE configs | .medusa/ 41KB, .pytest_cache/ 35KB |
+| #7 | Test data | Fixtures в коде (no external files) |
+| #8 | Largest files | Top: crawler.db, node_modules, output/ |
+
+**Созданы файлы:**
+- `.claude/settings.json` — deny rules для Claude
+- Обновлён `.gitignore` — +.medusa/, +*.map
+
+**Context Savings: ~92 MB excluded**
+
+| Категория | Размер | Статус |
+|-----------|--------|--------|
+| node_modules | 72 MB | ✅ Excluded |
+| crawler.db | 14 MB | ✅ Excluded |
+| output/ | 6.6 MB | ✅ Excluded |
+| __pycache__ | 1 MB | ✅ Excluded |
+| dist/ | 408 KB | ✅ Excluded |
+| .cache/ | 566 KB | ✅ Excluded |
+
 ### ⏳ Backlog
 - [ ] Добавить TypedDict для dict returns в forensics.py
 - [ ] Extract score_converters.py из scorer.py
 - [ ] Sync БД на production сервер
+
+### ✅ Completed (2026-01-30) — v78.0 Category Spam Thresholds
+**Два ключевых изменения:**
+
+**1. Bot Comments Threshold: 30% → 40%**
+- Слабая модерация (до 40% ботов) больше не штрафуется
+- @elooop: trust 0.99 → 1.0 (16% ботов без штрафа)
+
+**2. Category-Specific Spam Posting Thresholds:**
+
+| Tier | Categories | Thresholds (active/heavy/spam) |
+|------|------------|-------------------------------|
+| HIGH_FREQUENCY | NEWS, ADULT | 20/40/60 |
+| MEDIUM_FREQUENCY | ENTERTAINMENT, AI_ML, FINANCE, EDUCATION | 10/18/30 |
+| LOW_FREQUENCY | CRYPTO, LIFESTYLE, BUSINESS, TECH, HEALTH | 6/12/20 |
+| MINIMAL | RETAIL, TRAVEL, REAL_ESTATE, BEAUTY, GAMBLING | 4/8/15 |
+
+**Файлы изменены:**
+- scanner/llm_analyzer.py — bot threshold 40%
+- recalc_trust.py — bot threshold 40%
+- scanner/scorer_constants.py — +SpamPostingTiers class
+- scanner/metrics.py — category param
+- scanner/scorer.py — category= вместо is_news=
+
+**Результаты:**
+- 318 тестов passed
+- 263 из 457 каналов пересчитаны
+- Deploy: API + Frontend ✓
 
 ### ✅ Completed (2026-01-30) — Trust Factor Fix v77.0
 **Критический баг: trust_factor не применялся при --recalculate-local**
