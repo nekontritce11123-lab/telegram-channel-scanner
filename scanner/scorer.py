@@ -1,6 +1,6 @@
 """
 Модуль скоринга качества Telegram канала.
-v15.2: Reactions Floating Weights + улучшенные Trust Penalties.
+v68.2: Use VerdictThresholds from scorer_constants.py.
 
 Архитектура:
 - RAW SCORE (0-100): Качество "витрины" (cv_views, reach, comments, reactions...)
@@ -36,8 +36,12 @@ Statistical Trust Penalties (v13.5):
 """
 from typing import Any
 from .shared_utils import calculate_cv
+from .scorer_constants import (
+    VerdictThresholds,
+)
+from .conviction import check_instant_scam
+from .ad_detection import analyze_private_invites
 from .metrics import (
-    check_instant_scam,
     calculate_cv_views,
     calculate_reach,
     calculate_reaction_rate,
@@ -49,14 +53,9 @@ from .metrics import (
     calculate_forwards_ratio,
     get_channel_age_days,
     get_raw_stats,
-    # v15.0: New metrics
     calculate_posts_per_day,
-    analyze_private_invites,
-    # v22.3: Для определения reactions_enabled
     get_message_reactions_count,
-    # v22.4: Правильная проверка включены ли реакции
     check_reactions_enabled,
-    # v45.0: ER Trend для детекции зомби-каналов
     calculate_er_trend,
 )
 from .forensics import UserForensics
@@ -1575,15 +1574,16 @@ def calculate_final_score(
 
     # v52.0: Вердикт с учётом scam_flag
     # Если scam_flag=True, вердикт ВСЕГДА SCAM, независимо от баллов
+    # v68.2: Use VerdictThresholds from scorer_constants.py
     if scam_flag:
         verdict = 'SCAM'
-    elif final_score >= 75:
+    elif final_score >= VerdictThresholds.EXCELLENT:
         verdict = 'EXCELLENT'
-    elif final_score >= 55:
+    elif final_score >= VerdictThresholds.GOOD:
         verdict = 'GOOD'
-    elif final_score >= 40:
+    elif final_score >= VerdictThresholds.MEDIUM:
         verdict = 'MEDIUM'
-    elif final_score >= 25:
+    elif final_score >= VerdictThresholds.HIGH_RISK:
         verdict = 'HIGH_RISK'
     else:
         verdict = 'SCAM'

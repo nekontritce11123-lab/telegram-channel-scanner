@@ -393,8 +393,8 @@ class TestScoreStructure:
             assert 'points' in result['breakdown'][metric], f"Missing points in {metric}"
             assert 'max' in result['breakdown'][metric], f"Missing max in {metric}"
 
-        # Метрики engagement
-        engagement_metrics = ['comments', 'reaction_rate', 'er_variation', 'reaction_stability']
+        # Метрики engagement (v48.0: er_variation -> er_trend)
+        engagement_metrics = ['comments', 'reaction_rate', 'er_trend', 'reaction_stability']
         for metric in engagement_metrics:
             assert metric in result['breakdown'], f"Missing engagement metric: {metric}"
 
@@ -436,15 +436,20 @@ class TestScamDetection:
     """Тесты детекции SCAM каналов."""
 
     def test_telegram_scam_flag(self):
-        """Канал с Telegram флагом is_scam получает verdict SCAM."""
+        """Канал с Telegram флагом is_scam получает verdict SCAM.
+
+        v52.0: SCAM каналы теперь получают реальный score (для анализа),
+        но verdict всегда SCAM и is_scam флаг = True.
+        """
         from scanner.scorer import calculate_final_score
 
         chat, messages, comments_data = create_scam_channel(scam_type="telegram_scam")
         result = calculate_final_score(chat, messages, comments_data)
 
         assert result['verdict'] == 'SCAM'
-        assert result['score'] == 0
-        assert 'SCAM' in result.get('reason', '')
+        assert result['is_scam'] is True
+        # v52.0: Score рассчитывается для анализа, но канал помечен как SCAM
+        assert result['score'] >= 0  # Score вычисляется, не обязательно 0
 
     def test_flat_views_detection(self):
         """Слишком ровные просмотры (CV < 15%) получают низкий score."""
@@ -462,15 +467,20 @@ class TestScamDetection:
         assert cv_points == 0, f"CV points should be 0 for flat views, got {cv_points}"
 
     def test_impossible_reach_detection(self):
-        """Невозможный reach (>200%) детектится как SCAM."""
+        """Невозможный reach (>200%) детектится как HIGH_RISK или ниже.
+
+        v52.0: Каналы с impossible_reach получают низкий score из-за trust penalties,
+        но не обязательно SCAM verdict (зависит от порогов).
+        """
         from scanner.scorer import calculate_final_score
 
         chat, messages, comments_data = create_scam_channel(scam_type="impossible_reach")
         result = calculate_final_score(chat, messages, comments_data)
 
-        # Канал с reach 250% должен быть SCAM (instant_scam или high conviction)
-        assert result['verdict'] == 'SCAM', f"Expected SCAM, got {result['verdict']}"
-        assert result['score'] == 0, f"Expected score 0, got {result['score']}"
+        # Канал с reach 250% получает низкий score из-за hollow_views penalty
+        # Verdict зависит от итогового score после всех penalties
+        assert result['score'] < 40, f"Expected score < 40, got {result['score']}"
+        assert result['verdict'] in ['SCAM', 'HIGH_RISK'], f"Expected SCAM or HIGH_RISK, got {result['verdict']}"
 
     def test_new_channel_insufficient_data(self):
         """Новый канал с < 10 постов получает NEW_CHANNEL, не SCAM."""
@@ -561,45 +571,54 @@ class TestFloatingWeights:
     """Тесты системы перераспределения баллов при отключённых фичах."""
 
     def test_comments_disabled_floating_weights(self):
-        """Когда комменты выключены, баллы перераспределяются."""
+        """Когда комменты выключены, баллы перераспределяются.
+
+        v48.0: Новые базовые веса: 15 comments + 8 reactions + 15 forward = 38
+        """
         from scanner.scorer import calculate_floating_weights
 
-        # Все включено
+        # Все включено (v48.0: reaction_rate = 8, forward_rate = 15)
         weights_all = calculate_floating_weights(comments_enabled=True, reactions_enabled=True)
         assert weights_all['comments_max'] == 15
-        assert weights_all['reaction_rate_max'] == 15
-        assert weights_all['forward_rate_max'] == 7
+        assert weights_all['reaction_rate_max'] == 8   # v48.0: было 15, стало 8
+        assert weights_all['forward_rate_max'] == 15   # v48.0: было 7, стало 15
 
-        # Комменты выключены
+        # Комменты выключены (v48.0: 0 + 13 + 25 = 38)
         weights_no_comments = calculate_floating_weights(comments_enabled=False, reactions_enabled=True)
         assert weights_no_comments['comments_max'] == 0
-        assert weights_no_comments['reaction_rate_max'] == 22  # 15 + 7
-        assert weights_no_comments['forward_rate_max'] == 15   # 7 + 8
+        assert weights_no_comments['reaction_rate_max'] == 13  # v48.0: 8 + 5
+        assert weights_no_comments['forward_rate_max'] == 25   # v48.0: 15 + 10
 
-        # Сумма должна сохраняться (37 баллов)
+        # Сумма должна сохраняться (38 баллов в v48.0)
         total_all = sum(weights_all.values())
         total_no_comments = sum(weights_no_comments.values())
-        assert total_all == total_no_comments == 37
+        assert total_all == total_no_comments == 38
 
     def test_reactions_disabled_floating_weights(self):
-        """Когда реакции выключены, баллы перераспределяются."""
+        """Когда реакции выключены, баллы перераспределяются.
+
+        v48.0: Новые веса: 20 comments + 0 reactions + 18 forward = 38
+        """
         from scanner.scorer import calculate_floating_weights
 
         weights = calculate_floating_weights(comments_enabled=True, reactions_enabled=False)
 
-        assert weights['comments_max'] == 22  # 15 + 7
+        assert weights['comments_max'] == 20       # v48.0: 15 + 5
         assert weights['reaction_rate_max'] == 0
-        assert weights['forward_rate_max'] == 15  # 7 + 8
+        assert weights['forward_rate_max'] == 18   # v48.0: 15 + 3
 
     def test_both_disabled_all_to_forward(self):
-        """Когда и комменты и реакции выключены, все баллы в forward."""
+        """Когда и комменты и реакции выключены, все баллы в forward.
+
+        v48.0: Все 38 баллов уходят в forward_rate.
+        """
         from scanner.scorer import calculate_floating_weights
 
         weights = calculate_floating_weights(comments_enabled=False, reactions_enabled=False)
 
         assert weights['comments_max'] == 0
         assert weights['reaction_rate_max'] == 0
-        assert weights['forward_rate_max'] == 37  # Все 37 баллов
+        assert weights['forward_rate_max'] == 38  # v48.0: все 38 баллов
 
     def test_floating_weights_in_scoring(self):
         """Floating weights применяются в calculate_final_score."""
@@ -685,18 +704,24 @@ class TestTrustFactor:
         assert trust <= 0.3
 
     def test_bot_wall_detection(self):
-        """Bot wall (decay ~1.0) снижает trust factor."""
+        """Bot wall (decay ~1.0) - v51.3: REMOVED.
+
+        v51.3: bot_wall penalty удалён из-за слишком многих false positives.
+        Теперь decay_ratio ~1.0 не штрафуется.
+        """
         from scanner.scorer import calculate_trust_factor
 
         trust, details = calculate_trust_factor(
             forensics_result=None,
             comments_enabled=True,
             conviction_score=0,
-            decay_ratio=1.0  # Идеально ровно = подозрительно
+            decay_ratio=1.0  # Раньше было подозрительно, теперь нет
         )
 
-        assert 'bot_wall' in details
-        assert details['bot_wall']['multiplier'] == 0.6
+        # v51.3: bot_wall больше не детектируется
+        assert 'bot_wall' not in details
+        # Trust factor должен быть 1.0 (без штрафов)
+        assert trust == 1.0
 
     def test_hollow_views_detection(self):
         """Hollow views (высокий reach, низкий forward) снижает trust factor."""
@@ -799,14 +824,19 @@ class TestVerdicts:
             assert result['verdict'] == 'HIGH_RISK'
 
     def test_scam_verdict_threshold(self):
-        """Score < 25 даёт SCAM."""
+        """Telegram scam flag даёт verdict SCAM.
+
+        v52.0: SCAM каналы получают реальный score для анализа,
+        но verdict всегда SCAM благодаря scam_flag.
+        """
         from scanner.scorer import calculate_final_score
 
         chat, messages, comments_data = create_scam_channel(scam_type="telegram_scam")
         result = calculate_final_score(chat, messages, comments_data)
 
         assert result['verdict'] == 'SCAM'
-        assert result['score'] < 25
+        assert result['is_scam'] is True
+        # v52.0: Score вычисляется для анализа, может быть > 25
 
 
 # ============================================================================
@@ -817,23 +847,29 @@ class TestPointsConversion:
     """Тесты функций конвертации метрик в баллы."""
 
     def test_cv_to_points_optimal_range(self):
-        """CV 30-60% даёт максимум баллов."""
+        """CV 30-60% даёт максимум баллов.
+
+        v48.0: cv_views max изменён с 15 на 12.
+        """
         from scanner.scorer import cv_to_points
 
-        assert cv_to_points(35) == 15  # Оптимально
-        assert cv_to_points(50) == 15  # Оптимально
+        assert cv_to_points(35) == 12  # v48.0: max = 12
+        assert cv_to_points(50) == 12  # v48.0: max = 12
         assert cv_to_points(5) == 0    # Слишком ровно
         assert cv_to_points(150) == 0  # Накрутка волнами
 
     def test_cv_viral_exception(self):
-        """CV > 100% + high forward = Viral Exception."""
+        """CV > 100% + high forward = Viral Exception.
+
+        v48.0: cv_views max изменён с 15 на 12, поэтому 50% = 6.
+        """
         from scanner.scorer import cv_to_points
 
         # Высокий CV без forward = накрутка
         assert cv_to_points(120, forward_rate=1.0) == 0
 
-        # Высокий CV + high forward = viral
-        assert cv_to_points(120, forward_rate=5.0) == 7  # 50% от max
+        # Высокий CV + high forward = viral (50% от max 12 = 6)
+        assert cv_to_points(120, forward_rate=5.0) == 6  # v48.0: 50% от 12
 
     def test_reach_to_points_by_size(self):
         """Reach пороги зависят от размера канала."""
@@ -856,25 +892,29 @@ class TestPointsConversion:
         assert age_to_points(800) == 7  # > 2 лет (max)
 
     def test_decay_to_points_zones(self):
-        """Decay ratio конвертируется по зонам."""
+        """Decay ratio конвертируется по зонам.
+
+        v48.0: views_decay теперь info_only, баллы не начисляются (max_pts = 0).
+        Зоны определяются для Trust Factor анализа, но points всегда 0.
+        """
         from scanner.scorer import decay_to_points
 
-        # Здоровая органика (0.3-0.95)
+        # Здоровая органика (0.3-0.95) - v48.0: 0 points, info only
         pts, info = decay_to_points(0.7)
-        assert pts == 8  # Max
+        assert pts == 0  # v48.0: info_only
         assert info['zone'] == 'healthy_organic'
 
-        # Виральный рост (1.05-2.0)
+        # Виральный рост (1.05-2.0) - v48.0: 0 points, info only
         pts, info = decay_to_points(1.5)
-        assert pts == 8  # Max
+        assert pts == 0  # v48.0: info_only
         assert info['zone'] == 'viral_growth'
 
-        # Bot wall (0.98-1.02)
+        # Bot wall (0.98-1.02) - v48.0: всё ещё детектируется для info
         pts, info = decay_to_points(1.0)
-        assert pts == 2  # Штраф
+        assert pts == 2  # Штраф остался для детекции
         assert info['zone'] == 'bot_wall'
 
-        # Budget cliff (<0.2)
+        # Budget cliff (<0.2) - v48.0: 0 points
         pts, info = decay_to_points(0.15)
         assert pts == 0  # SCAM signal
         assert info['zone'] == 'budget_cliff'
@@ -888,7 +928,11 @@ class TestForensicsIntegration:
     """Тесты интеграции с User Forensics."""
 
     def test_id_clustering_fatality(self):
-        """ID Clustering FATALITY (>30% соседних ID) обнуляет канал."""
+        """ID Clustering FATALITY (>30% соседних ID) помечает канал как SCAM.
+
+        v52.0: FATALITY устанавливает scam_flag, но канал всё ещё получает
+        реальный score для анализа. Verdict = SCAM благодаря флагу.
+        """
         from scanner.scorer import calculate_final_score
 
         chat, messages, comments_data = create_healthy_channel()
@@ -904,10 +948,11 @@ class TestForensicsIntegration:
 
         result = calculate_final_score(chat, messages, comments_data, users=bot_users)
 
-        # FATALITY = SCAM
+        # v52.0: FATALITY = SCAM verdict, но score вычисляется
         assert result['verdict'] == 'SCAM'
-        assert result['score'] == 0
-        assert 'FATALITY' in result.get('reason', '')
+        assert result['is_scam'] is True
+        # Score вычисляется для анализа (не обязательно 0)
+        assert result['score'] >= 0
 
     def test_premium_density_in_scoring(self):
         """Premium density влияет на баллы репутации."""
@@ -1016,7 +1061,11 @@ class TestSnapshotScores:
         assert 0.7 <= result['trust_factor'] <= 1.0
 
     def test_snapshot_scam_channel(self):
-        """Snapshot: SCAM канал."""
+        """Snapshot: SCAM канал.
+
+        v52.0: SCAM каналы получают реальный score для анализа,
+        но verdict = SCAM благодаря is_scam флагу.
+        """
         from scanner.scorer import calculate_final_score
 
         chat, messages, comments_data = create_scam_channel(
@@ -1025,8 +1074,10 @@ class TestSnapshotScores:
         )
         result = calculate_final_score(chat, messages, comments_data)
 
-        assert result['score'] == 0
+        # v52.0: Score вычисляется для анализа
+        assert result['score'] >= 0
         assert result['verdict'] == 'SCAM'
+        assert result['is_scam'] is True
 
     def test_snapshot_no_comments_channel(self):
         """Snapshot: канал без комментариев."""

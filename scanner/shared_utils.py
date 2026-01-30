@@ -4,8 +4,10 @@ scanner/shared_utils.py - общие утилиты для работы с со�
 v1.0: iterate_reactions_with_emoji, get_sorted_messages
      Извлечены из metrics.py для переиспользования в scorer.py и других модулях.
 v1.1: calculate_cv - универсальный расчёт коэффициента вариации (DRY refactoring)
+v1.2: get_message_reactions_count, get_channel_age_days - для conviction.py (break circular import)
 """
 
+from datetime import datetime, timezone
 from typing import Any, Generator, Tuple
 
 
@@ -130,3 +132,53 @@ def calculate_cv(values: list, as_percent: bool = True, sample: bool = True) -> 
     cv = std_dev / mean
 
     return cv * 100 if as_percent else cv
+
+
+def get_message_reactions_count(message: Any) -> int:
+    """
+    Безопасно получает общее количество реакций на сообщение.
+
+    v1.2: Moved here from metrics.py to break circular import with conviction.py.
+
+    Args:
+        message: Pyrogram Message object или аналогичный
+
+    Returns:
+        Общее число реакций (int). 0 если нет реакций.
+    """
+    if not hasattr(message, 'reactions') or not message.reactions:
+        return 0
+
+    reactions = message.reactions
+
+    # Pyrogram: reactions.reactions - список ReactionCount
+    if hasattr(reactions, 'reactions') and reactions.reactions:
+        total = 0
+        for r in reactions.reactions:
+            total += getattr(r, 'count', 0) or 0
+        return total
+
+    return 0
+
+
+def get_channel_age_days(chat: Any) -> int:
+    """
+    Возвращает возраст канала в днях.
+
+    v1.2: Moved here from metrics.py to break circular import with conviction.py.
+
+    Args:
+        chat: Pyrogram Chat object или аналогичный
+
+    Returns:
+        Возраст в днях (int). 365 по умолчанию если дата неизвестна.
+    """
+    chat_date = getattr(chat, 'date', None)
+    if not chat_date:
+        return 365  # По умолчанию считаем старым
+
+    if chat_date.tzinfo is None:
+        chat_date = chat_date.replace(tzinfo=timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    return max(1, (now - chat_date).days)

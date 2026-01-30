@@ -14,12 +14,8 @@ from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from typing import Any, Optional, List
 
-from scanner.metrics import (
-    FraudConvictionSystem,
-    FraudFactor,
-    check_instant_scam,
-    get_message_reactions_count,
-)
+from scanner.conviction import FraudConvictionSystem, FraudFactor, check_instant_scam
+from scanner.metrics import get_message_reactions_count
 
 
 # ============================================================================

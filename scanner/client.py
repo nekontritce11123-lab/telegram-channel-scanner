@@ -257,10 +257,14 @@ async def download_photos_from_messages(
                         data = photo_file.getvalue() if hasattr(photo_file, 'getvalue') else photo_file
                         if isinstance(data, bytes) and len(data) > 0:
                             photos.append(data)
-                except Exception as e:
+                except FloodWait:
+                    raise
+                except (ChannelPrivate, ChannelInvalid, RPCError) as e:
                     logger.warning(f"Photo download failed (msg {msg.id}): {e}")
 
-    except Exception as e:
+    except FloodWait:
+        raise
+    except (ChannelPrivate, ChannelInvalid, RPCError) as e:
         logger.warning(f"Failed to get messages for photos: {e}")
 
     return photos
@@ -304,7 +308,9 @@ async def download_channel_avatar(client: Client, chat) -> bytes | None:
             data = photo_file.getvalue() if hasattr(photo_file, 'getvalue') else photo_file
             if isinstance(data, bytes) and len(data) > 0:
                 return data
-    except Exception as e:
+    except FloodWait:
+        raise
+    except RPCError as e:
         logger.warning(f"Channel avatar download failed: {e}")
 
     return None
@@ -498,9 +504,12 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
                     users_for_forensics.append(RawUserWrapper(raw_user))
                 # Повторная дедупликация
                 users_for_forensics = _deduplicate_users(users_for_forensics)
-        except Exception:
-            # GetParticipants может не работать (права, тип канала)
-            pass
+        except (ChannelPrivate, ChannelInvalid) as e:
+            logger.debug(f"GetParticipants unavailable: {type(e).__name__}")
+        except FloodWait:
+            raise
+        except RPCError as e:
+            logger.debug(f"GetParticipants RPC error: {e}")
 
     # v15.2: Пауза перед последним запросом
     await asyncio.sleep(0.5)

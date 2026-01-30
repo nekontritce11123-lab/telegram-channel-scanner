@@ -15,12 +15,10 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 # Импортируем тестируемые модули
+from scanner.conviction import FraudConvictionSystem, FraudFactor, check_instant_scam
+from scanner.ad_detection import analyze_private_invites
 from scanner.metrics import (
-    FraudConvictionSystem,
-    FraudFactor,
-    check_instant_scam,
     check_reactions_enabled,
-    analyze_private_invites,
     calculate_cv_views,
     calculate_reach,
     calculate_views_decay,
