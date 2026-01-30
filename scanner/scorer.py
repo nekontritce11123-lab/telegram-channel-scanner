@@ -46,9 +46,7 @@ from .metrics import (
     calculate_reach,
     calculate_reaction_rate,
     calculate_views_decay,
-    calculate_post_regularity,
     calculate_reaction_stability,
-    calculate_er_variation,
     calculate_source_diversity,
     calculate_forwards_ratio,
     get_channel_age_days,
@@ -1409,9 +1407,6 @@ def calculate_final_score(
     # =========================================================================
     raw_score = quality_score + engagement_score + reputation_score
     raw_score = min(100, max(0, raw_score))  # Cap at 0-100
-
-    # Дополнительные данные для Trust Factor
-    regularity_cv = calculate_post_regularity(messages)
 
     # =========================================================================
     # v13.5: TRUST FACTOR (0.0-1.0) - мультипликатор доверия

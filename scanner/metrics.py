@@ -132,39 +132,6 @@ def calculate_views_decay(messages: list) -> float:
     return old_avg_norm / new_avg_norm
 
 
-def calculate_post_regularity(messages: list) -> float:
-    """
-    C3: Вариация интервалов между постами.
-    Слишком ровные интервалы = бот.
-    Возвращает CV интервалов.
-    """
-    if len(messages) < 5:
-        return 0.5
-
-    sorted_msgs = sorted(
-        [m for m in messages if hasattr(m, 'date') and m.date],
-        key=lambda m: m.date
-    )
-
-    intervals = []
-    for i in range(1, len(sorted_msgs)):
-        delta = (sorted_msgs[i].date - sorted_msgs[i-1].date).total_seconds() / 3600
-        if delta > 0:
-            intervals.append(delta)
-
-    if len(intervals) < 5:
-        return 0.5
-
-    mean_interval = sum(intervals) / len(intervals)
-    if mean_interval == 0:
-        return 0.5
-
-    variance = sum((i - mean_interval) ** 2 for i in intervals) / len(intervals)
-    std_interval = variance ** 0.5
-
-    return std_interval / mean_interval
-
-
 def calculate_posts_per_day(messages: list, category: str = None, is_news: bool = None) -> dict:
     """
     Рассчитывает частоту постинга.
@@ -342,28 +309,6 @@ def calculate_reaction_stability(messages: list) -> dict:
         'max_reactions': max_reactions,
         'total_reactions': total_reactions
     }
-
-
-def calculate_er_variation(messages: list) -> float:
-    """
-    D2: Вариация Engagement Rate между постами.
-    CV должен быть высоким (разный ER на разных постах).
-    """
-    ers = []
-
-    for m in messages:
-        reactions = get_message_reactions_count(m)
-        views = m.views or 0 if hasattr(m, 'views') else 0
-
-        if views > 0:
-            er = (reactions / views) * 100
-            ers.append(er)
-
-    if len(ers) < 5:
-        return 50.0  # Мало данных - нейтральное значение
-
-    cv = calculate_cv(ers, as_percent=True, sample=False)
-    return cv if cv > 0 else 50.0
 
 
 def calculate_er_trend(messages: list) -> dict:

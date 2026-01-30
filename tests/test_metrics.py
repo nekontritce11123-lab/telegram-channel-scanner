@@ -24,7 +24,6 @@ from scanner.metrics import (
     calculate_views_decay,
     calculate_forwards_ratio,
     calculate_reaction_rate,
-    calculate_er_variation,
     calculate_source_diversity,
     calculate_posts_per_day,
     get_message_reactions_count,
