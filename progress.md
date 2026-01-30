@@ -29,8 +29,8 @@
 - `cd mini-app/deploy && python deploy_backend.py` — деплой бэка
 
 ## 🚧 Current Session Status
-- **Focus:** Code Audit — рефакторинг и улучшение качества кода
-- **Current Step:** ✅ Аудит завершён
+- **Focus:** Post-Audit Deploy
+- **Current Step:** ✅ Деплой завершён
 - **Blockers:** Нет
 
 ## 📋 Roadmap & Tasks
@@ -39,10 +39,28 @@
 - Нет активных задач
 
 ### ⏳ Backlog
-- [ ] Протестировать Memory Bank при новой сессии
+- [x] Протестировать Memory Bank при новой сессии ✅ (контекст восстановлен)
 - [ ] Продолжить вынос хардкода в scorer_constants.py
 - [ ] Добавить TypedDict для dict returns в forensics.py
 - [ ] Extract score_converters.py из scorer.py
+
+### ✅ Completed (2026-01-30) — Production Deploy
+- [x] Frontend: https://ads.factchain-traker.online (200 OK)
+- [x] Backend: https://ads-api.factchain-traker.online/api/health (554 channels, 268 GOOD)
+- [x] 22 scanner modules deployed
+- [x] Systemd service running
+
+### ✅ Completed (2026-01-30) — Post-Audit Verification
+**6 агентов параллельно проверили все системы:**
+
+| Компонент | Статус | Детали |
+|-----------|--------|--------|
+| Database | ✅ OK | 554 channels, PRAGMA integrity_check = ok |
+| Crawler | ✅ OK | v51.0, 268 GOOD / 170 BAD / 116 in queue |
+| Tests | ✅ OK | 298 passed, 1 skipped, 1 xfail |
+| Imports | ✅ OK | conviction.py, ad_detection.py, backward compat |
+| Frontend | ✅ OK | Build 1.59s, 109 kB gzip |
+| Scanner | ✅ OK | @durov: 53/100, trust=0.77, verdict=MEDIUM |
 
 ### ✅ Completed (2026-01-30) — Code Audit
 **Коммиты:** `5d74b3ac` → `3978646` → `42f035a`
