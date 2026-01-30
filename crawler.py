@@ -48,6 +48,7 @@ import argparse
 from scanner.crawler import SmartCrawler
 from scanner.database import CrawlerDB
 from scanner.classifier import get_classifier
+from scanner.cli import scan_channel, print_result, save_to_database
 
 
 def print_banner():
@@ -245,6 +246,18 @@ def main():
     args = parser.parse_args()
 
     print_banner()
+
+    # Handle 'scan' subcommand: python crawler.py scan @channel
+    if args.channels and args.channels[0] == 'scan':
+        if len(args.channels) < 2:
+            print("Usage: python crawler.py scan @channel")
+            return
+        channel = args.channels[1].lstrip('@')
+        result = asyncio.run(scan_channel(channel))
+        if result:
+            print_result(result)
+            save_to_database(result)
+        return
 
     # v52.0: Пересчёт метрик
     if args.recalculate_local or args.recalculate_llm:
