@@ -29,8 +29,149 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
+from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+# =========================================================================
+# v82.0: Declarative Schema + Dynamic Field Handling
+# =========================================================================
+
+class ChannelStatus(str, Enum):
+    """Channel status enum for type safety."""
+    WAITING = "WAITING"
+    PROCESSING = "PROCESSING"
+    GOOD = "GOOD"
+    BAD = "BAD"
+    PRIVATE = "PRIVATE"
+    ERROR = "ERROR"
+
+
+# Score thresholds
+GOOD_SCORE_THRESHOLD = 60
+
+
+# Single source of truth: all channel columns
+# To add new field: add 1 line here, migration is automatic
+CHANNEL_SCHEMA = {
+    # Core fields (from CREATE TABLE)
+    'username': 'TEXT PRIMARY KEY',
+    'status': "TEXT DEFAULT 'WAITING'",
+    'score': 'INTEGER DEFAULT 0',
+    'verdict': "TEXT DEFAULT ''",
+    'trust_factor': 'REAL DEFAULT 1.0',
+    'members': 'INTEGER DEFAULT 0',
+    'found_via': "TEXT DEFAULT ''",
+    'ad_links': "TEXT DEFAULT '[]'",
+    'category': 'TEXT DEFAULT NULL',
+    'scanned_at': 'DATETIME',
+    'created_at': 'DATETIME DEFAULT CURRENT_TIMESTAMP',
+
+    # v18.0: Multi-label categories
+    'category_secondary': 'TEXT DEFAULT NULL',
+
+    # v19-20: Photo and category percent
+    'photo_url': 'TEXT DEFAULT NULL',
+    'category_percent': 'INTEGER DEFAULT 100',
+
+    # v21.0: Breakdown JSON
+    'breakdown_json': 'TEXT DEFAULT NULL',
+
+    # v22.0: Content storage for reclassification
+    'title': 'TEXT DEFAULT NULL',
+    'description': 'TEXT DEFAULT NULL',
+    'content_json': 'TEXT DEFAULT NULL',
+
+    # v56.0: Full scan data storage (30 columns)
+    'raw_score': 'INTEGER DEFAULT NULL',
+    'is_scam': 'INTEGER DEFAULT 0',
+    'scam_reason': 'TEXT DEFAULT NULL',
+    'tier': 'TEXT DEFAULT NULL',
+    'trust_penalties_json': 'TEXT DEFAULT NULL',
+    'conviction_score': 'INTEGER DEFAULT NULL',
+    'conviction_factors_json': 'TEXT DEFAULT NULL',
+    'forensics_json': 'TEXT DEFAULT NULL',
+    'online_count': 'INTEGER DEFAULT NULL',
+    'participants_count': 'INTEGER DEFAULT NULL',
+    'channel_age_days': 'INTEGER DEFAULT NULL',
+    'avg_views': 'REAL DEFAULT NULL',
+    'reach_percent': 'REAL DEFAULT NULL',
+    'forward_rate': 'REAL DEFAULT NULL',
+    'reaction_rate': 'REAL DEFAULT NULL',
+    'avg_comments': 'REAL DEFAULT NULL',
+    'comments_enabled': 'INTEGER DEFAULT 1',
+    'reactions_enabled': 'INTEGER DEFAULT 1',
+    'decay_ratio': 'REAL DEFAULT NULL',
+    'decay_zone': 'TEXT DEFAULT NULL',
+    'er_trend': 'REAL DEFAULT NULL',
+    'er_trend_status': 'TEXT DEFAULT NULL',
+    'ad_percentage': 'INTEGER DEFAULT NULL',
+    'bot_percentage': 'INTEGER DEFAULT NULL',
+    'comment_trust': 'INTEGER DEFAULT NULL',
+    'safety_json': 'TEXT DEFAULT NULL',
+    'posts_raw_json': 'TEXT DEFAULT NULL',
+    'user_ids_json': 'TEXT DEFAULT NULL',
+    'linked_chat_id': 'INTEGER DEFAULT NULL',
+    'linked_chat_title': 'TEXT DEFAULT NULL',
+
+    # v59.5: Priority for user requests
+    'priority': 'INTEGER DEFAULT 0',
+
+    # v52.0: Gzip-compressed texts for LLM recalculation
+    'posts_text_gz': 'BLOB DEFAULT NULL',
+    'comments_text_gz': 'BLOB DEFAULT NULL',
+
+    # v68.0: Channel avatar blob
+    'photo_blob': 'BLOB DEFAULT NULL',
+
+    # v69.0: Ad status and AI summary
+    'ad_status': 'INTEGER DEFAULT NULL',
+    'ai_summary': 'TEXT DEFAULT NULL',
+
+    # v81.0: Raw storage for full rescan
+    'raw_messages_gz': 'BLOB DEFAULT NULL',
+    'raw_users_gz': 'BLOB DEFAULT NULL',
+    'raw_chat_json': 'TEXT DEFAULT NULL',
+    'entities_json': 'TEXT DEFAULT NULL',
+    'media_stats_json': 'TEXT DEFAULT NULL',
+    'ad_contacts_json': 'TEXT DEFAULT NULL',
+}
+
+
+# Field name to DB column name mapping
+FIELD_TO_COLUMN = {
+    'breakdown': 'breakdown_json',
+    'trust_penalties': 'trust_penalties_json',
+    'conviction_factors': 'conviction_factors_json',
+    'forensics': 'forensics_json',
+    'safety': 'safety_json',
+    'posts_raw': 'posts_raw_json',
+    'user_ids': 'user_ids_json',
+}
+
+
+# Serializers for converting Python values to DB-compatible format
+FIELD_SERIALIZERS = {
+    # JSON serialization for dicts/lists
+    'breakdown': lambda v: json.dumps(v, ensure_ascii=False) if v else None,
+    'trust_penalties': lambda v: json.dumps(v, ensure_ascii=False) if v else None,
+    'conviction_factors': lambda v: json.dumps(v, ensure_ascii=False) if v else None,
+    'forensics': lambda v: json.dumps(v, ensure_ascii=False) if v else None,
+    'safety': lambda v: json.dumps(v, ensure_ascii=False) if v else None,
+    'posts_raw': lambda v: json.dumps(v, ensure_ascii=False) if v else None,
+    'user_ids': lambda v: json.dumps(v, ensure_ascii=False) if v else None,
+    'ad_links': lambda v: json.dumps(v or [], ensure_ascii=False),
+
+    # Bool to int conversion
+    'is_scam': lambda v: 1 if v else 0,
+    'comments_enabled': lambda v: 1 if v else 0,
+    'reactions_enabled': lambda v: 1 if v else 0,
+}
+
+
+# Fields that use COALESCE (preserve existing value if new is None)
+COALESCE_FIELDS = {'category', 'category_secondary'}
 
 
 @dataclass
@@ -140,38 +281,8 @@ class CrawlerDB:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_score ON channels(score)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_found_via ON channels(found_via)')
 
-        # v17.0: Миграция - добавляем колонку category если её нет
-        self._migrate_add_category()
-
-        # v18.0: Миграция - добавляем колонку category_secondary для multi-label
-        self._migrate_add_category_secondary()
-
-        # v19.0: Миграция - добавляем колонку photo_url для аватарок
-        self._migrate_add_photo_url()
-
-        # v21.0: Миграция - добавляем колонку breakdown_json для реальных метрик
-        self._migrate_add_breakdown()
-
-        # v22.0: Миграция - добавляем колонки для переклассификации
-        self._migrate_v22_content_storage()
-
-        # v56.0: Миграция - полное хранение данных сканирования (30 новых колонок)
-        self._migrate_v56_full_data()
-
-        # v59.5: Миграция - приоритет для пользовательских запросов
-        self._migrate_v59_priority()
-
-        # v52.0: Миграция - хранение текстов для пересчёта LLM
-        self._migrate_v52_texts()
-
-        # v68.0: Миграция - аватарка канала (BLOB для вечного кэша)
-        self._migrate_v68_photo_blob()
-
-        # v69.0: Миграция - ad_status и ai_summary
-        self._migrate_v69_ad_summary()
-
-        # v81.0: Миграция - расширенное хранение сырых данных
-        self._migrate_v81_raw_storage()
+        # v82.0: Universal auto-migration from CHANNEL_SCHEMA
+        self._auto_migrate()
 
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
@@ -222,6 +333,54 @@ class CrawlerDB:
         self._migrate_v59_username_triggers()
 
         self.conn.commit()
+
+    def _auto_migrate(self):
+        """
+        v82.0: Universal auto-migration from CHANNEL_SCHEMA.
+
+        Replaces 12 individual _migrate_* methods with single source of truth.
+        To add new column: just add 1 line to CHANNEL_SCHEMA dict.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(channels)")
+        existing = {row[1] for row in cursor.fetchall()}
+
+        added = []
+        for col_name, col_def in CHANNEL_SCHEMA.items():
+            if col_name in existing:
+                continue
+            # Skip PRIMARY KEY columns (can't add via ALTER TABLE)
+            if 'PRIMARY KEY' in col_def:
+                continue
+
+            try:
+                # Extract default clause
+                if 'DEFAULT' in col_def:
+                    sql = f"ALTER TABLE channels ADD COLUMN {col_name} {col_def}"
+                else:
+                    sql = f"ALTER TABLE channels ADD COLUMN {col_name} {col_def} DEFAULT NULL"
+                cursor.execute(sql)
+                added.append(col_name)
+            except sqlite3.OperationalError as e:
+                logger.debug(f"Auto-migrate {col_name}: {e}")
+
+        if added:
+            logger.info(f"Auto-migrated {len(added)} columns: {added[:5]}{'...' if len(added) > 5 else ''}")
+
+        # Normalize existing usernames to lowercase
+        cursor.execute('SELECT username FROM channels WHERE username != LOWER(username)')
+        non_lower = cursor.fetchall()
+        if non_lower:
+            for (uname,) in non_lower:
+                cursor.execute('UPDATE channels SET username = LOWER(username) WHERE username = ?', (uname,))
+            logger.info(f"Normalized {len(non_lower)} usernames to lowercase")
+
+        self.conn.commit()
+
+    # =========================================================================
+    # Legacy migration methods (deprecated, kept for reference)
+    # v82.0: All migrations now handled by _auto_migrate() + CHANNEL_SCHEMA
+    # =========================================================================
 
     def _migrate_add_category(self):
         """Миграция: добавляет колонку category в существующую таблицу."""
@@ -1164,6 +1323,94 @@ class CrawlerDB:
             WHERE LOWER(username) = ?
         ''', params + (datetime.now(), username))
         self.conn.commit()
+
+    def update_channel(self, username: str, **kwargs) -> bool:
+        """
+        v82.0: Universal channel update method with dynamic field handling.
+
+        Replaces 50+ parameter methods with flexible **kwargs interface.
+
+        Features:
+        - Accepts any valid channel field as kwarg
+        - Automatic JSON serialization via FIELD_SERIALIZERS
+        - Column name mapping via FIELD_TO_COLUMN
+        - COALESCE for category fields (preserves existing if None passed)
+        - Automatic scanned_at timestamp update
+
+        Args:
+            username: Channel username (normalized automatically)
+            **kwargs: Any channel fields to update
+
+        Returns:
+            True if channel was updated, False if not found
+
+        Examples:
+            # Simple update
+            db.update_channel('techcrunch', score=75, verdict='GOOD')
+
+            # With complex fields (auto-serialized to JSON)
+            db.update_channel('channel',
+                status='GOOD',
+                score=80,
+                breakdown={'cv_views': 0.85, 'reach': 0.72},
+                trust_penalties=[{'name': 'bot_wall', 'mult': 0.6}],
+                forensics={'id_clustering': 0.15}
+            )
+
+            # Pass dict from scanner result
+            db.update_channel('channel', **scan_result)
+        """
+        if not kwargs:
+            return False
+
+        username = username.lower().lstrip('@')
+
+        # Handle special combined breakdown field
+        # breakdown_json stores {breakdown, categories, llm_analysis} combined
+        if any(k in kwargs for k in ('breakdown', 'categories', 'llm_analysis')):
+            breakdown = kwargs.pop('breakdown', None)
+            categories = kwargs.pop('categories', None)
+            llm_analysis = kwargs.pop('llm_analysis', None)
+
+            if breakdown or categories or llm_analysis:
+                kwargs['breakdown_json'] = json.dumps({
+                    'breakdown': breakdown,
+                    'categories': categories,
+                    'llm_analysis': llm_analysis
+                }, ensure_ascii=False)
+
+        # Build SET clause and params
+        set_clauses = []
+        params = []
+
+        for field, value in kwargs.items():
+            # Apply serializer if exists
+            if field in FIELD_SERIALIZERS:
+                value = FIELD_SERIALIZERS[field](value)
+
+            # Map field name to column name
+            column = FIELD_TO_COLUMN.get(field, field)
+
+            # Use COALESCE for category fields
+            if field in COALESCE_FIELDS:
+                set_clauses.append(f"{column} = COALESCE(?, {column})")
+            else:
+                set_clauses.append(f"{column} = ?")
+
+            params.append(value)
+
+        # Always update scanned_at
+        set_clauses.append("scanned_at = datetime('now')")
+
+        # Build and execute query
+        sql = f"UPDATE channels SET {', '.join(set_clauses)} WHERE LOWER(username) = ?"
+        params.append(username)
+
+        cursor = self.conn.cursor()
+        cursor.execute(sql, params)
+        self.conn.commit()
+
+        return cursor.rowcount > 0
 
     def set_category(self, username: str, category: str, category_secondary: str = None, percent: int = 100):
         """

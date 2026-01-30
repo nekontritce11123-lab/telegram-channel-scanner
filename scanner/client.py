@@ -55,7 +55,97 @@ def get_client() -> Client:
         api_id=int(api_id),
         api_hash=api_hash,
         phone_number=phone,
+        sleep_threshold=120,  # v83.0: Auto-wait for FloodWait up to 2 minutes
     )
+
+
+# =========================================================================
+# v83.0: Session Pool for Multi-Account Support
+# =========================================================================
+
+class SessionPool:
+    """
+    Pool of Pyrogram clients for load distribution.
+
+    Currently uses 1 account, but designed for easy expansion to 3+.
+    To add more accounts:
+    1. Create session files: scanner_session_2, scanner_session_3
+    2. Add credentials to .env: API_ID_2, API_HASH_2, PHONE_2, etc.
+    3. Call SessionPool(count=3)
+    """
+
+    def __init__(self, count: int = 1):
+        """
+        Initialize session pool.
+
+        Args:
+            count: Number of sessions to create (default 1)
+        """
+        self.clients: list[Client] = []
+        self.index = 0
+        self.count = count
+
+        # Load credentials for each session
+        for i in range(count):
+            suffix = f"_{i+1}" if i > 0 else ""
+            api_id = os.getenv(f"API_ID{suffix}")
+            api_hash = os.getenv(f"API_HASH{suffix}")
+            phone = os.getenv(f"PHONE{suffix}")
+
+            if not api_id or not api_hash:
+                if i == 0:
+                    raise ValueError("API_ID and API_HASH required in .env")
+                else:
+                    logger.warning(f"Session {i+1} skipped: no credentials")
+                    continue
+
+            session_path = PROJECT_ROOT / f"scanner_session{suffix}"
+
+            client = Client(
+                name=str(session_path),
+                api_id=int(api_id),
+                api_hash=api_hash,
+                phone_number=phone,
+                sleep_threshold=120,
+            )
+            self.clients.append(client)
+
+        logger.info(f"SessionPool initialized with {len(self.clients)} client(s)")
+
+    def next(self) -> Client:
+        """Get next client in round-robin fashion."""
+        if not self.clients:
+            raise RuntimeError("No clients in pool")
+        client = self.clients[self.index]
+        self.index = (self.index + 1) % len(self.clients)
+        return client
+
+    async def start_all(self):
+        """Start all clients in the pool."""
+        for client in self.clients:
+            if not client.is_connected:
+                await client.start()
+
+    async def stop_all(self):
+        """Stop all clients in the pool."""
+        for client in self.clients:
+            if client.is_connected:
+                await client.stop()
+
+    def __len__(self) -> int:
+        return len(self.clients)
+
+
+# Global pool instance (lazy initialization)
+_session_pool: SessionPool | None = None
+
+
+def get_session_pool(count: int = 1) -> SessionPool:
+    """Get or create the global session pool."""
+    global _session_pool
+    if _session_pool is None:
+        _session_pool = SessionPool(count=count)
+    return _session_pool
 
 
 class RawMessageWrapper:
@@ -439,8 +529,8 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
         )
     )
 
-    # v15.2: Пауза между запросами для снижения риска FloodWait
-    await asyncio.sleep(0.5)
+    # v83.0: 1 second delay between API calls to avoid FloodWait
+    await asyncio.sleep(1.0)
 
     # v16.0: Создаём маппинг channel_id → username для репостов
     chats_map = {}
@@ -567,8 +657,8 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
         except RPCError as e:
             logger.debug(f"GetParticipants RPC error: {e}")
 
-    # v15.2: Пауза перед последним запросом
-    await asyncio.sleep(0.5)
+    # v83.0: 1 second delay between API calls to avoid FloodWait
+    await asyncio.sleep(1.0)
 
     # =========================================================================
     # ЗАПРОС 3: GetFullChannel - Ghost Protocol (online_count)
