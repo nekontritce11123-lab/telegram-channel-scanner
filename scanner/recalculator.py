@@ -20,7 +20,8 @@ from .scorer import (
     cv_to_points, reach_to_points, reaction_rate_to_points,
     forward_rate_to_points, age_to_points, regularity_to_points,
     stability_to_points, source_to_points, premium_to_points,
-    er_trend_to_points, RAW_WEIGHTS, CATEGORY_TOTALS
+    er_trend_to_points, RAW_WEIGHTS, CATEGORY_TOTALS,
+    calculate_floating_weights
 )
 from .json_compression import decompress_breakdown
 from .config import GOOD_THRESHOLD
@@ -66,6 +67,13 @@ def recalculate_score_from_breakdown(breakdown: dict, members: int = 0) -> tuple
             breakdown[key]['points'] = points
             breakdown[key]['max'] = max_pts
 
+    # Engagement flags (needed for floating weights)
+    comments_enabled = breakdown.get('comments_enabled', True)
+    reactions_enabled = breakdown.get('reactions_enabled', True)
+
+    # v76.0: Calculate floating weights based on comments/reactions availability
+    weights = calculate_floating_weights(comments_enabled, reactions_enabled)
+
     # Quality (42 балла)
     cv_views = get_value('cv_views')
     forward_rate = get_value('forward_rate')
@@ -76,7 +84,7 @@ def recalculate_score_from_breakdown(breakdown: dict, members: int = 0) -> tuple
 
     cv_pts = cv_to_points(cv_views, forward_rate)
     reach_pts = reach_to_points(reach, members)
-    forward_pts = forward_rate_to_points(forward_rate, members)
+    forward_pts = forward_rate_to_points(forward_rate, members, weights['forward_rate_max'])
     regularity_pts = regularity_to_points(posts_per_day)
 
     quality_score = cv_pts + reach_pts + forward_pts + regularity_pts
@@ -91,8 +99,6 @@ def recalculate_score_from_breakdown(breakdown: dict, members: int = 0) -> tuple
 
     # Engagement (38 баллов)
     comments_data = get_dict('comments')
-    comments_enabled = breakdown.get('comments_enabled', True)
-    reactions_enabled = breakdown.get('reactions_enabled', True)
 
     # comments - используем сохранённые points, т.к. логика сложная (floating weights)
     comments_pts = comments_data.get('points', 0)
@@ -101,7 +107,7 @@ def recalculate_score_from_breakdown(breakdown: dict, members: int = 0) -> tuple
     stability_data = get_dict('reaction_stability') or get_dict('stability')
     er_trend_data = get_dict('er_trend')
 
-    reaction_pts = reaction_rate_to_points(reaction_rate, members) if reactions_enabled else 0
+    reaction_pts = reaction_rate_to_points(reaction_rate, members, weights['reaction_rate_max']) if reactions_enabled else 0
     stability_pts = stability_to_points(stability_data)
     er_trend_pts = er_trend_to_points(er_trend_data)
 
@@ -142,6 +148,7 @@ def recalculate_score_from_breakdown(breakdown: dict, members: int = 0) -> tuple
 
     # Итоговый score
     raw_score = quality_score + engagement_score + reputation_score
+    raw_score = min(100, raw_score)  # Cap at 100
 
     # Categories для breakdown_json
     categories = {

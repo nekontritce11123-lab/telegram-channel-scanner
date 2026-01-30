@@ -155,18 +155,20 @@ def cv_to_points(cv: float, forward_rate: float = 0, max_pts: int = None) -> int
         max_pts = RAW_WEIGHTS['quality']['cv_views']  # 15
 
     if cv < 10:
-        return 0   # Слишком ровно - бот
-    if cv < 30:
-        return int(max_pts * 0.67)  # ~10
-    if cv < 60:
-        return max_pts  # 15 - отлично
-    if cv < 100:
-        return int(max_pts * 0.5)   # ~7 - подозрительно высоко
-
+        result = 0   # Слишком ровно - бот
+    elif cv < 30:
+        result = round(max_pts * 0.67)  # ~10
+    elif cv < 60:
+        result = max_pts  # 15 - отлично
+    elif cv < 100:
+        result = round(max_pts * 0.5)   # ~7 - подозрительно высоко
     # CV >= 100% - волновая накрутка или вирус
-    if forward_rate > 3.0:
-        return int(max_pts * 0.5)   # Viral Exception - спасаем
-    return 0  # Накрутка волнами
+    elif forward_rate > 3.0:
+        result = round(max_pts * 0.5)   # Viral Exception - спасаем
+    else:
+        result = 0  # Накрутка волнами
+
+    return min(result, max_pts)  # Safety guard
 
 
 def reach_to_points(reach: float, members: int = 0, max_pts: int = None) -> int:
@@ -193,20 +195,21 @@ def reach_to_points(reach: float, members: int = 0, max_pts: int = None) -> int:
         high_is_good = 60
 
     if reach > scam_threshold:
-        return 0  # Накрутка
+        result = 0  # Накрутка
+    elif reach > high_is_good:
+        result = round(max_pts * 0.5)  # 5
+    elif reach < 5:
+        result = 0  # Мёртвая аудитория
+    elif reach < 10:
+        result = round(max_pts * 0.4)  # 4
+    elif reach < 20:
+        result = round(max_pts * 0.6)  # 6
+    elif reach < 50:
+        result = round(max_pts * 0.8)  # 8
+    else:
+        result = max_pts  # 10
 
-    if reach > high_is_good:
-        return int(max_pts * 0.5)  # 5
-
-    if reach < 5:
-        return 0  # Мёртвая аудитория
-    if reach < 10:
-        return int(max_pts * 0.4)  # 4
-    if reach < 20:
-        return int(max_pts * 0.6)  # 6
-    if reach < 50:
-        return int(max_pts * 0.8)  # 8
-    return max_pts  # 10
+    return min(result, max_pts)  # Safety guard
 
 
 def reaction_rate_to_points(rate: float, members: int = 0, max_pts: int = None) -> int:
@@ -234,17 +237,19 @@ def reaction_rate_to_points(rate: float, members: int = 0, max_pts: int = None) 
         high_threshold = 5
 
     if rate > scam_threshold:
-        return 0  # Накрутка
+        result = 0  # Накрутка
+    elif rate > high_threshold:
+        result = round(max_pts * 0.3)  # Подозрительно много
+    elif rate < 0.3:
+        result = round(max_pts * 0.2)  # Мёртвая аудитория
+    elif rate < 1:
+        result = round(max_pts * 0.5)
+    elif rate < 3:
+        result = round(max_pts * 0.8)
+    else:
+        result = max_pts
 
-    if rate > high_threshold:
-        return int(max_pts * 0.3)  # Подозрительно много
-    if rate < 0.3:
-        return int(max_pts * 0.2)  # Мёртвая аудитория
-    if rate < 1:
-        return int(max_pts * 0.5)
-    if rate < 3:
-        return int(max_pts * 0.8)
-    return max_pts
+    return min(result, max_pts)  # Safety guard
 
 
 def decay_to_points(ratio: float, reaction_rate: float = 0, max_pts: int = None) -> tuple[int, dict]:
@@ -392,7 +397,7 @@ def source_to_points(max_share: float, repost_ratio: float = 1.0, max_pts: int =
     if max_share > 0.7:
         return 0  # Сателлит
     if max_share > 0.5:
-        return int(max_pts * 0.4)  # 2
+        return round(max_pts * 0.4)  # 2
     return max_pts
 
 
@@ -422,19 +427,21 @@ def forward_rate_to_points(rate: float, members: int = 0, max_pts: int = None) -
         thresholds = {'viral': 3.0, 'excellent': 1.5, 'good': 0.5, 'medium': 0.1}
 
     if rate > 15:
-        return 0  # Накрутка
+        result = 0  # Накрутка
+    elif rate >= thresholds['viral']:
+        result = max_pts
+    elif rate >= thresholds['excellent']:
+        result = round(max_pts * 0.8)
+    elif rate >= thresholds['good']:
+        result = round(max_pts * 0.6)
+    elif rate >= thresholds['medium']:
+        result = round(max_pts * 0.3)
+    elif rate >= 0.05:
+        result = round(max_pts * 0.15)
+    else:
+        result = 0
 
-    if rate >= thresholds['viral']:
-        return max_pts
-    if rate >= thresholds['excellent']:
-        return int(max_pts * 0.8)
-    if rate >= thresholds['good']:
-        return int(max_pts * 0.6)
-    if rate >= thresholds['medium']:
-        return int(max_pts * 0.3)
-    if rate >= 0.05:
-        return int(max_pts * 0.15)
-    return 0
+    return min(result, max_pts)  # Safety guard
 
 
 def age_to_points(age_days: int, max_pts: int = None) -> int:
@@ -472,16 +479,16 @@ def regularity_to_points(posts_per_day: float, max_pts: int = None) -> int:
     if posts_per_day < 0.14:      # < 1 в неделю
         return 0                   # Мёртвый канал
     if posts_per_day < 0.5:       # 3-4 в неделю
-        return int(max_pts * 0.4)  # 3 балла
+        return round(max_pts * 0.4)  # 3 балла
     if posts_per_day < 1.0:       # почти каждый день
-        return int(max_pts * 0.7)  # 5 баллов
+        return round(max_pts * 0.7)  # 5 баллов
     if posts_per_day <= 5.0:      # 1-5 в день = ИДЕАЛ
         return max_pts             # 7 баллов
     if posts_per_day <= 10.0:     # 5-10 в день
-        return int(max_pts * 0.7)  # 5 баллов
+        return round(max_pts * 0.7)  # 5 баллов
     if posts_per_day <= 20.0:     # 10-20 в день
-        return int(max_pts * 0.4)  # 3 балла
-    return int(max_pts * 0.15)    # >20 = спам, 1 балл
+        return round(max_pts * 0.4)  # 3 балла
+    return round(max_pts * 0.15)    # >20 = спам, 1 балл
 
 
 def er_trend_to_points(er_trend_data: dict, max_pts: int = None) -> int:
@@ -498,7 +505,7 @@ def er_trend_to_points(er_trend_data: dict, max_pts: int = None) -> int:
     # trend = er_trend_data.get('er_trend', 1.0)  # Not used directly, status is derived from it
 
     if status == 'insufficient_data':
-        return int(max_pts * 0.5)  # 5 баллов (недостаточно данных)
+        return round(max_pts * 0.5)  # 5 баллов (недостаточно данных)
 
     if status == 'always_dead':
         return 0                    # Всегда мёртвый
@@ -507,10 +514,10 @@ def er_trend_to_points(er_trend_data: dict, max_pts: int = None) -> int:
         return max_pts              # 10 баллов
 
     if status == 'stable':          # 0.9 <= trend < 1.1
-        return int(max_pts * 0.7)   # 7 баллов
+        return round(max_pts * 0.7)   # 7 баллов
 
     if status == 'declining':       # 0.7 <= trend < 0.9
-        return int(max_pts * 0.3)   # 3 балла
+        return round(max_pts * 0.3)   # 3 балла
 
     # status == 'dying' (trend < 0.7)
     return 0                        # Канал умирает
@@ -961,9 +968,9 @@ def premium_to_points(premium_ratio: float, premium_count: int, max_pts: int = N
     if premium_ratio > 0.05:
         return max_pts  # >5% премиумов = отлично
     if premium_ratio > 0.02:
-        return int(max_pts * 0.6)  # 3
+        return round(max_pts * 0.6)  # 3
     if premium_ratio > 0.01:
-        return int(max_pts * 0.4)  # 2
+        return round(max_pts * 0.4)  # 2
     return 1  # Есть хоть какие-то премиумы
 
 
@@ -1035,36 +1042,37 @@ def comments_to_points(comments_data: dict, members: int = 0, max_pts: int = 10)
         if avg < 0.01:
             pts = 0
         elif avg < 0.05:
-            pts = int(max_pts * 0.3)  # 3
+            pts = round(max_pts * 0.3)  # 3
         elif avg < 0.2:
-            pts = int(max_pts * 0.6)  # 6
+            pts = round(max_pts * 0.6)  # 6
         elif avg < 0.5:
-            pts = int(max_pts * 0.8)  # 8
+            pts = round(max_pts * 0.8)  # 8
         else:
             pts = max_pts  # 10
     elif members < SIZE_THRESHOLDS['small']:
         if avg < 0.1:
             pts = 0
         elif avg < 0.3:
-            pts = int(max_pts * 0.2)  # 2
+            pts = round(max_pts * 0.2)  # 2
         elif avg < 1:
-            pts = int(max_pts * 0.5)  # 5
+            pts = round(max_pts * 0.5)  # 5
         elif avg < 3:
-            pts = int(max_pts * 0.8)  # 8
+            pts = round(max_pts * 0.8)  # 8
         else:
             pts = max_pts  # 10
     else:
         if avg < 0.3:
             pts = 0
         elif avg < 0.5:
-            pts = int(max_pts * 0.2)  # 2
+            pts = round(max_pts * 0.2)  # 2
         elif avg < 2:
-            pts = int(max_pts * 0.5)  # 5
+            pts = round(max_pts * 0.5)  # 5
         elif avg < 5:
-            pts = int(max_pts * 0.8)  # 8
+            pts = round(max_pts * 0.8)  # 8
         else:
             pts = max_pts  # 10
 
+    pts = min(pts, max_pts)  # Safety guard
     status = f"enabled (avg {avg:.1f})"
     return pts, status
 
@@ -1215,9 +1223,12 @@ def calculate_final_score(
         'max': WEIGHTS['quality']['reach']
     }
 
+    # v52.1: Determine category BEFORE first posting_data call (fix race condition)
+    channel_category = getattr(chat, 'category', None)
+    is_news = channel_category == 'NEWS' if channel_category else False
+
     # 1.3 Regularity (max 7) — v48.0: NEW! Стабильность постинга
-    # Используем is_news=False, реальное значение определится позже
-    posting_data = calculate_posts_per_day(messages, is_news=False)
+    posting_data = calculate_posts_per_day(messages, is_news=is_news)
     regularity_pts = regularity_to_points(posting_data['posts_per_day'])
     quality_score += regularity_pts
     breakdown['regularity'] = {
@@ -1423,12 +1434,8 @@ def calculate_final_score(
     # v15.0: NEW METRICS - Spam Posting + Private Links
     # =========================================================================
 
-    # Определяем категорию канала (если есть)
-    channel_category = getattr(chat, 'category', None)
-
-    # Posting frequency: NEWS каналы имеют выше пороги
-    is_news = channel_category == 'NEWS' if channel_category else False
-    posting_data = calculate_posts_per_day(messages, is_news=is_news)
+    # Posting frequency: reuse posting_data from regularity calculation (v52.1)
+    # channel_category and is_news already determined above
 
     # Private links: анализируем % приватных ссылок в рекламе
     private_data = analyze_private_invites(

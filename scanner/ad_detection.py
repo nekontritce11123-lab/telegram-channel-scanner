@@ -5,6 +5,8 @@ Extracted from metrics.py - Private links detection
 import re
 from typing import Any
 
+from .scorer_constants import TrustMultipliers
+
 
 def analyze_private_invites(messages: list, category: str = None, comments_enabled: bool = True) -> dict:
     """
@@ -57,21 +59,21 @@ def analyze_private_invites(messages: list, category: str = None, comments_enabl
 
     # Базовый штраф по проценту
     if private_ratio >= 1.0:
-        trust_mult = 0.25  # 100% приватных
+        trust_mult = TrustMultipliers.PRIVATE_100  # 0.25
     elif private_ratio > 0.8:
-        trust_mult = 0.35  # >80%
+        trust_mult = TrustMultipliers.PRIVATE_80   # 0.35
     elif private_ratio > 0.6:
-        trust_mult = 0.50  # >60%
+        trust_mult = TrustMultipliers.PRIVATE_60   # 0.50
     else:
-        trust_mult = 1.0   # норма
+        trust_mult = 1.0
 
     # Комбо: CRYPTO + много приватных
     if category == 'CRYPTO' and private_ratio > 0.4:
-        trust_mult = min(trust_mult, 0.45)
+        trust_mult = min(trust_mult, TrustMultipliers.PRIVATE_CRYPTO_COMBO)  # 0.45
 
     # Комбо: приватные + комменты выключены
     if not comments_enabled and private_ratio > 0.5:
-        trust_mult = min(trust_mult, 0.40)
+        trust_mult = min(trust_mult, TrustMultipliers.PRIVATE_HIDDEN_COMBO)  # 0.40
 
     return {
         'private_ratio': round(private_ratio, 2),

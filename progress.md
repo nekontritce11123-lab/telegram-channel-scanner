@@ -29,8 +29,8 @@
 - `cd mini-app/deploy && python deploy_backend.py` — деплой бэка
 
 ## 🚧 Current Session Status
-- **Focus:** Post-Audit Deploy
-- **Current Step:** ✅ Деплой завершён
+- **Focus:** Metrics Audit Complete
+- **Current Step:** ✅ Все метрики исправлены
 - **Blockers:** Нет
 
 ## 📋 Roadmap & Tasks
@@ -40,9 +40,32 @@
 
 ### ⏳ Backlog
 - [x] Протестировать Memory Bank при новой сессии ✅ (контекст восстановлен)
-- [ ] Продолжить вынос хардкода в scorer_constants.py
+- [x] Продолжить вынос хардкода в scorer_constants.py ✅ (v76.0)
 - [ ] Добавить TypedDict для dict returns в forensics.py
 - [ ] Extract score_converters.py из scorer.py
+
+### ✅ Completed (2026-01-30) — Metrics Audit v76.0
+**8 агентов параллельно исправили все метрики:**
+
+| Фаза | Файл | Изменения |
+|------|------|-----------|
+| 1 | scorer.py | +5 safety guards `min(result, max_pts)` |
+| 2 | recalculator.py | +floating weights, +cap at 100 |
+| 3a | metrics.py | +TrustMultipliers (3 константы) |
+| 3b | ad_detection.py | +TrustMultipliers (5 констант) |
+| 4 | scorer.py | Удалён race condition (1 вызов вместо 2) |
+| 5 | scorer.py | **35 изменений** int() → round() |
+| 6 | App.tsx | +tooltip `raw × trust = final` |
+| 7 | tests/ | 298 passed, 0 failed |
+
+**Исправленные баги:**
+- [x] raw_score > 100 — добавлены safety guards
+- [x] recalculator без floating weights — исправлено
+- [x] TrustMultipliers orphaned — теперь используются
+- [x] int() несправедливое округление → round()
+- [x] posting_data race condition — унифицировано
+
+**Верификация:** @durov: 71 raw × 0.85 trust = 60 GOOD ✅
 
 ### ✅ Completed (2026-01-30) — Production Deploy
 - [x] Frontend: https://ads.factchain-traker.online (200 OK)

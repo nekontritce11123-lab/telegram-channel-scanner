@@ -870,7 +870,14 @@ function App() {
                 </div>
               </div>
               {/* v53.1: Score + Price column */}
-              <div className={styles.unifiedScore}>
+              {/* v76.0: Added tooltip showing score formula */}
+              <div
+                className={styles.unifiedScore}
+                title={selectedChannel.trust_factor && selectedChannel.trust_factor < 1
+                  ? `${Math.round(selectedChannel.score / selectedChannel.trust_factor)} × ${selectedChannel.trust_factor.toFixed(2)} = ${selectedChannel.score}`
+                  : `Score: ${selectedChannel.score}`
+                }
+              >
                 <ScoreRing
                   score={selectedChannel.score}
                   verdict={selectedChannel.verdict}

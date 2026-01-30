@@ -9,6 +9,7 @@ from collections import Counter
 from typing import Any
 
 from scanner.config import SIZE_THRESHOLDS
+from scanner.scorer_constants import TrustMultipliers
 from scanner.shared_utils import (
     get_reaction_emoji as _get_reaction_emoji,
     iterate_reactions_with_emoji,
@@ -205,13 +206,13 @@ def calculate_posts_per_day(messages: list, is_news: bool = False) -> dict:
         trust_mult = 1.0
     elif posts_per_day < thresholds[1]:
         status = 'active'
-        trust_mult = 0.90
+        trust_mult = TrustMultipliers.SPAM_POSTING_ACTIVE  # 0.90
     elif posts_per_day < thresholds[2]:
         status = 'heavy'
-        trust_mult = 0.75
+        trust_mult = TrustMultipliers.SPAM_POSTING_HEAVY   # 0.75
     else:
         status = 'spam'
-        trust_mult = 0.55
+        trust_mult = TrustMultipliers.SPAM_POSTING_SPAM    # 0.55
 
     return {
         'posts_per_day': round(posts_per_day, 1),
