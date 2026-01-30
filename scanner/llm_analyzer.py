@@ -1,5 +1,5 @@
 """
-LLM Анализатор каналов v47.0 (Grandmaster Edition)
+LLM Анализатор каналов v78.0 (Grandmaster Edition)
 
 Три модуля:
 1. AdAnalyzer — % рекламных постов (контекстный анализ через LLM)
@@ -292,16 +292,16 @@ class LLMAnalysisResult:
                 ad_mult = 0.35     # >70% — спам (-65%)
         self._ad_mult = ad_mult
 
-        # --- Bot Multiplier (v68.1: порог с 30%, не 15%) ---
+        # --- Bot Multiplier (v78.0: порог с 40%, не 30%) ---
         bot_mult = 1.0
         if self.comments and self.comments.bot_percentage is not None:
             bot_pct = self.comments.bot_percentage
-            if bot_pct <= 30:
-                bot_mult = 1.0  # v68.1: до 30% ботов — норма
+            if bot_pct <= 40:
+                bot_mult = 1.0  # v78.0: до 40% ботов — норма (слабая модерация)
             else:
-                # Линейный штраф от 30% до 100%
-                # 30% = 1.0, 50% = 0.8, 70% = 0.6, 100% = 0.3
-                penalty = (bot_pct - 30) / 100.0
+                # Линейный штраф от 40% до 100%
+                # 40% = 1.0, 60% = 0.8, 80% = 0.6, 100% = 0.4
+                penalty = (bot_pct - 40) / 100.0
                 bot_mult = max(0.3, 1.0 - penalty)
         self._comment_mult = bot_mult
 

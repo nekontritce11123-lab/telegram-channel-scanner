@@ -1,10 +1,10 @@
 """
-recalc_trust.py - Пересчёт trust_factor по новым формулам v68.1
+recalc_trust.py - Пересчёт trust_factor по новым формулам v78.0
 
 Без обращения к Telegram API - использует данные из БД.
 
-Изменения v68.1:
-- Порог бот-штрафа: 15% -> 30%
+Изменения v78.0:
+- Порог бот-штрафа: 30% -> 40% (слабая модерация — норма)
 - Штрафы перемножаются (не min)
 - trust_factor = forensic × llm
 """
@@ -14,12 +14,12 @@ import sqlite3
 import sys
 
 
-def calculate_bot_mult_v68(bot_pct: int) -> float:
-    """v68.1: Порог 30%, не 15%."""
-    if bot_pct is None or bot_pct <= 30:
+def calculate_bot_mult_v78(bot_pct: int) -> float:
+    """v78.0: Порог 40% (слабая модерация — норма)."""
+    if bot_pct is None or bot_pct <= 40:
         return 1.0
-    # Линейный штраф от 30% до 100%
-    penalty = (bot_pct - 30) / 100.0
+    # Линейный штраф от 40% до 100%
+    penalty = (bot_pct - 40) / 100.0
     return max(0.3, 1.0 - penalty)
 
 
@@ -106,7 +106,7 @@ def recalc_trust():
                 pass
 
         # Рассчитываем новые множители
-        bot_mult = calculate_bot_mult_v68(bot_pct)
+        bot_mult = calculate_bot_mult_v78(bot_pct)
         ad_mult = calculate_ad_mult(ad_pct)
         premium_mult = calculate_premium_mult(premium_ratio, users_analyzed)
 

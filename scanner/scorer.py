@@ -1228,7 +1228,7 @@ def calculate_final_score(
     is_news = channel_category == 'NEWS' if channel_category else False
 
     # 1.3 Regularity (max 7) — v48.0: NEW! Стабильность постинга
-    posting_data = calculate_posts_per_day(messages, is_news=is_news)
+    posting_data = calculate_posts_per_day(messages, category=channel_category)
     regularity_pts = regularity_to_points(posting_data['posts_per_day'])
     quality_score += regularity_pts
     breakdown['regularity'] = {

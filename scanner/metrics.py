@@ -9,7 +9,7 @@ from collections import Counter
 from typing import Any
 
 from scanner.config import SIZE_THRESHOLDS
-from scanner.scorer_constants import TrustMultipliers
+from scanner.scorer_constants import TrustMultipliers, SpamPostingTiers
 from scanner.shared_utils import (
     get_reaction_emoji as _get_reaction_emoji,
     iterate_reactions_with_emoji,
@@ -165,9 +165,11 @@ def calculate_post_regularity(messages: list) -> float:
     return std_interval / mean_interval
 
 
-def calculate_posts_per_day(messages: list, is_news: bool = False) -> dict:
+def calculate_posts_per_day(messages: list, category: str = None, is_news: bool = None) -> dict:
     """
     Рассчитывает частоту постинга.
+
+    v78.0: Category-specific thresholds via SpamPostingTiers.
 
     Пороги (обычный канал):
     - < 6/day = normal (×1.0)
@@ -187,18 +189,23 @@ def calculate_posts_per_day(messages: list, is_news: bool = False) -> dict:
             'posts_per_day': 0,
             'total_days': 0,
             'posting_status': 'insufficient_data',
-            'trust_multiplier': 1.0
+            'trust_multiplier': 1.0,
+            'category_tier': category
         }
 
     total_seconds = (sorted_msgs[-1].date - sorted_msgs[0].date).total_seconds()
     total_days = max(total_seconds / 86400, 0.1)
     posts_per_day = len(sorted_msgs) / total_days
 
-    # Пороги для NEWS выше
-    if is_news:
-        thresholds = (20, 40, 60)
-    else:
-        thresholds = (6, 12, 20)
+    # v78.0: Category-specific thresholds
+    # Backward compatibility: is_news=True → category='NEWS'
+    if is_news is True and category is None:
+        category = 'NEWS'
+
+    thresholds = SpamPostingTiers.CATEGORY_TIERS.get(
+        category,
+        SpamPostingTiers.DEFAULT
+    )
 
     # Статус и множитель
     if posts_per_day < thresholds[0]:
@@ -218,7 +225,8 @@ def calculate_posts_per_day(messages: list, is_news: bool = False) -> dict:
         'posts_per_day': round(posts_per_day, 1),
         'total_days': round(total_days, 1),
         'posting_status': status,
-        'trust_multiplier': trust_mult
+        'trust_multiplier': trust_mult,
+        'category_tier': category  # v78.0: для отладки
     }
 
 

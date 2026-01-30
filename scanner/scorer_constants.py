@@ -1,5 +1,5 @@
 """
-Scoring algorithm constants. v68.1
+Scoring algorithm constants. v78.0
 
 Centralized constants extracted from scorer.py for maintainability.
 All thresholds, multipliers, and scoring boundaries in one place.
@@ -424,3 +424,38 @@ class PointMultipliers:
     VERY_LOW = 0.3
     MINIMAL = 0.2
     TINY = 0.15
+
+
+class SpamPostingTiers:
+    """
+    Category-specific posting thresholds. v78.0
+
+    Tiers based on natural posting frequency per category.
+    Thresholds: (active, heavy, spam) posts per day.
+    """
+
+    HIGH_FREQUENCY = (20, 40, 60)    # NEWS, ADULT
+    MEDIUM_FREQUENCY = (10, 18, 30)  # ENTERTAINMENT, AI_ML, FINANCE, EDUCATION
+    LOW_FREQUENCY = (6, 12, 20)      # CRYPTO, LIFESTYLE, BUSINESS, TECH, HEALTH
+    MINIMAL = (4, 8, 15)             # RETAIL, TRAVEL, REAL_ESTATE, BEAUTY, GAMBLING
+
+    CATEGORY_TIERS = {
+        'NEWS': HIGH_FREQUENCY,
+        'ADULT': HIGH_FREQUENCY,
+        'ENTERTAINMENT': MEDIUM_FREQUENCY,
+        'AI_ML': MEDIUM_FREQUENCY,
+        'FINANCE': MEDIUM_FREQUENCY,
+        'EDUCATION': MEDIUM_FREQUENCY,
+        'CRYPTO': LOW_FREQUENCY,
+        'LIFESTYLE': LOW_FREQUENCY,
+        'BUSINESS': LOW_FREQUENCY,
+        'TECH': LOW_FREQUENCY,
+        'HEALTH': LOW_FREQUENCY,
+        'RETAIL': MINIMAL,
+        'TRAVEL': MINIMAL,
+        'REAL_ESTATE': MINIMAL,
+        'BEAUTY': MINIMAL,
+        'GAMBLING': MINIMAL,
+    }
+
+    DEFAULT = LOW_FREQUENCY
