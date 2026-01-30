@@ -1076,14 +1076,13 @@ function App() {
               onKeyDown={handleKeyDown}
             />
             {(scanning || submitting) && <span className={styles.searchSpinner}>{submitting ? 'Очередь...' : '...'}</span>}
-            {searchQuery && !scanning && !submitting && (
-              <button
-                className={styles.clearButton}
-                onClick={() => setSearchQuery('')}
-              >
-                ×
-              </button>
-            )}
+            <button
+              className={styles.clearButton}
+              onClick={() => setSearchQuery('')}
+              style={{ visibility: searchQuery && !scanning && !submitting ? 'visible' : 'hidden' }}
+            >
+              ×
+            </button>
           </div>
           {/* Filter button */}
           <button

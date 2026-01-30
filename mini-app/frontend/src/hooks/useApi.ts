@@ -438,31 +438,103 @@ export function useHistory() {
 
 // ============================================================================
 // v49.0: WATCHLIST HOOK
+// v76.0: API sync when authenticated, localStorage fallback
 // ============================================================================
 
 const WATCHLIST_KEY = 'reklamshik_watchlist'
 const MAX_WATCHLIST = 100
 
+// API functions for favorites
+async function fetchFavoritesApi(): Promise<StoredChannel[]> {
+  const initData = getInitData()
+  if (!initData) return []
+
+  try {
+    const res = await fetch(`${API_BASE}/api/favorites`, {
+      headers: { 'X-Telegram-Init-Data': initData }
+    })
+    if (!res.ok) return []
+    const data = await res.json()
+    return data.favorites || []
+  } catch {
+    return []
+  }
+}
+
+async function addFavoriteApi(channel: StoredChannel): Promise<boolean> {
+  const initData = getInitData()
+  if (!initData) return false
+
+  try {
+    const res = await fetch(`${API_BASE}/api/favorites`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Telegram-Init-Data': initData
+      },
+      body: JSON.stringify(channel)
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+async function removeFavoriteApi(username: string): Promise<boolean> {
+  const initData = getInitData()
+  if (!initData) return false
+
+  try {
+    const res = await fetch(`${API_BASE}/api/favorites/${username}`, {
+      method: 'DELETE',
+      headers: { 'X-Telegram-Init-Data': initData }
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export function useWatchlist() {
   const [watchlist, setWatchlist] = useState<StoredChannel[]>([])
+  const [loading, setLoading] = useState(false)
+  const isAuthenticated = Boolean(getInitData())
 
-  // Load from localStorage on mount
+  // Load from API (authenticated) or localStorage (fallback) on mount
   useEffect(() => {
-    const stored = localStorage.getItem(WATCHLIST_KEY)
-    if (stored) {
-      try {
-        setWatchlist(JSON.parse(stored))
-      } catch {
-        setWatchlist([])
+    const loadWatchlist = async () => {
+      // First, load from localStorage for instant display (offline-first)
+      const stored = localStorage.getItem(WATCHLIST_KEY)
+      if (stored) {
+        try {
+          setWatchlist(JSON.parse(stored))
+        } catch {
+          setWatchlist([])
+        }
+      }
+
+      // If authenticated, sync from API
+      if (isAuthenticated) {
+        setLoading(true)
+        const apiFavorites = await fetchFavoritesApi()
+        if (apiFavorites.length > 0) {
+          setWatchlist(apiFavorites)
+          // Update localStorage cache
+          localStorage.setItem(WATCHLIST_KEY, JSON.stringify(apiFavorites))
+        }
+        setLoading(false)
       }
     }
-  }, [])
+
+    loadWatchlist()
+  }, [isAuthenticated])
 
   const isInWatchlist = useCallback((username: string) => {
     return watchlist.some(c => c.username === username)
   }, [watchlist])
 
   const addToWatchlist = useCallback((channel: Channel | ChannelDetail | StoredChannel) => {
+    // Optimistic update
     setWatchlist(prev => {
       // Don't add if already exists
       if (prev.some(c => c.username === channel.username)) {
@@ -480,24 +552,37 @@ export function useWatchlist() {
 
       const updated = [newItem, ...prev].slice(0, MAX_WATCHLIST)
       localStorage.setItem(WATCHLIST_KEY, JSON.stringify(updated))
+
+      // Sync to API in background (fire and forget)
+      if (isAuthenticated) {
+        addFavoriteApi(newItem)
+      }
+
       return updated
     })
-  }, [])
+  }, [isAuthenticated])
 
   const removeFromWatchlist = useCallback((username: string) => {
     setWatchlist(prev => {
       const updated = prev.filter(c => c.username !== username)
       localStorage.setItem(WATCHLIST_KEY, JSON.stringify(updated))
+
+      // Sync to API in background (fire and forget)
+      if (isAuthenticated) {
+        removeFavoriteApi(username)
+      }
+
       return updated
     })
-  }, [])
+  }, [isAuthenticated])
 
   const clearWatchlist = useCallback(() => {
     localStorage.removeItem(WATCHLIST_KEY)
     setWatchlist([])
+    // Note: No API endpoint for clearing all favorites - would need to remove each
   }, [])
 
-  return { watchlist, isInWatchlist, addToWatchlist, removeFromWatchlist, clearWatchlist }
+  return { watchlist, loading, isInWatchlist, addToWatchlist, removeFromWatchlist, clearWatchlist }
 }
 
 

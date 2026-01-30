@@ -25,11 +25,11 @@
 - `python run.py @channel` — сканировать один канал
 - `python crawler.py` — запустить краулер
 - `python crawler.py --stats` — статистика краулера
-- `cd mini-app/deploy && python deploy_frontend.py` — деплой фронта
-- `cd mini-app/deploy && python deploy_backend.py` — деплой бэка
+- `cd mini-app && python -m deploy deploy all` — деплой всего (v81.0)
+- `cd mini-app && python -m deploy --dry-run deploy all` — превью деплоя
 
 ## 🚧 Current Session Status
-- **Focus:** v80.0 Smart Rescan System
+- **Focus:** v81.0 Multi-Feature Release
 - **Current Step:** ✅ Completed
 - **Blockers:** Нет
 
@@ -37,6 +37,54 @@
 
 ### 🔄 In Progress
 - Нет активных задач
+
+### ✅ Completed (2026-01-30) — v81.0 Multi-Feature Release
+
+**5 больших задач выполнено:**
+
+| # | Задача | Тесты | Статус |
+|---|--------|-------|--------|
+| 1 | UI Fix: Visibility toggle для X кнопки | Manual | ✅ |
+| 2 | Favorites: user_id binding + API | 16 | ✅ |
+| 3 | Deploy: Unified CLI | Dry-run | ✅ |
+| 4 | Raw Data Storage: Extended columns + wrappers | 15 | ✅ |
+| 5 | Ad Contacts: Extraction function | 15 | ✅ |
+
+**Task 1: UI Fix**
+- Файл: `mini-app/frontend/src/App.tsx:1079-1085`
+- Изменение: `visibility: hidden` вместо conditional render
+- Результат: Иконки не сдвигаются при появлении/скрытии X
+
+**Task 2: Favorites System**
+- Новая таблица: `user_favorites` (scanner/database.py)
+- API endpoints: GET/POST/DELETE `/api/favorites`
+- Frontend: `useWatchlist` hook с API sync
+- Тесты: 16 тестов в `tests/test_favorites_api.py`
+
+**Task 3: Unified Deploy**
+```bash
+python -m deploy deploy frontend    # Только фронтенд
+python -m deploy deploy backend     # Только бэкенд
+python -m deploy deploy all         # Оба параллельно
+python -m deploy --dry-run deploy all  # Preview
+```
+- Структура: `mini-app/deploy/` (config.py, cli.py, deployers/, utils/)
+- Классы: BaseDeployer, FrontendDeployer, BackendDeployer
+- SSH: SSHConnection с context manager
+
+**Task 4: Raw Data Storage**
+- Новые колонки: raw_messages_gz, raw_users_gz, raw_chat_json, entities_json, media_stats_json, ad_contacts_json
+- RawMessageWrapper extended: raw_entities, media_type, buttons, full_text
+- Тесты: 15 тестов в `tests/test_raw_data_storage.py`
+- NOTE: Интеграция с CrawlerDB.claim_and_complete() отложена на v81.1
+
+**Task 5: Ad Contacts**
+- Функция: `extract_ad_contacts()` в scanner/ad_detector.py
+- Извлекает: @username, t.me/link, telegram.me/link
+- Confidence scoring: 80 рядом с ad keywords, 30 иначе
+- Тесты: 15 тестов в `tests/test_ad_contacts.py`
+
+**Итого тестов:** 411 passed, 13 skipped
 
 ### ✅ Completed (2026-01-30) — v80.0 Smart Rescan System
 

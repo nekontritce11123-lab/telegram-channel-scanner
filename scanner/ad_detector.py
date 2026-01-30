@@ -255,3 +255,91 @@ def get_ad_status_label(status: int) -> str:
         0: "Нельзя",
     }
     return labels.get(status, "Неизвестно")
+
+
+# =============================================================================
+# ИЗВЛЕЧЕНИЕ КОНТАКТОВ ДЛЯ РЕКЛАМЫ
+# =============================================================================
+
+AD_KEYWORDS = ['реклама', 'pr', 'сотрудничество', 'менеджер', 'размещение', 'прайс', 'продвижение', 'партнер', 'реклам']
+
+
+def extract_ad_contacts(
+    description: str,
+    posts: list = None,
+    channel_username: str = None
+) -> list:
+    """
+    Extract advertising contacts from channel description and posts.
+
+    Args:
+        description: Channel description text
+        posts: Optional list of post texts to also scan
+        channel_username: Channel's own username to exclude
+
+    Returns:
+        List of contact dicts: [{'contact': '@username', 'type': 'telegram', 'source': 'description', 'confidence': 80}]
+    """
+    if not description:
+        return []
+
+    contacts = []
+    seen = set()
+
+    # Normalize channel username for comparison
+    own_username = channel_username.lower().lstrip('@') if channel_username else None
+
+    # Extract @username mentions
+    for match in re.finditer(r'@([a-zA-Z][a-zA-Z0-9_]{3,31})', description):
+        username = match.group(1).lower()
+
+        # Skip own username
+        if own_username and username == own_username:
+            continue
+
+        # Skip if already seen
+        if username in seen:
+            continue
+        seen.add(username)
+
+        # Check if near ad keyword for confidence scoring
+        start = max(0, match.start() - 50)
+        end = min(len(description), match.end() + 50)
+        context = description[start:end].lower()
+        has_keyword = any(kw in context for kw in AD_KEYWORDS)
+
+        # Detect bot contacts
+        contact_type = 'bot' if username.endswith('bot') else 'telegram'
+
+        contacts.append({
+            'contact': f'@{username}',
+            'type': contact_type,
+            'source': 'description',
+            'confidence': 80 if has_keyword else 30
+        })
+
+    # Extract t.me/username links
+    for match in re.finditer(r't(?:elegram)?\.me/([a-zA-Z][a-zA-Z0-9_]{3,31})', description, re.IGNORECASE):
+        username = match.group(1).lower()
+
+        if own_username and username == own_username:
+            continue
+        if username in seen:
+            continue
+        seen.add(username)
+
+        start = max(0, match.start() - 50)
+        end = min(len(description), match.end() + 50)
+        context = description[start:end].lower()
+        has_keyword = any(kw in context for kw in AD_KEYWORDS)
+
+        contact_type = 'bot' if username.endswith('bot') else 'telegram_link'
+
+        contacts.append({
+            'contact': f't.me/{username}',
+            'type': contact_type,
+            'source': 'description',
+            'confidence': 70 if has_keyword else 25
+        })
+
+    return contacts

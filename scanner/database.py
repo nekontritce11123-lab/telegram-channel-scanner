@@ -170,6 +170,9 @@ class CrawlerDB:
         # v69.0: Миграция - ad_status и ai_summary
         self._migrate_v69_ad_summary()
 
+        # v81.0: Миграция - расширенное хранение сырых данных
+        self._migrate_v81_raw_storage()
+
         # Индексы для category (после миграции)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON channels(category)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_category_secondary ON channels(category_secondary)')
@@ -197,6 +200,22 @@ class CrawlerDB:
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_scan_requests_status ON scan_requests(status)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_scan_requests_created ON scan_requests(created_at)')
+
+        # v81.0: User favorites table (for mini-app)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_favorites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                username TEXT NOT NULL,
+                score INTEGER DEFAULT NULL,
+                verdict TEXT DEFAULT NULL,
+                members INTEGER DEFAULT NULL,
+                category TEXT DEFAULT NULL,
+                added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, username)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_favorites_user ON user_favorites(user_id)")
 
         # v59.6: Миграция - триггеры для нормализации username к lowercase
         # ВАЖНО: вызывать ПОСЛЕ создания таблицы scan_requests!
@@ -494,6 +513,47 @@ class CrawlerDB:
 
         # Индекс для фильтрации по ad_status
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ad_status ON channels(ad_status)')
+
+        self.conn.commit()
+
+    def _migrate_v81_raw_storage(self):
+        """v81.0: Extended raw data storage for full rescan capability.
+
+        New columns:
+        - raw_messages_gz: gzip(JSON array of full message objects from Pyrogram)
+        - raw_users_gz: gzip(JSON array of full user objects from participants)
+        - raw_chat_json: Full chat/channel object as JSON
+        - entities_json: Extracted entities (mentions, hashtags, urls) stats
+        - media_stats_json: Media type distribution (photo, video, document, etc.)
+
+        These columns enable full rescans without Telegram API calls.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(channels)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        new_columns = [
+            ('raw_messages_gz', 'BLOB DEFAULT NULL'),
+            ('raw_users_gz', 'BLOB DEFAULT NULL'),
+            ('raw_chat_json', 'TEXT DEFAULT NULL'),
+            ('entities_json', 'TEXT DEFAULT NULL'),
+            ('media_stats_json', 'TEXT DEFAULT NULL'),
+            ('ad_contacts_json', 'TEXT DEFAULT NULL'),
+        ]
+
+        added = []
+        for col_name, col_def in new_columns:
+            if col_name not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE channels ADD COLUMN {col_name} {col_def}")
+                    added.append(col_name)
+                except sqlite3.OperationalError as e:
+                    logger.debug(f"Migration v81.0 {col_name}: column already exists or table issue: {e}")
+                except sqlite3.Error as e:
+                    logger.error(f"Migration v81.0 {col_name} failed: {e}")
+
+        if added:
+            print(f"Миграция v81.0: добавлены колонки для raw storage: {', '.join(added)}")
 
         self.conn.commit()
 

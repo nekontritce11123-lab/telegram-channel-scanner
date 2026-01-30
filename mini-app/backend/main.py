@@ -244,6 +244,15 @@ class PrefetchPhotosRequest(BaseModel):
     usernames: List[str]
 
 
+# v81.0: Favorites model
+class FavoriteItem(BaseModel):
+    username: str
+    score: Optional[int] = None
+    verdict: Optional[str] = None
+    members: Optional[int] = None
+    category: Optional[str] = None
+
+
 # Глобальные переменные
 db = None
 
@@ -2422,6 +2431,67 @@ async def sync_channel(data: ChannelSyncData):
         return {"success": True, "username": username}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# v81.0: Favorites API
+# =============================================================================
+
+@app.get("/api/favorites")
+async def get_favorites(request: Request):
+    """v81.0: Get user's favorites list."""
+    user_id = get_user_id_from_request(request)
+    if not user_id:
+        return {"favorites": [], "total": 0}
+
+    cursor = db.conn.cursor()
+    cursor.execute("""
+        SELECT username, score, verdict, members, category, added_at
+        FROM user_favorites WHERE user_id = ?
+        ORDER BY added_at DESC LIMIT 100
+    """, (user_id,))
+
+    favorites = [
+        {"username": r[0], "score": r[1], "verdict": r[2],
+         "members": r[3], "category": r[4], "addedAt": r[5]}
+        for r in cursor.fetchall()
+    ]
+    return {"favorites": favorites, "total": len(favorites)}
+
+
+@app.post("/api/favorites", status_code=201)
+async def add_favorite(item: FavoriteItem, request: Request):
+    """v81.0: Add channel to favorites."""
+    user_id = get_user_id_from_request(request)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    username = item.username.lower().lstrip('@')
+    cursor = db.conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO user_favorites
+        (user_id, username, score, verdict, members, category, added_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    """, (user_id, username, item.score, item.verdict, item.members, item.category))
+    db.conn.commit()
+    return {"success": True, "username": username}
+
+
+@app.delete("/api/favorites/{username}")
+async def remove_favorite(username: str, request: Request):
+    """v81.0: Remove channel from favorites."""
+    user_id = get_user_id_from_request(request)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    clean_username = username.lower().lstrip('@')
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "DELETE FROM user_favorites WHERE user_id = ? AND username = ?",
+        (user_id, clean_username)
+    )
+    db.conn.commit()
+    return {"success": True, "removed": cursor.rowcount > 0}
 
 
 if __name__ == "__main__":

@@ -14,9 +14,11 @@ python crawler.py                   # Продолжить
 python crawler.py --stats           # Статистика
 python crawler.py --export good.csv # Экспорт
 
-# Deploy (ВСЕГДА использовать скрипты!)
-cd mini-app/frontend && npm run build && cd ../deploy && python deploy_frontend.py
-cd mini-app/deploy && python deploy_backend.py
+# Deploy (v81.0 Unified CLI)
+cd mini-app && python -m deploy deploy all       # Frontend + Backend параллельно
+cd mini-app && python -m deploy deploy frontend  # Только фронт
+cd mini-app && python -m deploy deploy backend   # Только бэк
+cd mini-app && python -m deploy --dry-run deploy all  # Превью
 ```
 
 ## Configuration

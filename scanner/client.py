@@ -61,6 +61,7 @@ def get_client() -> Client:
 class RawMessageWrapper:
     """
     Обёртка для raw Message чтобы обеспечить совместимость с существующим кодом metrics.py.
+    v81.0: Extended data for raw storage (entities, media_type, buttons, full_text).
     """
     def __init__(self, raw_msg, chats_map: dict = None):
         self._raw = raw_msg
@@ -104,6 +105,61 @@ class RawMessageWrapper:
             fwd = raw_msg.fwd_from
             if hasattr(fwd, 'from_id') and fwd.from_id:
                 self.forward_from_chat = RawForwardWrapper(fwd.from_id, chats_map)
+
+        # v81.0: Extended data for raw storage
+        self.raw_entities = self._extract_entities(raw_msg)
+        self.media_type = self._detect_media_type(raw_msg)
+        self.buttons = self._extract_buttons(raw_msg)
+        self.full_text = getattr(raw_msg, 'message', '') or ''
+
+    def _extract_entities(self, msg) -> list:
+        """Extract links, mentions, hashtags from message entities."""
+        if not hasattr(msg, 'entities') or not msg.entities:
+            return []
+        result = []
+        for e in msg.entities:
+            # Try to get type from attribute first (mock objects), then from class name
+            entity_type = getattr(e, 'type', None)
+            if entity_type is None:
+                entity_type = str(type(e).__name__).lower().replace('messageentity', '')
+            result.append({
+                'type': entity_type,
+                'offset': getattr(e, 'offset', 0),
+                'length': getattr(e, 'length', 0),
+                'url': getattr(e, 'url', None)
+            })
+        return result
+
+    def _detect_media_type(self, msg) -> str:
+        """Detect media type: photo, video, document, etc."""
+        if hasattr(msg, 'media') and msg.media:
+            media = msg.media
+            media_class = type(media).__name__
+            if 'Photo' in media_class:
+                return 'photo'
+            if 'Video' in media_class:
+                return 'video'
+            if 'Document' in media_class:
+                return 'document'
+            if 'Audio' in media_class:
+                return 'audio'
+            if 'Voice' in media_class:
+                return 'voice'
+            if 'Sticker' in media_class:
+                return 'sticker'
+        return None
+
+    def _extract_buttons(self, msg) -> list:
+        """Extract inline keyboard buttons with URLs."""
+        if not hasattr(msg, 'reply_markup') or not msg.reply_markup:
+            return []
+        buttons = []
+        rows = getattr(msg.reply_markup, 'rows', [])
+        for row in rows:
+            for btn in getattr(row, 'buttons', []):
+                if hasattr(btn, 'url') and btn.url:
+                    buttons.append({'text': getattr(btn, 'text', ''), 'url': btn.url})
+        return buttons
 
 
 class RawRepliesWrapper:
