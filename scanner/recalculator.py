@@ -1,8 +1,19 @@
 """
-Модуль пересчёта метрик v52.0
+Модуль пересчёта метрик v79.0
 
 Позволяет изменять формулы скоринга и пересчитывать все каналы
 без обращения к Telegram API.
+
+Включает полный Trust Calculator с 27 множителями:
+- Forensics: id_clustering (2), geo_dc_mismatch, premium_zero
+- LLM: bot_penalty, ad_penalty
+- Conviction: conviction_critical, conviction_high
+- Statistical: hollow_views, zombie_engagement, satellite
+- Ghost Protocol: ghost_channel, zombie_audience, member_discrepancy
+- Decay: budget_cliff
+- Posting: spam_posting (3 levels)
+- Private Links: private_100/80/60, private_crypto_combo, private_hidden_combo
+- Other: hidden_comments, dying_engagement (2), scam_network
 
 Использование:
     python crawler.py --recalculate-local     # Пересчёт score из breakdown
@@ -12,7 +23,8 @@
 
 import gzip
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import reduce
 from typing import Optional
 
 from .database import CrawlerDB, ChannelRecord
@@ -25,6 +37,425 @@ from .scorer import (
 )
 from .json_compression import decompress_breakdown
 from .config import GOOD_THRESHOLD
+from .scorer_constants import TrustMultipliers, SpamPostingTiers
+
+
+# =============================================================================
+# TRUST CALCULATOR v79.0 - Complete trust factor calculation with all 27 multipliers
+# =============================================================================
+
+@dataclass
+class TrustInput:
+    """Input data for trust factor calculation."""
+    # From forensics_json
+    id_clustering_ratio: float = 0.0  # % of neighbor IDs
+    id_clustering_fatality: bool = False
+    geo_dc_foreign_ratio: float = 0.0  # % foreign DC
+    premium_ratio: float = 0.0
+    premium_count: int = 0
+    users_analyzed: int = 0
+
+    # From llm_analysis
+    bot_percentage: int = 0
+    ad_percentage: int = 0
+
+    # From conviction system
+    conviction_score: int = 0
+
+    # From breakdown metrics
+    reach: float = 0.0
+    forward_rate: float = 0.0
+    reaction_rate: float = 0.0
+    views_decay_ratio: float = 1.0
+    avg_comments: float = 0.0
+    source_max_share: float = 0.0
+
+    # From channel_health
+    members: int = 0
+    online_count: int = 0
+    participants_count: int = 0
+
+    # From posting data
+    posts_per_day: float = 0.0
+    category: str = None
+
+    # From private links analysis
+    private_ratio: float = 0.0
+
+    # Flags
+    comments_enabled: bool = True
+    er_trend_status: str = 'insufficient_data'
+
+    # Scam network
+    scam_network_count: int = 0
+    bad_network_count: int = 0
+
+
+@dataclass
+class TrustResult:
+    """Result of trust factor calculation."""
+    trust_factor: float
+    multipliers: dict = field(default_factory=dict)
+    penalties: list = field(default_factory=list)
+    # Note: floor of 0.1 is applied in calculate_trust_factor() for non-fatality cases
+    # FATALITY (id_clustering_fatality) returns exactly 0.0
+
+
+def calculate_bot_mult_v78(bot_pct: int) -> float:
+    """v78.0: Порог 40% (слабая модерация - норма)."""
+    if bot_pct is None or bot_pct <= 40:
+        return 1.0
+    penalty = (bot_pct - 40) / 100.0
+    return max(0.3, 1.0 - penalty)
+
+
+def calculate_ad_mult(ad_pct: int) -> float:
+    """Штраф за рекламу."""
+    if ad_pct is None:
+        return 1.0
+    if ad_pct <= 20:
+        return 1.0
+    elif ad_pct <= 40:
+        return 0.95
+    elif ad_pct <= 60:
+        return 0.85
+    elif ad_pct <= 80:
+        return 0.70
+    else:
+        return 0.50
+
+
+def calculate_trust_factor(input: TrustInput) -> TrustResult:
+    """
+    UNIFIED trust_factor function with ALL 27 multipliers.
+
+    Multipliers covered:
+    1. id_clustering_fatality (0.0)
+    2. id_clustering_suspicious (0.5)
+    3. geo_dc_mismatch (0.2)
+    4. premium_zero (0.8)
+    5. bot_penalty (dynamic)
+    6. ad_penalty (dynamic)
+    7. conviction_critical (0.3)
+    8. conviction_high (0.6)
+    9. hollow_views (0.6)
+    10. zombie_engagement (0.7)
+    11. satellite (0.8)
+    12. ghost_channel (0.5)
+    13. zombie_audience (0.7)
+    14. member_discrepancy (0.8)
+    15. budget_cliff (0.7)
+    16. spam_posting_spam (0.55)
+    17. spam_posting_heavy (0.75)
+    18. spam_posting_active (0.90)
+    19. private_100 (0.25)
+    20. private_80 (0.35)
+    21. private_60 (0.50)
+    22. private_crypto_combo (0.45)
+    23. private_hidden_combo (0.40)
+    24. hidden_comments (0.85)
+    25. dying_engagement_combo (0.6)
+    26. dying_engagement_solo (0.75)
+    27. scam_network (dynamic)
+    """
+    multipliers = {}
+    penalties = []
+
+    # 1. FORENSICS PENALTIES
+
+    # ID Clustering
+    if input.id_clustering_fatality or input.id_clustering_ratio > 0.30:
+        multipliers['id_clustering_fatality'] = TrustMultipliers.ID_CLUSTERING_FATALITY
+        penalties.append('ID Clustering FATALITY (>30% neighbor IDs)')
+    elif input.id_clustering_ratio > 0.15:
+        multipliers['id_clustering_suspicious'] = TrustMultipliers.ID_CLUSTERING_SUSPICIOUS
+        penalties.append(f'ID Clustering suspicious ({input.id_clustering_ratio:.0%})')
+
+    # Geo/DC Mismatch
+    if input.geo_dc_foreign_ratio > 0.75:
+        multipliers['geo_dc_mismatch'] = TrustMultipliers.GEO_DC_MISMATCH
+        penalties.append(f'Geo/DC mismatch ({input.geo_dc_foreign_ratio:.0%} foreign)')
+
+    # Premium Zero
+    if input.users_analyzed >= 10 and input.premium_count == 0:
+        multipliers['premium_zero'] = TrustMultipliers.PREMIUM_ZERO
+        penalties.append('Zero premium users')
+
+    # 2. LLM PENALTIES
+
+    bot_mult = calculate_bot_mult_v78(input.bot_percentage)
+    if bot_mult < 1.0:
+        multipliers['bot_penalty'] = bot_mult
+        penalties.append(f'Bot comments ({input.bot_percentage}%)')
+
+    ad_mult = calculate_ad_mult(input.ad_percentage)
+    if ad_mult < 1.0:
+        multipliers['ad_penalty'] = ad_mult
+        penalties.append(f'High ad percentage ({input.ad_percentage}%)')
+
+    # 3. CONVICTION PENALTIES
+
+    if input.conviction_score >= 70:
+        multipliers['conviction_critical'] = TrustMultipliers.CONVICTION_CRITICAL
+        penalties.append(f'Critical conviction ({input.conviction_score})')
+    elif input.conviction_score >= 50:
+        multipliers['conviction_high'] = TrustMultipliers.CONVICTION_HIGH
+        penalties.append(f'High conviction ({input.conviction_score})')
+
+    # 4. STATISTICAL PENALTIES
+
+    # Hollow Views
+    if input.reach > 300 and input.forward_rate < 3.0 and input.avg_comments < 1:
+        multipliers['hollow_views'] = 0.6
+        penalties.append(f'Hollow views (reach {input.reach:.0f}% without virality)')
+
+    # Zombie Engagement
+    if input.reach > 50 and input.reaction_rate < 0.1:
+        multipliers['zombie_engagement'] = 0.7
+        penalties.append('Zombie engagement (high reach, no reactions)')
+
+    # Satellite
+    if input.source_max_share > 0.5 and input.avg_comments < 1:
+        multipliers['satellite'] = 0.8
+        penalties.append(f'Satellite channel ({input.source_max_share:.0%} from one source)')
+
+    # 5. GHOST PROTOCOL
+
+    if input.members > 20000 and input.online_count > 0:
+        online_percent = (input.online_count / input.members) * 100
+        if online_percent < 0.1:
+            multipliers['ghost_channel'] = 0.5
+            penalties.append(f'Ghost channel ({online_percent:.2f}% online)')
+
+    if input.members > 5000 and input.online_count > 0:
+        online_percent = (input.online_count / input.members) * 100
+        if online_percent < 0.3 and 'ghost_channel' not in multipliers:
+            multipliers['zombie_audience'] = 0.7
+            penalties.append(f'Zombie audience ({online_percent:.2f}% online)')
+
+    # Member Discrepancy
+    if input.participants_count > 0 and input.members > 0:
+        discrepancy = abs(input.participants_count - input.members) / input.members
+        if discrepancy > 0.1:
+            multipliers['member_discrepancy'] = 0.8
+            penalties.append(f'Member discrepancy ({discrepancy:.0%})')
+
+    # 6. DECAY PENALTIES
+
+    # Budget Cliff
+    if input.views_decay_ratio < 0.2:
+        multipliers['budget_cliff'] = 0.7
+        penalties.append(f'Budget cliff (decay {input.views_decay_ratio:.2f})')
+
+    # Bot Wall (not a penalty, just detection)
+    # 0.98-1.02 is suspicious but handled elsewhere
+
+    # 7. POSTING PENALTIES (v78.0 category-aware)
+
+    # Get thresholds based on category
+    tier = SpamPostingTiers.CATEGORY_TIERS.get(input.category, SpamPostingTiers.DEFAULT)
+    active_threshold, heavy_threshold, spam_threshold = tier
+
+    if input.posts_per_day > spam_threshold:
+        multipliers['spam_posting_spam'] = TrustMultipliers.SPAM_POSTING_SPAM
+        penalties.append(f'Spam posting ({input.posts_per_day:.1f}/day)')
+    elif input.posts_per_day > heavy_threshold:
+        multipliers['spam_posting_heavy'] = TrustMultipliers.SPAM_POSTING_HEAVY
+        penalties.append(f'Heavy posting ({input.posts_per_day:.1f}/day)')
+    elif input.posts_per_day > active_threshold:
+        multipliers['spam_posting_active'] = TrustMultipliers.SPAM_POSTING_ACTIVE
+        penalties.append(f'Active posting ({input.posts_per_day:.1f}/day)')
+
+    # 8. PRIVATE LINKS PENALTIES
+
+    if input.private_ratio >= 1.0:
+        multipliers['private_100'] = TrustMultipliers.PRIVATE_100
+        penalties.append('100% private ad links')
+    elif input.private_ratio > 0.8:
+        multipliers['private_80'] = TrustMultipliers.PRIVATE_80
+        penalties.append(f'High private links ({input.private_ratio:.0%})')
+    elif input.private_ratio > 0.6:
+        multipliers['private_60'] = TrustMultipliers.PRIVATE_60
+        penalties.append(f'Many private links ({input.private_ratio:.0%})')
+
+    # Combos
+    if input.category == 'CRYPTO' and input.private_ratio > 0.4:
+        if 'private_crypto_combo' not in multipliers:
+            multipliers['private_crypto_combo'] = TrustMultipliers.PRIVATE_CRYPTO_COMBO
+            penalties.append('CRYPTO + private links combo')
+
+    if not input.comments_enabled and input.private_ratio > 0.5:
+        if 'private_hidden_combo' not in multipliers:
+            multipliers['private_hidden_combo'] = TrustMultipliers.PRIVATE_HIDDEN_COMBO
+            penalties.append('Hidden comments + private links combo')
+
+    # 9. HIDDEN COMMENTS
+
+    if not input.comments_enabled:
+        multipliers['hidden_comments'] = TrustMultipliers.HIDDEN_COMMENTS
+        penalties.append('Comments disabled')
+
+    # 10. DYING ENGAGEMENT
+
+    if input.er_trend_status == 'dying':
+        if 0.7 <= input.views_decay_ratio <= 1.3:
+            multipliers['dying_engagement_combo'] = 0.6
+            penalties.append('Dying engagement + no organic growth')
+        else:
+            multipliers['dying_engagement_solo'] = 0.75
+            penalties.append('Dying engagement trend')
+
+    # 11. SCAM NETWORK
+
+    if input.scam_network_count > 0 or input.bad_network_count > 0:
+        network_mult = (0.9 ** input.scam_network_count) * (0.95 ** input.bad_network_count)
+        multipliers['scam_network'] = round(network_mult, 2)
+        penalties.append(f'Scam network ({input.scam_network_count} scam, {input.bad_network_count} bad)')
+
+    # CALCULATE FINAL TRUST FACTOR
+    # Special case: FATALITY returns exactly 0.0 (no floor)
+    if 'id_clustering_fatality' in multipliers:
+        trust = 0.0
+    elif not multipliers:
+        trust = 1.0
+    else:
+        trust = reduce(lambda a, b: a * b, multipliers.values(), 1.0)
+        trust = max(0.1, round(trust, 2))  # Floor 0.1 for non-fatality cases
+
+    return TrustResult(
+        trust_factor=trust,
+        multipliers=multipliers,
+        penalties=penalties
+    )
+
+
+def extract_trust_input(
+    breakdown: dict,
+    forensics: dict = None,
+    llm_analysis: dict = None,
+    channel_data: dict = None
+) -> TrustInput:
+    """
+    Extract TrustInput from scanner's database row format.
+
+    Args:
+        breakdown: Breakdown dict from breakdown_json
+        forensics: Forensics dict from forensics_json
+        llm_analysis: LLM analysis dict from breakdown_json
+        channel_data: Channel data dict with members, online_count, etc.
+
+    Returns:
+        TrustInput populated from available data
+    """
+    forensics = forensics or {}
+    llm_analysis = llm_analysis or {}
+    channel_data = channel_data or {}
+
+    # Helper to safely get nested values
+    def get_value(d: dict, key: str, default=0):
+        val = d.get(key, {})
+        if isinstance(val, dict):
+            return val.get('value', default)
+        return val if val is not None else default
+
+    # Extract forensics data
+    id_clustering = forensics.get('id_clustering', {})
+    geo_dc = forensics.get('geo_dc_analysis', {})
+    premium_density = forensics.get('premium_density', {})
+
+    # Extract breakdown metrics
+    trust_details = breakdown.get('trust_details', {})
+    er_trend_data = breakdown.get('er_trend', {})
+    source_data = breakdown.get('source_diversity', {}) or breakdown.get('source', {})
+
+    # Get er_trend status
+    er_trend_status = 'insufficient_data'
+    if isinstance(er_trend_data, dict):
+        er_trend_status = er_trend_data.get('status', 'insufficient_data')
+
+    # Get views_decay_ratio
+    views_decay_ratio = 1.0
+    views_decay = breakdown.get('views_decay', {})
+    if isinstance(views_decay, dict):
+        views_decay_ratio = views_decay.get('value', 1.0)
+
+    # Get comments data
+    comments_data = breakdown.get('comments', {})
+    avg_comments = 0.0
+    if isinstance(comments_data, dict):
+        avg_comments = comments_data.get('value', 0.0)
+
+    # Get source_max_share (value = 1 - max_share in breakdown)
+    source_max_share = 0.0
+    if isinstance(source_data, dict):
+        # source_diversity value is stored as (1 - max_share), so invert it
+        diversity_value = source_data.get('value', 0)
+        source_max_share = 1 - diversity_value if diversity_value else 0
+
+    # Extract private ratio from trust_details
+    private_ratio = 0.0
+    for key, detail in trust_details.items():
+        if 'private' in key.lower() and isinstance(detail, dict):
+            private_ratio = detail.get('ratio', 0.0)
+            break
+
+    # Count scam/bad networks from trust_details
+    scam_network_count = 0
+    bad_network_count = 0
+    scam_network_detail = trust_details.get('scam_network', {})
+    if isinstance(scam_network_detail, dict):
+        scam_network_count = scam_network_detail.get('scam_count', 0)
+        bad_network_count = scam_network_detail.get('bad_count', 0)
+
+    return TrustInput(
+        # Forensics
+        id_clustering_ratio=id_clustering.get('neighbor_ratio', 0.0),
+        id_clustering_fatality=id_clustering.get('fatality', False),
+        geo_dc_foreign_ratio=geo_dc.get('foreign_ratio', 0.0),
+        premium_ratio=premium_density.get('premium_ratio', 0.0),
+        premium_count=premium_density.get('premium_count', 0),
+        users_analyzed=premium_density.get('users_analyzed', 0),
+
+        # LLM analysis
+        bot_percentage=llm_analysis.get('bot_percentage', 0),
+        ad_percentage=llm_analysis.get('ad_percentage', 0),
+
+        # Conviction (from trust_details)
+        conviction_score=trust_details.get('conviction', {}).get('score', 0) if isinstance(trust_details.get('conviction'), dict) else 0,
+
+        # Breakdown metrics
+        reach=get_value(breakdown, 'reach', 0.0),
+        forward_rate=get_value(breakdown, 'forward_rate', 0.0),
+        reaction_rate=get_value(breakdown, 'reaction_rate', 0.0),
+        views_decay_ratio=views_decay_ratio,
+        avg_comments=avg_comments,
+        source_max_share=source_max_share,
+
+        # Channel data
+        members=channel_data.get('members', 0),
+        online_count=channel_data.get('online_count', 0),
+        participants_count=channel_data.get('participants_count', 0),
+
+        # Posting data
+        posts_per_day=breakdown.get('regularity', {}).get('value', 0.0) if isinstance(breakdown.get('regularity'), dict) else 0.0,
+        category=channel_data.get('category'),
+
+        # Private ratio
+        private_ratio=private_ratio,
+
+        # Flags
+        comments_enabled=breakdown.get('comments_enabled', True),
+        er_trend_status=er_trend_status,
+
+        # Scam network
+        scam_network_count=scam_network_count,
+        bad_network_count=bad_network_count,
+    )
+
+
+# =============================================================================
+# LEGACY FUNCTIONS (kept for backward compatibility)
+# =============================================================================
 
 
 def recalculate_trust_from_breakdown(breakdown: dict, llm_analysis: dict = None) -> float:
