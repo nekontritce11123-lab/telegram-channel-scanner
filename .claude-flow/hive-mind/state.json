@@ -1,0 +1,36 @@
+{
+  "initialized": true,
+  "topology": "mesh",
+  "workers": [
+    "db-analyst-1769771266136-m0c5",
+    "db-analyst-1769771266136-ydmz",
+    "db-analyst-1769771266136-b17v",
+    "db-analyst-1769771266136-imvx",
+    "db-analyst-1769771266136-0lzk",
+    "db-analyst-1769771266136-a0lq",
+    "db-analyst-1769771266136-r531",
+    "db-analyst-1769771266136-6cc4",
+    "arch-analyzer-1769810913035-f6mi",
+    "arch-analyzer-1769810913036-xvn0",
+    "arch-analyzer-1769810913036-5dgu",
+    "arch-analyzer-1769810913036-pbcl",
+    "arch-analyzer-1769810913036-zdzd",
+    "arch-analyzer-1769810913036-3ssk",
+    "arch-analyzer-1769810913036-txtd",
+    "arch-analyzer-1769810913036-0384",
+    "arch-analyzer-1769810913036-312f",
+    "arch-analyzer-1769810913036-nhet"
+  ],
+  "consensus": {
+    "pending": [],
+    "history": []
+  },
+  "sharedMemory": {},
+  "createdAt": "2026-01-30T11:07:41.823Z",
+  "updatedAt": "2026-01-30T22:08:33.036Z",
+  "queen": {
+    "agentId": "db-refactor-queen",
+    "electedAt": "2026-01-30T11:07:41.823Z",
+    "term": 1
+  }
+}

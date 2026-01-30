@@ -1,0 +1,185 @@
+{
+  "tasks": {
+    "task-1769810923821-1hzw9v": {
+      "taskId": "task-1769810923821-1hzw9v",
+      "type": "research",
+      "description": "Агент 1: Найди ВСЕ файлы в корне проекта которые можно удалить. Проанализируй run.py, crawler.py, migrate_*.py, rescan_*.py — какие дублируют друг друга?",
+      "priority": "critical",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [
+        "arch-analyzer-1769810913035-f6mi"
+      ],
+      "tags": [
+        "cleanup",
+        "root-files"
+      ],
+      "createdAt": "2026-01-30T22:08:43.821Z",
+      "startedAt": null,
+      "completedAt": null
+    },
+    "task-1769810926408-ihq0qr": {
+      "taskId": "task-1769810926408-ihq0qr",
+      "type": "research",
+      "description": "Агент 2: Проанализируй scanner/database.py (1730 строк). Какой МИНИМАЛЬНЫЙ набор методов нужен? Сколько методов можно удалить? Цель: сократить до 200 строк.",
+      "priority": "critical",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [
+        "arch-analyzer-1769810913036-xvn0"
+      ],
+      "tags": [
+        "database",
+        "minimalism"
+      ],
+      "createdAt": "2026-01-30T22:08:46.408Z",
+      "startedAt": null,
+      "completedAt": null
+    },
+    "task-1769810928146-0cdu0e": {
+      "taskId": "task-1769810928146-0cdu0e",
+      "type": "research",
+      "description": "Агент 3: Проанализируй scanner/client.py и smart_scan(). Можно ли упростить до одной функции scan_channel() которая делает всё?",
+      "priority": "critical",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [
+        "arch-analyzer-1769810913036-5dgu"
+      ],
+      "tags": [
+        "client",
+        "telegram"
+      ],
+      "createdAt": "2026-01-30T22:08:48.146Z",
+      "startedAt": null,
+      "completedAt": null
+    },
+    "task-1769810929932-simhaz": {
+      "taskId": "task-1769810929932-simhaz",
+      "type": "research",
+      "description": "Агент 4: Проанализируй scorer.py + metrics.py + forensics.py + conviction.py. Можно ли объединить в ОДИН файл scoring.py? Какой минимальный код нужен?",
+      "priority": "critical",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [
+        "arch-analyzer-1769810913036-pbcl"
+      ],
+      "tags": [
+        "scoring",
+        "merge"
+      ],
+      "createdAt": "2026-01-30T22:08:49.932Z",
+      "startedAt": null,
+      "completedAt": null
+    },
+    "task-1769810932245-sfg5em": {
+      "taskId": "task-1769810932245-sfg5em",
+      "type": "research",
+      "description": "Агент 5: Проанализируй recalc/ и rescan/ папки. Нужны ли они ВООБЩЕ? Можно ли их функционал добавить как 1-2 функции в основной код?",
+      "priority": "critical",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [
+        "arch-analyzer-1769810913036-zdzd"
+      ],
+      "tags": [
+        "recalc",
+        "delete"
+      ],
+      "createdAt": "2026-01-30T22:08:52.245Z",
+      "startedAt": null,
+      "completedAt": null
+    },
+    "task-1769810934719-fauuor": {
+      "taskId": "task-1769810934719-fauuor",
+      "type": "research",
+      "description": "Агент 6: Проанализируй mini-app/backend/main.py. Какие ТОЧНО колонки БД нужны фронту? Какие методы CrawlerDB вызываются? Цель: понять минимум для API.",
+      "priority": "critical",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [
+        "arch-analyzer-1769810913036-3ssk"
+      ],
+      "tags": [
+        "frontend",
+        "api"
+      ],
+      "createdAt": "2026-01-30T22:08:54.719Z",
+      "startedAt": null,
+      "completedAt": null
+    },
+    "task-1769810936513-strmf0": {
+      "taskId": "task-1769810936513-strmf0",
+      "type": "research",
+      "description": "Агент 7: Проанализируй llm_analyzer.py, classifier.py, summarizer.py. Можно ли объединить в один файл llm.py? Или вообще сделать опциональным?",
+      "priority": "critical",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [
+        "arch-analyzer-1769810913036-txtd"
+      ],
+      "tags": [
+        "llm",
+        "optional"
+      ],
+      "createdAt": "2026-01-30T22:08:56.513Z",
+      "startedAt": null,
+      "completedAt": null
+    },
+    "task-1769810938412-n43v49": {
+      "taskId": "task-1769810938412-n43v49",
+      "type": "research",
+      "description": "Агент 8: Предложи МИНИМАЛЬНУЮ структуру проекта. Цель: 2 папки (scanner/ + mini-app/) и 2-3 скрипта. Как это должно выглядеть?",
+      "priority": "critical",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [
+        "arch-analyzer-1769810913036-0384"
+      ],
+      "tags": [
+        "structure",
+        "minimal"
+      ],
+      "createdAt": "2026-01-30T22:08:58.412Z",
+      "startedAt": null,
+      "completedAt": null
+    },
+    "task-1769810940570-w2xiwl": {
+      "taskId": "task-1769810940570-w2xiwl",
+      "type": "research",
+      "description": "Агент 9: Проанализируй ВСЕ JSON колонки в БД (breakdown_json, forensics_json и т.д.). Можно ли их объединить в ОДИН json_data столбец? Или они все нужны отдельно?",
+      "priority": "critical",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [
+        "arch-analyzer-1769810913036-312f"
+      ],
+      "tags": [
+        "database",
+        "json"
+      ],
+      "createdAt": "2026-01-30T22:09:00.570Z",
+      "startedAt": null,
+      "completedAt": null
+    },
+    "task-1769810942579-tndf4g": {
+      "taskId": "task-1769810942579-tndf4g",
+      "type": "research",
+      "description": "Агент 10: Составь ФИНАЛЬНЫЙ план удаления. Список ВСЕХ файлов на удаление, ВСЕХ методов на удаление, итоговую структуру. Цель: -80% кода.",
+      "priority": "critical",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [
+        "arch-analyzer-1769810913036-nhet"
+      ],
+      "tags": [
+        "final",
+        "delete-plan"
+      ],
+      "createdAt": "2026-01-30T22:09:02.579Z",
+      "startedAt": null,
+      "completedAt": null
+    }
+  },
+  "version": "3.0.0"
+}

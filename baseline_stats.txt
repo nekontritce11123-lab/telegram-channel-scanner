@@ -1,0 +1,15 @@
+TgCrypto is missing! Pyrogram will work the same, but at a much slower speed. More info: https://docs.pyrogram.org/topics/speedups
+
++-----------------------------------------------------------+
+|                    CRAWLER v51.0                          |
+|         Telegram channel scanner - 17 categories         |
++-----------------------------------------------------------+
+    
+Статистика базы данных:
+  Всего каналов:  552
+  В очереди:      31
+  Обрабатывается: 0
+  GOOD (>=60):    334
+  BAD (<60):      187
+  PRIVATE:        0
+  ERROR:          0

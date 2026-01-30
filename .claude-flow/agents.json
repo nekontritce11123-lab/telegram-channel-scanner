@@ -1,0 +1,238 @@
+{
+  "agents": {
+    "db-analyst-1769771266136-m0c5": {
+      "agentId": "db-analyst-1769771266136-m0c5",
+      "agentType": "code-analyzer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T11:07:46.136Z",
+      "domain": "hive-mind"
+    },
+    "db-analyst-1769771266136-ydmz": {
+      "agentId": "db-analyst-1769771266136-ydmz",
+      "agentType": "code-analyzer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T11:07:46.136Z",
+      "domain": "hive-mind"
+    },
+    "db-analyst-1769771266136-b17v": {
+      "agentId": "db-analyst-1769771266136-b17v",
+      "agentType": "code-analyzer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T11:07:46.136Z",
+      "domain": "hive-mind"
+    },
+    "db-analyst-1769771266136-imvx": {
+      "agentId": "db-analyst-1769771266136-imvx",
+      "agentType": "code-analyzer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T11:07:46.136Z",
+      "domain": "hive-mind"
+    },
+    "db-analyst-1769771266136-0lzk": {
+      "agentId": "db-analyst-1769771266136-0lzk",
+      "agentType": "code-analyzer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T11:07:46.136Z",
+      "domain": "hive-mind"
+    },
+    "db-analyst-1769771266136-a0lq": {
+      "agentId": "db-analyst-1769771266136-a0lq",
+      "agentType": "code-analyzer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T11:07:46.136Z",
+      "domain": "hive-mind"
+    },
+    "db-analyst-1769771266136-r531": {
+      "agentId": "db-analyst-1769771266136-r531",
+      "agentType": "code-analyzer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T11:07:46.136Z",
+      "domain": "hive-mind"
+    },
+    "db-analyst-1769771266136-6cc4": {
+      "agentId": "db-analyst-1769771266136-6cc4",
+      "agentType": "code-analyzer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T11:07:46.136Z",
+      "domain": "hive-mind"
+    },
+    "arch-analyzer-1769810913035-f6mi": {
+      "agentId": "arch-analyzer-1769810913035-f6mi",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T22:08:33.035Z",
+      "domain": "hive-mind"
+    },
+    "arch-analyzer-1769810913036-xvn0": {
+      "agentId": "arch-analyzer-1769810913036-xvn0",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T22:08:33.036Z",
+      "domain": "hive-mind"
+    },
+    "arch-analyzer-1769810913036-5dgu": {
+      "agentId": "arch-analyzer-1769810913036-5dgu",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T22:08:33.036Z",
+      "domain": "hive-mind"
+    },
+    "arch-analyzer-1769810913036-pbcl": {
+      "agentId": "arch-analyzer-1769810913036-pbcl",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T22:08:33.036Z",
+      "domain": "hive-mind"
+    },
+    "arch-analyzer-1769810913036-zdzd": {
+      "agentId": "arch-analyzer-1769810913036-zdzd",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T22:08:33.036Z",
+      "domain": "hive-mind"
+    },
+    "arch-analyzer-1769810913036-3ssk": {
+      "agentId": "arch-analyzer-1769810913036-3ssk",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T22:08:33.036Z",
+      "domain": "hive-mind"
+    },
+    "arch-analyzer-1769810913036-txtd": {
+      "agentId": "arch-analyzer-1769810913036-txtd",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T22:08:33.036Z",
+      "domain": "hive-mind"
+    },
+    "arch-analyzer-1769810913036-0384": {
+      "agentId": "arch-analyzer-1769810913036-0384",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T22:08:33.036Z",
+      "domain": "hive-mind"
+    },
+    "arch-analyzer-1769810913036-312f": {
+      "agentId": "arch-analyzer-1769810913036-312f",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T22:08:33.036Z",
+      "domain": "hive-mind"
+    },
+    "arch-analyzer-1769810913036-nhet": {
+      "agentId": "arch-analyzer-1769810913036-nhet",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "role": "specialist",
+        "hiveRole": "specialist"
+      },
+      "createdAt": "2026-01-30T22:08:33.036Z",
+      "domain": "hive-mind"
+    }
+  }
+}

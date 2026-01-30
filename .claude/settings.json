@@ -1,0 +1,19 @@
+{
+  "respectGitignore": true,
+  "permissions": {
+    "deny": [
+      "Read(mini-app/frontend/package-lock.json)",
+      "Read(**/*.map)",
+      "Read(.medusa/**)",
+      "Read(mini-app/frontend/node_modules/**)",
+      "Read(**/__pycache__/**)",
+      "Read(.pytest_cache/**)",
+      "Read(.cache/**)",
+      "Read(output/**)",
+      "Read(crawler.db)",
+      "Read(*.session)",
+      "Read(*.session-journal)",
+      "Read(mini-app/frontend/dist/**)"
+    ]
+  }
+}
