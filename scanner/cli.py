@@ -27,8 +27,6 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-import requests
-
 # Фикс для Windows консоли - поддержка unicode
 if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')

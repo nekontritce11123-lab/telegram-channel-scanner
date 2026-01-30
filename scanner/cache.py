@@ -2,6 +2,7 @@
 Унифицированное кэширование для LLM результатов.
 
 v23.0: Вынесено из llm_analyzer.py и classifier.py
+v23.1: Унифицирован TTL через config.CACHE_TTL_DAYS
 """
 import json
 import hashlib
@@ -10,18 +11,22 @@ from datetime import datetime, timedelta
 from typing import Optional, Any
 import logging
 
+from scanner.config import CACHE_TTL_DAYS
+
 logger = logging.getLogger(__name__)
 
 
 class JSONCache:
     """JSON-based кэш с TTL для LLM результатов."""
 
-    def __init__(self, cache_dir: Path, ttl_days: int = 7):
+    def __init__(self, cache_dir: Path, ttl_days: int = None):
         """
         Args:
             cache_dir: Директория для кэш-файлов
-            ttl_days: Время жизни кэша в днях (default: 7)
+            ttl_days: Время жизни кэша в днях (default: CACHE_TTL_DAYS from config)
         """
+        if ttl_days is None:
+            ttl_days = CACHE_TTL_DAYS
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.ttl = timedelta(days=ttl_days)
@@ -116,20 +121,20 @@ _llm_cache: Optional[JSONCache] = None
 
 
 def get_classification_cache(cache_dir: Path = None) -> JSONCache:
-    """Получить кэш для классификации."""
+    """Получить кэш для классификации (uses CACHE_TTL_DAYS from config)."""
     global _classification_cache
     if _classification_cache is None:
         if cache_dir is None:
             cache_dir = Path(__file__).parent.parent / '.cache' / 'classification'
-        _classification_cache = JSONCache(cache_dir, ttl_days=30)
+        _classification_cache = JSONCache(cache_dir)  # Uses CACHE_TTL_DAYS
     return _classification_cache
 
 
 def get_llm_cache(cache_dir: Path = None) -> JSONCache:
-    """Получить кэш для LLM анализа."""
+    """Получить кэш для LLM анализа (uses CACHE_TTL_DAYS from config)."""
     global _llm_cache
     if _llm_cache is None:
         if cache_dir is None:
             cache_dir = Path(__file__).parent.parent / '.cache' / 'llm'
-        _llm_cache = JSONCache(cache_dir, ttl_days=7)
+        _llm_cache = JSONCache(cache_dir)  # Uses CACHE_TTL_DAYS
     return _llm_cache

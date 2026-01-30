@@ -178,25 +178,3 @@ def generate_channel_summary(
 
     logger.info(f"generate_summary: OK ({len(summary)} chars)")
     return summary
-
-
-# === TEST ===
-if __name__ == "__main__":
-    # Тестовый запуск
-    test_posts = [
-        "Проверили популярный фейк о новом законе — оказалось враньё",
-        "Разбор вирусного поста про экономику: что правда, а что нет",
-        "Как отличить настоящую новость от фейка: 5 простых правил",
-    ]
-
-    result = generate_channel_summary(
-        title="TheFactChain",
-        description="Фактчекинг и разоблачение фейков",
-        posts=test_posts
-    )
-
-    if result:
-        print(f"[OK] Описание ({len(result)} символов):")
-        print(result)
-    else:
-        print("[X] Не удалось сгенерировать описание")

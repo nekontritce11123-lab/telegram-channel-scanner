@@ -255,31 +255,3 @@ def get_ad_status_label(status: int) -> str:
         0: "Нельзя",
     }
     return labels.get(status, "Неизвестно")
-
-
-# =============================================================================
-# TEST
-# =============================================================================
-
-if __name__ == "__main__":
-    test_cases = [
-        "Реклама: @manager_bot",
-        "По вопросам сотрудничества пишите @admin",
-        "Связь: @owner",
-        "Канал без рекламы. Всё бесплатно.",
-        "Просто описание канала о крипте",
-        "For ads contact @prmanager",
-        "Рекламу не размещаю",
-        "ВП: @vpmanager",
-        "Collab & Partnership: @pr",
-    ]
-
-    print("=== LLM + Regex детекция ===\n")
-    for desc in test_cases:
-        llm = detect_ad_status_llm(desc)
-        regex = detect_ad_status_regex(desc)
-        final = detect_ad_status(desc)
-
-        print(f"Описание: {desc[:50]}...")
-        print(f"  LLM: {llm}, Regex: {regex}, Final: {final} ({get_ad_status_label(final)})")
-        print()
