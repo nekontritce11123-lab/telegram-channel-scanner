@@ -197,6 +197,7 @@ class ChannelSummary(BaseModel):
     photo_url: Optional[str] = None  # v19.0: аватарка канала
     is_verified: bool = False  # v34.0: Telegram верификация
     ad_status: Optional[int] = None  # v69.0: 0=нельзя, 1=возможно, 2=можно купить
+    contact_info: Optional[str] = None  # v94.0: Ad contact (@username or email)
 
 
 class ChannelListResponse(BaseModel):
@@ -1614,10 +1615,11 @@ async def get_channels(
     # Main query - v34.0: добавлен breakdown_json для is_verified
     # v58.2: добавлен title для отображения названия канала
     # v69.0: добавлен ad_status для индикатора рекламы
+    # v94.0: добавлен contact_info для рекламного контакта
     query = f"""
         SELECT username, score, verdict, trust_factor, members,
                category, category_secondary, scanned_at, photo_url, category_percent,
-               breakdown_json, title, ad_status
+               breakdown_json, title, ad_status, contact_info
         FROM channels {where_clause}
     """
 
@@ -1680,6 +1682,7 @@ async def get_channels(
             photo_url=str(row[8]) if row[8] else None,
             is_verified=is_verified,  # v34.0
             ad_status=safe_int(row[12], None) if row[12] is not None else None,  # v69.0
+            contact_info=str(row[13]) if row[13] else None,  # v94.0
         ))
 
     return ChannelListResponse(

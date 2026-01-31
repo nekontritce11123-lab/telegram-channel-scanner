@@ -1,27 +1,37 @@
 """
-Unified Ollama client utilities v1.0
+Unified LLM client utilities v2.0 (OpenRouter + Ollama)
 
 Extracted from llm_analyzer.py for reuse across scanner modules.
 
 Contains:
 - OllamaConfig: Dataclass for Ollama configuration
+- OpenRouterConfig: Dataclass for OpenRouter configuration
 - call_ollama(): Make requests to Ollama API with retry logic
+- call_openrouter(): Make requests to OpenRouter API (Gemini/Qwen)
+- encode_images_for_api(): Convert images to base64 for multimodal API
 - safe_parse_json(): Multi-level JSON parsing with fallbacks
 - fill_defaults(): Fill missing fields with default values
 - regex_extract_fields(): Level 3 fallback for JSON extraction
 
 Usage:
-    from scanner.llm.client import call_ollama, safe_parse_json
+    from scanner.llm.client import call_ollama, call_openrouter, safe_parse_json
 
+    # Local Ollama
     response = call_ollama(system_prompt, user_message)
+
+    # OpenRouter (Gemini 2.0 Flash with Qwen fallback)
+    response = call_openrouter(system_prompt, user_message, images=[img_bytes])
+
     data, warnings = safe_parse_json(response, default_values)
 """
 
+import base64
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, Tuple, List
+from io import BytesIO
 
 import requests
 
@@ -31,6 +41,14 @@ from scanner.config import (
     OLLAMA_TIMEOUT,
     MAX_RETRIES,
     RETRY_DELAY,
+    # OpenRouter config
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
+    OPENROUTER_PRIMARY_MODEL,
+    OPENROUTER_FALLBACK_MODEL,
+    OPENROUTER_TIMEOUT,
+    LLM_FALLBACK_ENABLED,
+    LLM_FALLBACK_THRESHOLD,
 )
 
 
@@ -61,6 +79,26 @@ class OllamaConfig:
     num_predict: int = 500
     keep_alive: int = -1  # -1 = never unload model from memory
     think: bool = False   # Disable thinking for faster responses
+
+
+@dataclass
+class OpenRouterConfig:
+    """
+    Configuration for OpenRouter API requests (v88.0).
+
+    Supports Gemini 2.0 Flash as primary, Qwen 2.5-VL as fallback.
+    """
+    api_key: str = OPENROUTER_API_KEY
+    base_url: str = OPENROUTER_BASE_URL
+    primary_model: str = OPENROUTER_PRIMARY_MODEL
+    fallback_model: str = OPENROUTER_FALLBACK_MODEL
+    timeout: int = OPENROUTER_TIMEOUT
+    max_retries: int = MAX_RETRIES
+    retry_delay: int = RETRY_DELAY
+    temperature: float = 0.3
+    max_tokens: int = 2048
+    fallback_enabled: bool = LLM_FALLBACK_ENABLED
+    fallback_threshold: int = LLM_FALLBACK_THRESHOLD
 
 
 # === OLLAMA API ===
@@ -132,6 +170,246 @@ def call_ollama(
         # KeyError: unexpected JSON response structure
         # TypeError/ValueError: data conversion errors
         print(f"OLLAMA: Response processing error - {e}")
+        return None
+
+
+# === OPENROUTER API (v88.0) ===
+
+def detect_mime_type(img_bytes: bytes) -> str:
+    """Detect image MIME type from bytes header."""
+    if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+        return "image/png"
+    if img_bytes[:2] == b'\xff\xd8':
+        return "image/jpeg"
+    if img_bytes[:6] in (b'GIF87a', b'GIF89a'):
+        return "image/gif"
+    if img_bytes[:4] == b'RIFF' and img_bytes[8:12] == b'WEBP':
+        return "image/webp"
+    return "image/jpeg"  # Default fallback
+
+
+def compress_image(img_bytes: bytes, max_size: int = 1024, quality: int = 85) -> bytes:
+    """
+    Compress image to reduce API payload size.
+
+    Args:
+        img_bytes: Original image bytes
+        max_size: Maximum dimension (width or height)
+        quality: JPEG quality (1-100)
+
+    Returns:
+        Compressed image bytes
+    """
+    try:
+        from PIL import Image
+
+        img = Image.open(BytesIO(img_bytes))
+
+        # Convert to RGB if needed (for JPEG compression)
+        if img.mode in ('RGBA', 'LA', 'P'):
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            if img.mode == 'P':
+                img = img.convert('RGBA')
+            background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+            img = background
+
+        # Resize if too large
+        if max(img.size) > max_size:
+            ratio = max_size / max(img.size)
+            new_size = tuple(int(dim * ratio) for dim in img.size)
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+        # Compress to JPEG
+        buffer = BytesIO()
+        img.save(buffer, format='JPEG', quality=quality, optimize=True)
+        return buffer.getvalue()
+
+    except ImportError:
+        # PIL not available, return original
+        return img_bytes
+    except Exception:
+        # Any error, return original
+        return img_bytes
+
+
+def encode_images_for_api(images: List[bytes], compress: bool = True) -> List[Dict[str, Any]]:
+    """
+    Convert image bytes to OpenAI-compatible multimodal format.
+
+    Args:
+        images: List of image bytes
+        compress: Whether to compress images (default True)
+
+    Returns:
+        List of content blocks for multimodal API
+
+    Example:
+        >>> images = [open("photo.jpg", "rb").read()]
+        >>> content = encode_images_for_api(images)
+        >>> # Returns: [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}]
+    """
+    result = []
+    for img_bytes in images:
+        if compress:
+            img_bytes = compress_image(img_bytes)
+
+        mime_type = detect_mime_type(img_bytes)
+        b64 = base64.b64encode(img_bytes).decode('utf-8')
+
+        result.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime_type};base64,{b64}"}
+        })
+
+    return result
+
+
+# Track consecutive failures for fallback logic
+_openrouter_failures: Dict[str, int] = {}
+
+
+def call_openrouter(
+    system_prompt: str,
+    user_message: str,
+    images: Optional[List[bytes]] = None,
+    retry_count: int = 0,
+    config: Optional[OpenRouterConfig] = None,
+    _use_fallback: bool = False
+) -> Optional[str]:
+    """
+    Make a request to OpenRouter API with automatic fallback.
+
+    Supports multimodal input (text + images) for Gemini 2.0 Flash and Qwen 2.5-VL.
+    Automatically falls back to secondary model after consecutive failures.
+
+    Args:
+        system_prompt: System message defining the assistant's behavior
+        user_message: User's input message
+        images: Optional list of image bytes for vision analysis
+        retry_count: Current retry attempt (internal use)
+        config: Optional OpenRouterConfig for custom settings
+        _use_fallback: Internal flag to use fallback model
+
+    Returns:
+        str: Response content from API, or None on failure
+
+    Example:
+        # Text only
+        response = call_openrouter(
+            "You are a helpful assistant.",
+            "What is 2+2?"
+        )
+
+        # With images (vision)
+        with open("chart.png", "rb") as f:
+            img = f.read()
+        response = call_openrouter(
+            "Analyze this trading chart.",
+            "What patterns do you see?",
+            images=[img]
+        )
+    """
+    if config is None:
+        config = OpenRouterConfig()
+
+    if not config.api_key:
+        print("OPENROUTER: API key not configured! Set OPENROUTER_API_KEY env var.")
+        return None
+
+    # Select model (primary or fallback)
+    model = config.fallback_model if _use_fallback else config.primary_model
+
+    # Build messages with multimodal content
+    user_content: List[Any] = [{"type": "text", "text": user_message}]
+
+    if images:
+        image_content = encode_images_for_api(images)
+        user_content.extend(image_content)
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content}
+    ]
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {config.api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/scanner",  # Required by OpenRouter
+        "X-Title": "TelegramScanner"
+    }
+
+    try:
+        response = requests.post(
+            f"{config.base_url}/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=config.timeout
+        )
+
+        # Handle rate limiting
+        if response.status_code == 429:
+            if retry_count < config.max_retries:
+                wait = config.retry_delay * (retry_count + 1)
+                print(f"OPENROUTER: Rate limited, retry {retry_count + 1}/{config.max_retries} in {wait}s...")
+                time.sleep(wait)
+                return call_openrouter(system_prompt, user_message, images, retry_count + 1, config, _use_fallback)
+
+            # Try fallback model
+            if config.fallback_enabled and not _use_fallback:
+                print(f"OPENROUTER: Switching to fallback model: {config.fallback_model}")
+                return call_openrouter(system_prompt, user_message, images, 0, config, _use_fallback=True)
+
+            print(f"OPENROUTER: Rate limited after {config.max_retries} attempts!")
+            return None
+
+        if response.status_code != 200:
+            error_msg = response.text[:200] if response.text else "Unknown error"
+            print(f"OPENROUTER: HTTP {response.status_code} - {error_msg}")
+
+            # Try fallback on server errors
+            if response.status_code >= 500 and config.fallback_enabled and not _use_fallback:
+                print(f"OPENROUTER: Server error, trying fallback model...")
+                return call_openrouter(system_prompt, user_message, images, 0, config, _use_fallback=True)
+
+            return None
+
+        data = response.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+
+        # Reset failure counter on success
+        _openrouter_failures[model] = 0
+
+        return content
+
+    except requests.exceptions.ConnectionError:
+        print("OPENROUTER: Connection error! Check internet connectivity.")
+        return None
+    except requests.exceptions.Timeout:
+        _openrouter_failures[model] = _openrouter_failures.get(model, 0) + 1
+
+        if retry_count < config.max_retries:
+            wait = config.retry_delay * (retry_count + 1)
+            print(f"OPENROUTER: Timeout, retry {retry_count + 1}/{config.max_retries} in {wait}s...")
+            time.sleep(wait)
+            return call_openrouter(system_prompt, user_message, images, retry_count + 1, config, _use_fallback)
+
+        # Try fallback after threshold failures
+        if (config.fallback_enabled and not _use_fallback and
+            _openrouter_failures.get(model, 0) >= config.fallback_threshold):
+            print(f"OPENROUTER: {config.fallback_threshold} consecutive failures, switching to fallback...")
+            return call_openrouter(system_prompt, user_message, images, 0, config, _use_fallback=True)
+
+        print(f"OPENROUTER: Timeout after {config.max_retries} attempts!")
+        return None
+    except (KeyError, TypeError, ValueError) as e:
+        print(f"OPENROUTER: Response processing error - {e}")
         return None
 
 

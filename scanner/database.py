@@ -136,6 +136,10 @@ CHANNEL_SCHEMA = {
     'entities_json': 'TEXT DEFAULT NULL',
     'media_stats_json': 'TEXT DEFAULT NULL',
     'ad_contacts_json': 'TEXT DEFAULT NULL',
+
+    # v94.0: Contact extraction from Unified Analyzer
+    'contact_info': 'TEXT DEFAULT NULL',
+    'contact_type': 'TEXT DEFAULT NULL',
 }
 
 
@@ -643,16 +647,19 @@ class CrawlerDB:
         comments_text_gz: bytes,
         photo_blob: bytes,
         ad_status: int,
-        ai_summary: str
+        ai_summary: str,
+        contact_info: str,
+        contact_type: str
     ) -> tuple:
         """
         v66.0: Общая логика сериализации для claim_and_complete и mark_done.
         v68.0: Добавлен photo_blob для вечного кэша аватарок.
         v69.0: Добавлены ad_status и ai_summary.
+        v94.0: Добавлены contact_info и contact_type.
         DRY refactoring — JSON сериализация и params tuple в одном месте.
 
         Returns:
-            Tuple из 47 параметров для SQL UPDATE.
+            Tuple из 49 параметров для SQL UPDATE.
         """
         ad_links_json = json.dumps(ad_links or [], ensure_ascii=False)
 
@@ -686,7 +693,8 @@ class CrawlerDB:
             linked_chat_id, linked_chat_title,
             posts_text_gz, comments_text_gz,
             photo_blob,
-            ad_status, ai_summary
+            ad_status, ai_summary,
+            contact_info, contact_type
         )
 
     def claim_and_complete(
@@ -744,12 +752,16 @@ class CrawlerDB:
         photo_blob: bytes = None,
         # v69.0: Индикатор рекламы и AI описание
         ad_status: int = None,
-        ai_summary: str = None
+        ai_summary: str = None,
+        # v94.0: Contact extraction from Unified Analyzer
+        contact_info: str = None,
+        contact_type: str = None
     ) -> bool:
         """
         v43.0: Атомарно записывает результат ТОЛЬКО если канал в WAITING.
         v56.0: Расширено для полного хранения данных сканирования.
         v69.0: Добавлены ad_status и ai_summary.
+        v94.0: Добавлены contact_info и contact_type.
 
         Реализует "всё или ничего" семантику:
         - Если канал в WAITING → записываем ВСЕ данные, возвращаем True
@@ -780,7 +792,8 @@ class CrawlerDB:
             linked_chat_id, linked_chat_title,
             posts_text_gz, comments_text_gz,
             photo_blob,
-            ad_status, ai_summary
+            ad_status, ai_summary,
+            contact_info, contact_type
         )
 
         cursor = self.conn.cursor()
@@ -833,6 +846,8 @@ class CrawlerDB:
                 photo_blob = ?,
                 ad_status = ?,
                 ai_summary = ?,
+                contact_info = ?,
+                contact_type = ?,
                 scanned_at = datetime('now')
             WHERE LOWER(username) = ? AND status = 'WAITING'
             RETURNING username
@@ -921,12 +936,16 @@ class CrawlerDB:
         photo_blob: bytes = None,
         # v69.0: Индикатор рекламы и AI описание
         ad_status: int = None,
-        ai_summary: str = None
+        ai_summary: str = None,
+        # v94.0: Contact extraction from Unified Analyzer
+        contact_info: str = None,
+        contact_type: str = None
     ):
         """
         Помечает канал как проверенный.
         v56.0: Расширено для полного хранения данных сканирования.
         v69.0: Добавлены ad_status и ai_summary.
+        v94.0: Добавлены contact_info и contact_type.
 
         Args:
             status: GOOD, BAD, ERROR, PRIVATE
@@ -993,7 +1012,8 @@ class CrawlerDB:
             linked_chat_id, linked_chat_title,
             posts_text_gz, comments_text_gz,
             photo_blob,
-            ad_status, ai_summary
+            ad_status, ai_summary,
+            contact_info, contact_type
         )
 
         cursor = self.conn.cursor()
@@ -1046,6 +1066,8 @@ class CrawlerDB:
                 photo_blob = ?,
                 ad_status = ?,
                 ai_summary = ?,
+                contact_info = ?,
+                contact_type = ?,
                 scanned_at = ?
             WHERE LOWER(username) = ?
         ''', params + (datetime.now(), username))

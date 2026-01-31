@@ -843,6 +843,7 @@ function App() {
                 </div>
                 <div className={styles.unifiedMeta}>
                   @{selectedChannel.username} · {formatNumber(selectedChannel.members)} подп.
+                  {selectedChannel.contact_info && ` · рекл. - ${selectedChannel.contact_info}`}
                 </div>
                 {/* v70.3: Flags - под @username */}
                 <div className={styles.inlineFlags}>
@@ -1345,8 +1346,9 @@ function App() {
                       </div>
                       {/* Meta line */}
                       <div className={styles.cardMeta}>
-                        @{channel.username} • {formatNumber(channel.members)}
-                        {channel.scanned_at && ` • ${formatRelativeDate(channel.scanned_at)}`}
+                        @{channel.username} · {formatNumber(channel.members)} подп.
+                        {channel.contact_info && ` · рекл. - ${channel.contact_info}`}
+                        {channel.scanned_at && ` · ${formatRelativeDate(channel.scanned_at)}`}
                       </div>
                     </div>
                     {/* v59.3: Score Ring small - синхронизирован с детальной страницей */}

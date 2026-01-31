@@ -29,7 +29,7 @@
 - `cd mini-app && python -m deploy --dry-run deploy all` — превью деплоя
 
 ## 🚧 Current Session Status
-- **Focus:** v81.0 Multi-Feature Release
+- **Focus:** v88.0 Gemini 2.0 Flash Migration
 - **Current Step:** ✅ Completed
 - **Blockers:** Нет
 
@@ -37,6 +37,62 @@
 
 ### 🔄 In Progress
 - Нет активных задач
+
+### ✅ Completed (2026-01-31) — v88.0 Gemini 2.0 Flash Migration
+
+**Миграция с локального Ollama на облачный OpenRouter (Gemini 2.0 Flash):**
+
+| Компонент | Описание |
+|-----------|----------|
+| `scanner/config.py` | +OPENROUTER_*, USE_OLLAMA flag |
+| `scanner/llm/client.py` | +call_openrouter(), encode_images_for_api() |
+| `scanner/llm/backend.py` | LLMBackendManager с auto-fallback |
+| `scanner/llm/unified_analyzer.py` | Unified prompt (1 вызов вместо 5) |
+| `scanner/llm/adapter.py` | UnifiedAnalysisResult → LLMAnalysisResult |
+| `scanner/crawler.py` | Интеграция unified_analyze() |
+| `scanner/cli.py` | USE_OLLAMA check |
+| `scripts/test_openrouter.py` | API тестирование |
+| `.env.example` | OPENROUTER_API_KEY |
+
+**Архитектура Unified Prompt:**
+```
+OLD (5 API calls):
+  photos → Florence-2 → format_for_prompt()
+  messages → classifier → category
+  messages → brand_safety_analyzer → safety
+  messages → ad_analyzer → ad%
+  comments → comment_analyzer → bot%, trust
+  messages → summarizer → summary_ru
+
+NEW (1 API call):
+  photos + messages + comments → unified_analyze() → all results
+```
+
+**Модели:**
+- Primary: `google/gemini-2.0-flash-001` (1M context, vision)
+- Fallback: `qwen/qwen2.5-vl-72b-instruct` (32K context, vision)
+
+**Fallback Logic:**
+- Auto-switch после 3 consecutive failures
+- `USE_OLLAMA=true` для локального rollback
+- `--use-ollama` flag в CLI
+
+**Cost Estimate:**
+- 100 channels: $0.03
+- 1000 channels: $0.30
+- 15k/month: ~$4.50
+
+**Файлы изменены:**
+- scanner/config.py — +15 строк (OpenRouter config)
+- scanner/llm/client.py — +180 строк (OpenRouter client)
+- scanner/llm/backend.py — новый (220 строк)
+- scanner/llm/unified_analyzer.py — новый (350 строк)
+- scanner/llm/adapter.py — новый (130 строк)
+- scanner/llm/__init__.py — +30 строк exports
+- scanner/crawler.py — +100 строк (unified path)
+- scanner/cli.py — +50 строк (unified path)
+- scripts/test_openrouter.py — новый (200 строк)
+- .env.example — обновлён
 
 ### ✅ Completed (2026-01-30) — v81.0 Multi-Feature Release
 

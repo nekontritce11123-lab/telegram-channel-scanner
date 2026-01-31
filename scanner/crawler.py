@@ -47,8 +47,16 @@ from .ad_detector import detect_ad_status  # v69.0: 3-уровневая дет�
 from .summarizer import generate_channel_summary  # v69.0: AI описание канала
 # v46.0: Brand Safety теперь в LLM Analyzer, стоп-слова deprecated
 
+# v88.0: Unified Analyzer (Gemini 2.0 Flash + OpenRouter)
+from .llm import (
+    unified_analyze,
+    adapt_unified_to_legacy,
+    extract_summary,
+    get_backend,
+)
+
 # v43.0: Централизованная конфигурация
-from .config import GOOD_THRESHOLD, COLLECT_THRESHOLD, ensure_ollama_running
+from .config import GOOD_THRESHOLD, COLLECT_THRESHOLD, ensure_ollama_running, USE_OLLAMA
 
 # v66.0: Константа на уровне модуля (DRY — не создаётся при каждом вызове)
 SKIP_WORDS = {
@@ -220,20 +228,37 @@ class SmartCrawler:
 
     async def start(self):
         """Запускает Pyrogram клиент и AI классификатор."""
-        # v43.1: Проверяем и запускаем Ollama ПЕРВЫМ делом
-        # Без Ollama краулер не может работать (классификация + LLM анализ)
-        ensure_ollama_running()  # Выбросит RuntimeError если не удалось
+        # v88.0: Проверяем бэкенд
+        if USE_OLLAMA:
+            # v43.1: Проверяем и запускаем Ollama ПЕРВЫМ делом
+            ensure_ollama_running()  # Выбросит RuntimeError если не удалось
+            print(f"[OK] LLM Backend: Ollama (local)")
+        else:
+            # v88.0: Используем OpenRouter (Gemini 2.0 Flash)
+            backend = get_backend()
+            health = backend.health_check()
+            if health['primary']['available']:
+                print(f"[OK] LLM Backend: {health['primary']['name']} ({health['primary']['model']})")
+            else:
+                print(f"[!] Primary backend unavailable, will fallback to {health['secondary']['name']}")
 
         self.client = get_client()
         await self.client.start()
         print("Подключено к Telegram")
 
-        # v29: Классификатор без фонового worker — всё синхронно
-        self.classifier = get_classifier()
+        # v88.0: Классификатор и LLM Analyzer только для Ollama mode
+        if USE_OLLAMA:
+            # v29: Классификатор без фонового worker — всё синхронно
+            self.classifier = get_classifier()
 
-        # v38.0: LLM Analyzer для ad_percentage и bot detection
-        self.llm_analyzer = LLMAnalyzer()
-        print("[OK] LLM Analyzer готов")
+            # v38.0: LLM Analyzer для ad_percentage и bot detection
+            self.llm_analyzer = LLMAnalyzer()
+            print("[OK] LLM Analyzer готов (Ollama)")
+        else:
+            # v88.0: Unified Analyzer handles everything
+            self.classifier = None
+            self.llm_analyzer = None
+            print("[OK] Unified Analyzer готов (Gemini 2.0 Flash)")
 
     async def stop(self):
         """Останавливает клиент и классификатор."""
@@ -410,92 +435,172 @@ class SmartCrawler:
         # v46.0: Brand Safety теперь через LLM (см. ниже после llm_analyzer.analyze)
         # Старый стоп-слова фильтр удалён - LLM понимает контекст лучше
 
-        # v63.0: Vision Analysis - анализ изображений с канала
-        image_descriptions = ""
-        try:
-            photos = await download_photos_from_messages(
-                self.client, scan_result.messages, max_photos=10, chat=scan_result.chat
-            )
-            if photos:
-                print(f"  [VISION] {len(photos)} images...")
-                analyses = analyze_images_batch(photos)
-                image_descriptions = format_for_prompt(analyses)
-                print(f"  [VISION] Done ({len(analyses)} analyzed)")
-        except Exception as e:
-            logger.warning(f"Vision analysis failed: {e}")
-
-        # v43.2: Сначала классификация и LLM анализ, ПОТОМ score
-        # (чтобы llm_trust_factor применился к score!)
-
-        # v41.2: Классификация для ВСЕХ каналов (не только GOOD)
+        # v88.0: Unified path (OpenRouter/Gemini) vs Legacy path (Ollama)
         category = None
-        if self.classifier:
-            channel_id = getattr(scan_result.chat, 'id', None)
-            if channel_id:
-                category = await self.classifier.classify_sync(
-                    channel_id=channel_id,
-                    title=getattr(scan_result.chat, 'title', ''),
-                    description=getattr(scan_result.chat, 'description', ''),
+        llm_result = None
+        image_descriptions = ""
+
+        # Подготавливаем комментарии для анализа
+        comments = []
+        if scan_result.comments_data:
+            comments = scan_result.comments_data.get('comments', [])
+
+        if not USE_OLLAMA:
+            # ============================================================
+            # v88.0: UNIFIED ANALYZER PATH (Gemini 2.0 Flash via OpenRouter)
+            # Single API call for: category + safety + ads + comments + summary
+            # Native vision support - no Florence-2 needed
+            # ============================================================
+            try:
+                # Download images for native Gemini vision
+                photos = []
+                try:
+                    photos = await download_photos_from_messages(
+                        self.client, scan_result.messages, max_photos=5, chat=scan_result.chat
+                    )
+                    if photos:
+                        print(f"  [VISION] {len(photos)} images for Gemini...")
+                except Exception as e:
+                    logger.warning(f"Photo download failed: {e}")
+
+                # Unified analysis (category + safety + ads + comments + summary in ONE call)
+                unified_result = await unified_analyze(
+                    chat=scan_result.chat,
                     messages=scan_result.messages,
-                    image_descriptions=image_descriptions  # v63.0
+                    comments=comments,
+                    images=photos if photos else None
                 )
+
+                # Extract results
+                category = unified_result.category
                 if category:
                     self.classified_count += 1
                     result['category'] = category
 
-        # v43.2: LLM Analysis ПЕРЕД calculate_final_score (чтобы штрафы применились!)
-        llm_result = None
-        if self.llm_analyzer:
-            try:
-                comments = []
-                if scan_result.comments_data:
-                    comments = scan_result.comments_data.get('comments', [])
+                result['ad_pct'] = unified_result.ad_percentage
+                result['bot_pct'] = unified_result.bot_percentage
 
-                llm_result = self.llm_analyzer.analyze(
-                    channel_id=getattr(scan_result.chat, 'id', 0),
-                    messages=scan_result.messages,
-                    comments=comments,
-                    category=category or "DEFAULT"
-                )
+                # v88.0: AI summary from unified response
+                if unified_result.summary_ru and len(unified_result.summary_ru) >= 50:
+                    result['ai_summary'] = unified_result.summary_ru
 
-                if llm_result:
-                    llm_analysis = {
-                        'ad_percentage': llm_result.posts.ad_percentage if llm_result.posts else None,
-                        'bot_percentage': llm_result.comments.bot_percentage if llm_result.comments else None,
-                        'trust_score': llm_result.comments.trust_score if llm_result.comments else None,
-                        'llm_trust_factor': llm_result.llm_trust_factor,
-                        'ad_mult': getattr(llm_result, '_ad_mult', 1.0),
-                        'bot_mult': getattr(llm_result, '_comment_mult', 1.0),
+                # v94.0: Contact extraction
+                result['contact_info'] = unified_result.contact_info
+                result['contact_type'] = unified_result.contact_type
+
+                # v88.0: Image insights for logging
+                if unified_result.image_insights:
+                    image_descriptions = f"[Image Analysis]: {unified_result.image_insights}"
+
+                # Brand Safety
+                if unified_result.is_toxic:
+                    result['safety'] = {
+                        'is_toxic': True,
+                        'category': unified_result.toxic_category,
+                        'ratio': 0.0,
+                        'severity': unified_result.toxic_severity,
+                        'evidence': unified_result.toxic_evidence,
+                        'confidence': unified_result.category_confidence,
                     }
-                    result['ad_pct'] = llm_analysis.get('ad_percentage')
-                    result['bot_pct'] = llm_analysis.get('bot_percentage')
 
-                    # v46.0: Brand Safety из LLM (заменяет стоп-слова)
-                    if llm_result.safety:
-                        result['safety'] = {
-                            'is_toxic': llm_result.safety.get('is_toxic', False),
-                            'category': llm_result.safety.get('toxic_category'),
-                            'ratio': llm_result.safety.get('toxic_ratio', 0.0),
-                            'severity': llm_result.safety.get('severity', 'LOW'),
-                            'evidence': llm_result.safety.get('evidence', []),
-                            'confidence': llm_result.safety.get('confidence', 0),
+                    # CRITICAL = сразу BAD
+                    if unified_result.toxic_severity == 'CRITICAL':
+                        result['status'] = 'BAD'
+                        result['verdict'] = f"TOXIC_{unified_result.toxic_category or 'CONTENT'}"
+                        result['score'] = 0
+                        result['title'] = content['title']
+                        result['description'] = content['description']
+                        result['content_json'] = content['content_json']
+                        result['elapsed'] = _time.time() - _start_time
+                        return result
+
+                # Convert to legacy format for scorer compatibility
+                llm_result = adapt_unified_to_legacy(unified_result, category=category)
+
+            except Exception as e:
+                logger.warning(f"Unified analysis failed: {e}, falling back to defaults")
+                # Continue with default values
+
+        else:
+            # ============================================================
+            # LEGACY PATH: Ollama (Florence-2 vision + separate LLM calls)
+            # ============================================================
+
+            # v63.0: Vision Analysis - анализ изображений с канала
+            try:
+                photos = await download_photos_from_messages(
+                    self.client, scan_result.messages, max_photos=10, chat=scan_result.chat
+                )
+                if photos:
+                    print(f"  [VISION] {len(photos)} images...")
+                    analyses = analyze_images_batch(photos)
+                    image_descriptions = format_for_prompt(analyses)
+                    print(f"  [VISION] Done ({len(analyses)} analyzed)")
+            except Exception as e:
+                logger.warning(f"Vision analysis failed: {e}")
+
+            # v41.2: Классификация для ВСЕХ каналов (не только GOOD)
+            if self.classifier:
+                channel_id = getattr(scan_result.chat, 'id', None)
+                if channel_id:
+                    category = await self.classifier.classify_sync(
+                        channel_id=channel_id,
+                        title=getattr(scan_result.chat, 'title', ''),
+                        description=getattr(scan_result.chat, 'description', ''),
+                        messages=scan_result.messages,
+                        image_descriptions=image_descriptions  # v63.0
+                    )
+                    if category:
+                        self.classified_count += 1
+                        result['category'] = category
+
+            # v43.2: LLM Analysis ПЕРЕД calculate_final_score
+            if self.llm_analyzer:
+                try:
+                    llm_result = self.llm_analyzer.analyze(
+                        channel_id=getattr(scan_result.chat, 'id', 0),
+                        messages=scan_result.messages,
+                        comments=comments,
+                        category=category or "DEFAULT"
+                    )
+
+                    if llm_result:
+                        llm_analysis = {
+                            'ad_percentage': llm_result.posts.ad_percentage if llm_result.posts else None,
+                            'bot_percentage': llm_result.comments.bot_percentage if llm_result.comments else None,
+                            'trust_score': llm_result.comments.trust_score if llm_result.comments else None,
+                            'llm_trust_factor': llm_result.llm_trust_factor,
+                            'ad_mult': getattr(llm_result, '_ad_mult', 1.0),
+                            'bot_mult': getattr(llm_result, '_comment_mult', 1.0),
                         }
+                        result['ad_pct'] = llm_analysis.get('ad_percentage')
+                        result['bot_pct'] = llm_analysis.get('bot_percentage')
 
-                        # CRITICAL = сразу BAD без дальнейшего анализа
-                        if llm_result.safety.get('severity') == 'CRITICAL':
-                            toxic_cat = llm_result.safety.get('toxic_category', 'CONTENT')
-                            result['status'] = 'BAD'
-                            result['verdict'] = f"TOXIC_{toxic_cat}"
-                            result['score'] = 0
-                            result['title'] = content['title']
-                            result['description'] = content['description']
-                            result['content_json'] = content['content_json']
-                            result['elapsed'] = _time.time() - _start_time
-                            return result
+                        # v46.0: Brand Safety из LLM
+                        if llm_result.safety:
+                            result['safety'] = {
+                                'is_toxic': llm_result.safety.get('is_toxic', False),
+                                'category': llm_result.safety.get('toxic_category'),
+                                'ratio': llm_result.safety.get('toxic_ratio', 0.0),
+                                'severity': llm_result.safety.get('severity', 'LOW'),
+                                'evidence': llm_result.safety.get('evidence', []),
+                                'confidence': llm_result.safety.get('confidence', 0),
+                            }
 
-            except (AttributeError, KeyError, TypeError) as e:
-                # LLM анализ опционален - не прерываем сканирование
-                logger.debug(f"LLM analysis optional error: {e}")
+                            # CRITICAL = сразу BAD
+                            if llm_result.safety.get('severity') == 'CRITICAL':
+                                toxic_cat = llm_result.safety.get('toxic_category', 'CONTENT')
+                                result['status'] = 'BAD'
+                                result['verdict'] = f"TOXIC_{toxic_cat}"
+                                result['score'] = 0
+                                result['title'] = content['title']
+                                result['description'] = content['description']
+                                result['content_json'] = content['content_json']
+                                result['elapsed'] = _time.time() - _start_time
+                                return result
+
+                except (AttributeError, KeyError, TypeError) as e:
+                    logger.debug(f"LLM analysis optional error: {e}")
 
         # v43.2: Теперь считаем score С учётом llm_result (ad_percentage штраф!)
         try:
@@ -562,32 +667,34 @@ class SmartCrawler:
         result['ad_status'] = detect_ad_status(content['description'])
 
         # v69.0: AI описание канала (500+ символов)
-        try:
-            # Извлекаем тексты постов для анализа
-            post_texts = []
-            for m in scan_result.messages[:15]:  # Берём больше постов для контекста
-                text = None
-                if hasattr(m, 'message') and m.message:
-                    text = m.message
-                elif hasattr(m, 'text') and m.text:
-                    text = m.text
-                elif hasattr(m, 'caption') and m.caption:
-                    text = m.caption
-                if text and len(text.strip()) > 30:
-                    post_texts.append(text.strip())
+        # v88.0: Skip if already generated by unified analyzer
+        if result.get('ai_summary') is None:
+            try:
+                # Извлекаем тексты постов для анализа
+                post_texts = []
+                for m in scan_result.messages[:15]:  # Берём больше постов для контекста
+                    text = None
+                    if hasattr(m, 'message') and m.message:
+                        text = m.message
+                    elif hasattr(m, 'text') and m.text:
+                        text = m.text
+                    elif hasattr(m, 'caption') and m.caption:
+                        text = m.caption
+                    if text and len(text.strip()) > 30:
+                        post_texts.append(text.strip())
 
-            # Генерируем описание только для GOOD каналов (экономим API)
-            if score >= GOOD_THRESHOLD and post_texts:
-                result['ai_summary'] = generate_channel_summary(
-                    title=content['title'] or username,
-                    description=content['description'],
-                    posts=post_texts
-                )
-            else:
+                # Генерируем описание только для GOOD каналов (экономим API)
+                if score >= GOOD_THRESHOLD and post_texts:
+                    result['ai_summary'] = generate_channel_summary(
+                        title=content['title'] or username,
+                        description=content['description'],
+                        posts=post_texts
+                    )
+                else:
+                    result['ai_summary'] = None
+            except Exception as e:
+                logger.warning(f"[{username}] AI summary error: {e}")
                 result['ai_summary'] = None
-        except Exception as e:
-            logger.warning(f"[{username}] AI summary error: {e}")
-            result['ai_summary'] = None
 
         # v56.0: Собираем posts_raw — сырые данные 50 постов для пересчёта
         posts_raw = [{
@@ -868,6 +975,9 @@ class SmartCrawler:
                         # v69.0: Индикатор рекламы и AI описание
                         ad_status=result.get('ad_status'),
                         ai_summary=result.get('ai_summary'),
+                        # v94.0: Contact extraction
+                        contact_info=result.get('contact_info'),
+                        contact_type=result.get('contact_type'),
                     )
 
                     if not success:

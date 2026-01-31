@@ -37,7 +37,7 @@ from .scorer import calculate_final_score
 from .llm_analyzer import LLMAnalyzer, LLMAnalysisResult, OLLAMA_URL, OLLAMA_MODEL
 from .classifier import get_classifier
 from .vision import analyze_images_batch, format_for_prompt
-from .config import ensure_ollama_running, check_ollama_available
+from .config import ensure_ollama_running, check_ollama_available, USE_OLLAMA
 from .database import CrawlerDB
 from .metrics import get_message_reactions_count  # v57.0: для posts_raw
 from .json_compression import (
@@ -45,6 +45,8 @@ from .json_compression import (
 )  # v57.0: JSON compression
 from .ad_detector import detect_ad_status  # v69.0: Детекция рекламы
 from .summarizer import generate_channel_summary  # v69.0: AI описание
+# v88.0: Unified Analyzer (Gemini 2.0 Flash)
+from .llm import unified_analyze, adapt_unified_to_legacy, get_backend
 
 
 async def scan_channel(channel: str) -> dict:
@@ -58,17 +60,28 @@ async def scan_channel(channel: str) -> dict:
     Returns:
         dict с результатами анализа
     """
-    # v43.1: Проверяем и запускаем Ollama если не работает
-    try:
-        ensure_ollama_running()
-    except RuntimeError as e:
-        print(f"\n❌ ОШИБКА: {e}")
-        print("\nOllama обязателен для работы сканера!")
-        print("Инструкция:")
-        print("  1. Установи Ollama: https://ollama.ai")
-        print("  2. Запусти сервер: ollama serve")
-        print(f"  3. Установи модель: ollama pull {OLLAMA_MODEL}")
-        sys.exit(1)
+    # v88.0: Проверяем LLM backend (Ollama или OpenRouter)
+    if USE_OLLAMA:
+        # v43.1: Проверяем и запускаем Ollama если не работает
+        try:
+            ensure_ollama_running()
+        except RuntimeError as e:
+            print(f"\n❌ ОШИБКА: {e}")
+            print("\nOllama обязателен для работы сканера!")
+            print("Инструкция:")
+            print("  1. Установи Ollama: https://ollama.ai")
+            print("  2. Запусти сервер: ollama serve")
+            print(f"  3. Установи модель: ollama pull {OLLAMA_MODEL}")
+            sys.exit(1)
+        print(f"[OK] LLM Backend: Ollama ({OLLAMA_MODEL})")
+    else:
+        # v88.0: Используем OpenRouter (Gemini 2.0 Flash)
+        backend = get_backend()
+        health = backend.health_check()
+        if health['primary']['available']:
+            print(f"[OK] LLM Backend: {health['primary']['name']} ({health['primary']['model']})")
+        else:
+            print(f"[!] Primary backend unavailable, fallback to {health['secondary']['name']}")
 
     async with get_client() as client:
         print(f"Подключение к Telegram...")
@@ -113,50 +126,105 @@ async def scan_channel(channel: str) -> dict:
         if photo_blob:
             print(f"[PHOTO] Avatar downloaded ({len(photo_blob):,} bytes)")
 
-        # v38.0: LLM анализ
+        # v88.0: LLM анализ (Unified или Legacy)
         print("\n--- LLM ANALYSIS ---")
-        llm_analyzer = LLMAnalyzer()
 
         # Собираем комментарии из comments_data
-        # v41.0: comments_data['comments'] — это список текстов комментариев (не dict)
         comments_list = []
         if comments_data.get('enabled'):
             comments_list = comments_data.get('comments', [])
 
-        # v63.0: Vision Analysis - анализ изображений
+        category = None
+        llm_result = None
         image_descriptions = ""
-        try:
-            photos = await download_photos_from_messages(client, messages, max_photos=10, chat=chat)
-            if photos:
-                print(f"[VISION] Analyzing {len(photos)} images...")
-                analyses = analyze_images_batch(photos)
-                image_descriptions = format_for_prompt(analyses)
-                print(f"[VISION] Done ({len(analyses)} analyzed)")
-        except Exception as e:
-            print(f"[VISION] Error: {e}")
 
-        # v38.3: Получаем категорию из classifier для category-aware LLM анализа
-        classifier = get_classifier()
-        category = await classifier.classify_sync(
-            channel_id=getattr(chat, 'id', 0),
-            title=getattr(chat, 'title', ''),
-            description=getattr(chat, 'description', ''),
-            messages=messages,
-            image_descriptions=image_descriptions  # v63.0
-        )
-        if not category:
-            category = "DEFAULT"
-        print(f"Category: {category}")
+        if not USE_OLLAMA:
+            # ============================================================
+            # v88.0: UNIFIED ANALYZER (Gemini 2.0 Flash via OpenRouter)
+            # ============================================================
+            print(f"[UNIFIED] Gemini 2.0 Flash analysis...")
 
-        llm_result = llm_analyzer.analyze(
-            channel_id=getattr(chat, 'id', 0),
-            messages=messages,
-            comments=comments_list,
-            category=category
-        )
+            # Download images for native vision
+            photos = []
+            try:
+                photos = await download_photos_from_messages(client, messages, max_photos=5, chat=chat)
+                if photos:
+                    print(f"[VISION] {len(photos)} images for Gemini...")
+            except Exception as e:
+                print(f"[VISION] Download error: {e}")
+
+            # Unified analysis (category + safety + ads + comments + summary)
+            unified_result = await unified_analyze(
+                chat=chat,
+                messages=messages,
+                comments=comments_list,
+                images=photos if photos else None
+            )
+
+            # Extract results
+            category = unified_result.category
+            print(f"Category: {category}")
+            print(f"Ad%: {unified_result.ad_percentage}%, Bot%: {unified_result.bot_percentage}%")
+            if unified_result.is_toxic:
+                print(f"[TOXIC] {unified_result.toxic_category}: {unified_result.toxic_severity}")
+
+            # v88.0: AI summary from unified
+            result_ai_summary = unified_result.summary_ru if len(unified_result.summary_ru or '') >= 50 else None
+
+            # v94.0: Contact extraction (store for later)
+            result_contact_info = unified_result.contact_info
+            result_contact_type = unified_result.contact_type
+
+            # Convert to legacy format for scorer
+            llm_result = adapt_unified_to_legacy(unified_result, category=category)
+
+        else:
+            # ============================================================
+            # LEGACY PATH: Ollama (Florence-2 vision + separate LLM calls)
+            # ============================================================
+            llm_analyzer = LLMAnalyzer()
+
+            # v63.0: Vision Analysis
+            try:
+                photos = await download_photos_from_messages(client, messages, max_photos=10, chat=chat)
+                if photos:
+                    print(f"[VISION] Analyzing {len(photos)} images...")
+                    analyses = analyze_images_batch(photos)
+                    image_descriptions = format_for_prompt(analyses)
+                    print(f"[VISION] Done ({len(analyses)} analyzed)")
+            except Exception as e:
+                print(f"[VISION] Error: {e}")
+
+            # v38.3: Classification
+            classifier = get_classifier()
+            category = await classifier.classify_sync(
+                channel_id=getattr(chat, 'id', 0),
+                title=getattr(chat, 'title', ''),
+                description=getattr(chat, 'description', ''),
+                messages=messages,
+                image_descriptions=image_descriptions
+            )
+            if not category:
+                category = "DEFAULT"
+            print(f"Category: {category}")
+
+            llm_result = llm_analyzer.analyze(
+                channel_id=getattr(chat, 'id', 0),
+                messages=messages,
+                comments=comments_list,
+                category=category
+            )
+
+            result_ai_summary = None  # Will be generated later
+            result_contact_info = None  # v94.0: Legacy path has no contact extraction
+            result_contact_type = None
 
         # v38.0: передаём llm_result в scorer
         result = calculate_final_score(chat, messages, comments_data, users, channel_health, llm_result=llm_result)
+
+        # v94.0: Add contact info to result
+        result['contact_info'] = result_contact_info
+        result['contact_type'] = result_contact_type
 
         # v57.0: Собираем posts_raw для полного хранения
         posts_raw = [{
@@ -210,34 +278,38 @@ async def scan_channel(channel: str) -> dict:
         result['ad_status'] = detect_ad_status(result['description'])
 
         # v69.0: AI описание канала (для GOOD каналов)
-        try:
-            final_score = result.get('final_score', 0)
-            if final_score >= 60:  # GOOD_THRESHOLD
-                post_texts = []
-                for m in messages[:15]:
-                    text = None
-                    if hasattr(m, 'message') and m.message:
-                        text = m.message
-                    elif hasattr(m, 'text') and m.text:
-                        text = m.text
-                    elif hasattr(m, 'caption') and m.caption:
-                        text = m.caption
-                    if text and len(text.strip()) > 30:
-                        post_texts.append(text.strip())
+        # v88.0: Skip if already generated by unified analyzer
+        if result_ai_summary:
+            result['ai_summary'] = result_ai_summary
+        else:
+            try:
+                final_score = result.get('final_score', 0)
+                if final_score >= 60:  # GOOD_THRESHOLD
+                    post_texts = []
+                    for m in messages[:15]:
+                        text = None
+                        if hasattr(m, 'message') and m.message:
+                            text = m.message
+                        elif hasattr(m, 'text') and m.text:
+                            text = m.text
+                        elif hasattr(m, 'caption') and m.caption:
+                            text = m.caption
+                        if text and len(text.strip()) > 30:
+                            post_texts.append(text.strip())
 
-                if post_texts:
-                    result['ai_summary'] = generate_channel_summary(
-                        title=result['title'] or channel,
-                        description=result['description'],
-                        posts=post_texts
-                    )
+                    if post_texts:
+                        result['ai_summary'] = generate_channel_summary(
+                            title=result['title'] or channel,
+                            description=result['description'],
+                            posts=post_texts
+                        )
+                    else:
+                        result['ai_summary'] = None
                 else:
                     result['ai_summary'] = None
-            else:
+            except Exception as e:
+                print(f"[WARN] AI summary error: {e}")
                 result['ai_summary'] = None
-        except Exception as e:
-            print(f"[WARN] AI summary error: {e}")
-            result['ai_summary'] = None
 
         # v57.0: Добавляем channel_health и scan_result для save_to_database
         result['channel_health'] = channel_health
@@ -696,6 +768,9 @@ def save_to_database(result: dict) -> None:
             # v69.0: Индикатор рекламы и AI описание
             ad_status=result.get('ad_status'),
             ai_summary=result.get('ai_summary'),
+            # v94.0: Contact extraction
+            contact_info=result.get('contact_info'),
+            contact_type=result.get('contact_type'),
         )
 
         print(f"[OK] Сохранено в БД: @{username} ({status})")

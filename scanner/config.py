@@ -14,10 +14,32 @@ import sys
 import time
 import subprocess
 import requests
+from dotenv import load_dotenv
+
+# Load .env file before reading any env vars
+load_dotenv()
 
 
 # =============================================================================
-# OLLAMA API
+# LLM BACKEND CONFIGURATION (v88.0)
+# =============================================================================
+
+# Backend selection: OpenRouter (default) or Ollama (local)
+USE_OLLAMA = os.getenv("USE_OLLAMA", "false").lower() in ("1", "true", "yes")
+
+# OpenRouter API (Gemini 2.0 Flash + Qwen 2.5-VL fallback)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+OPENROUTER_PRIMARY_MODEL = os.getenv("OPENROUTER_PRIMARY_MODEL", "google/gemini-2.0-flash-001")
+OPENROUTER_FALLBACK_MODEL = os.getenv("OPENROUTER_FALLBACK_MODEL", "qwen/qwen2.5-vl-72b-instruct")
+OPENROUTER_TIMEOUT = int(os.getenv("OPENROUTER_TIMEOUT", "120"))
+
+# Fallback configuration
+LLM_FALLBACK_ENABLED = os.getenv("LLM_FALLBACK_ENABLED", "true").lower() in ("1", "true", "yes")
+LLM_FALLBACK_THRESHOLD = int(os.getenv("LLM_FALLBACK_THRESHOLD", "3"))  # consecutive failures before switch
+
+# =============================================================================
+# OLLAMA API (local fallback)
 # =============================================================================
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")

@@ -25,6 +25,7 @@ export interface Channel {
   photo_url: string | null
   is_verified: boolean  // v34.0: Telegram верификация
   ad_status: number | null  // v69.0: 0=нельзя, 1=возможно, 2=можно купить
+  contact_info?: string | null  // v94.0: Ad contact
 }
 
 // v7.0: Detailed breakdown structure
