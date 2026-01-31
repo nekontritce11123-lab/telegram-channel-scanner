@@ -335,6 +335,11 @@ class SmartCrawler:
             dict с delete=True для удаления, или
             None для retry (канал остаётся WAITING)
         """
+        # v87.0: Проверка skip list
+        is_skipped, reason = self.db.is_skipped(username)
+        if is_skipped:
+            return {'username': username, 'delete': True, 'skip_reason': reason}
+
         # v50.0: Тайминг обработки
         import time as _time
         _start_time = _time.time()
@@ -365,6 +370,12 @@ class SmartCrawler:
 
         # Сканируем
         scan_result = await smart_scan_safe(self.client, username)
+
+        # v87.0: Добавить в skip list если слишком маленький
+        if scan_result.channel_health.get('status') == 'skipped':
+            members = scan_result.channel_health.get('members_count', 0)
+            self.db.add_to_skip_list(username, 'TOO_SMALL', members, days=7)
+            return {'username': username, 'delete': True, 'skip_reason': 'TOO_SMALL'}
 
         # v43.0: Проверяем на ошибку
         if scan_result.chat is None:
@@ -714,6 +725,11 @@ class SmartCrawler:
             max_channels: максимум каналов для обработки (None = бесконечно)
             verbose: выводить ли подробный лог
         """
+        # v87.0: Очистка истёкших записей skip list
+        cleaned = self.db.cleanup_skip_list()
+        if cleaned > 0:
+            print(f"[OK] Очищено {cleaned} записей из skip list")
+
         # v43.0: Одноразовый сброс PROCESSING для миграции со старых версий
         # После миграции этот код ничего не делает (нет PROCESSING каналов)
         reset = self.db.reset_processing()

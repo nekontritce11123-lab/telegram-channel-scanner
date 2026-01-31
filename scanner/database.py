@@ -328,6 +328,18 @@ class CrawlerDB:
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_favorites_user ON user_favorites(user_id)")
 
+        # v87.0: Skip list для временного пропуска каналов
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS skip_list (
+                username TEXT PRIMARY KEY,
+                reason TEXT NOT NULL,
+                members INTEGER,
+                expires_at DATETIME NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_skip_expires ON skip_list(expires_at)")
+
         # v59.6: Миграция - триггеры для нормализации username к lowercase
         # ВАЖНО: вызывать ПОСЛЕ создания таблицы scan_requests!
         self._migrate_v59_username_triggers()
@@ -1433,6 +1445,40 @@ class CrawlerDB:
                 (status, request_id)
             )
         self.conn.commit()
+
+    # =========================================================================
+    # v87.0: Skip List for temporarily skipping channels
+    # =========================================================================
+
+    def add_to_skip_list(self, username: str, reason: str, members: int = 0, days: int = 7) -> bool:
+        """v87.0: Add channel to skip list for N days."""
+        username = username.lower().lstrip('@')
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO skip_list (username, reason, members, expires_at)
+            VALUES (?, ?, ?, datetime('now', '+' || ? || ' days'))
+        """, (username, reason, members, days))
+        self.conn.commit()
+        return True
+
+    def is_skipped(self, username: str) -> tuple:
+        """v87.0: Check if channel is in active skip list."""
+        username = username.lower().lstrip('@')
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT reason FROM skip_list
+            WHERE username = ? AND expires_at > datetime('now')
+        """, (username,))
+        row = cursor.fetchone()
+        return (True, row[0]) if row else (False, None)
+
+    def cleanup_skip_list(self) -> int:
+        """v87.0: Remove expired skip list entries."""
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM skip_list WHERE expires_at <= datetime('now')")
+        removed = cursor.rowcount
+        self.conn.commit()
+        return removed
 
     def close(self):
         """Закрывает соединение."""

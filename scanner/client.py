@@ -514,6 +514,23 @@ async def smart_scan(client: Client, channel: str) -> ScanResult:
             channel_health={'status': 'error', 'reason': f'NOT_CHANNEL ({chat.type.name})'}
         )
 
+    # =========================================================================
+    # v87.0: Ранний выход для маленьких каналов (< 200 подписчиков)
+    # =========================================================================
+    members_count = getattr(chat, 'members_count', 0) or 0
+    if members_count < 200:
+        return ScanResult(
+            chat=chat,
+            messages=[],
+            comments_data={},
+            users=[],
+            channel_health={
+                'status': 'skipped',
+                'reason': 'TOO_SMALL',
+                'members_count': members_count
+            }
+        )
+
     peer = await client.resolve_peer(channel)
 
     raw_result = await client.invoke(

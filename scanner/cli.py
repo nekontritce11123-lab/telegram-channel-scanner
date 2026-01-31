@@ -73,8 +73,22 @@ async def scan_channel(channel: str) -> dict:
     async with get_client() as client:
         print(f"Подключение к Telegram...")
 
+        # v87.0: Проверка skip list
+        db = CrawlerDB()
+        is_skipped, reason = db.is_skipped(channel)
+        if is_skipped:
+            print(f"[SKIP] @{channel} в skip list: {reason}")
+            return None
+
         # v15.0: smart_scan - 3 API запроса (включая GetFullChannel)
         scan_result = await smart_scan(client, channel)
+
+        # v87.0: Если канал слишком маленький — добавить в skip list
+        if scan_result.channel_health.get('status') == 'skipped':
+            members = scan_result.channel_health.get('members_count', 0)
+            db.add_to_skip_list(channel, 'TOO_SMALL', members, days=7)
+            print(f"[SKIP] @{channel} ({members} подписчиков) добавлен в skip list на 7 дней")
+            return None
 
         chat = scan_result.chat
         messages = scan_result.messages
