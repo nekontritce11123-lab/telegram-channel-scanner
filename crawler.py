@@ -237,6 +237,17 @@ def main():
         action='store_true',
         help='Пересчитать LLM анализ из сохранённых текстов (требует Ollama)'
     )
+    # v95.0: Unified Analyzer пересчёт
+    parser.add_argument(
+        '--recalculate-unified',
+        action='store_true',
+        help='Пересчитать AI метрики через Unified Analyzer (Gemini)'
+    )
+    parser.add_argument(
+        '--rescan-forensics',
+        action='store_true',
+        help='Пересканировать forensics для каналов без него (требует Telegram API)'
+    )
     parser.add_argument(
         '--sync',
         action='store_true',
@@ -260,7 +271,7 @@ def main():
         return
 
     # v52.0: Пересчёт метрик
-    if args.recalculate_local or args.recalculate_llm:
+    if args.recalculate_local or args.recalculate_llm or args.recalculate_unified or args.rescan_forensics:
         from scanner.recalculator import recalculate_local, recalculate_llm, get_channels_without_texts
 
         db = CrawlerDB(db_path=args.db)
@@ -276,7 +287,7 @@ def main():
             # Проверяем есть ли каналы без текстов
             missing = get_channels_without_texts(db)
             if missing:
-                print(f"⚠️  {len(missing)} каналов без текстов (нужен ресканс):")
+                print(f"[WARN] {len(missing)} каналов без текстов (нужен ресканс):")
                 for u in missing[:5]:
                     print(f"    @{u}")
                 if len(missing) > 5:
@@ -286,11 +297,25 @@ def main():
             print("Запускаем LLM анализ с новым промптом/моделью...\n")
             result = recalculate_llm(db, verbose=True)
 
+        # v95.0: Unified Analyzer пересчёт
+        if args.recalculate_unified:
+            from scanner.recalculator import recalculate_unified
+            print("\n=== ПЕРЕСЧЁТ UNIFIED ANALYZER (--recalculate-unified) ===")
+            print("Пересчитываем AI метрики через Gemini...\n")
+            asyncio.run(recalculate_unified(db, verbose=True))
+
+        # v95.0: Forensics rescan
+        if args.rescan_forensics:
+            from scanner.recalculator import rescan_forensics
+            print("\n=== ПЕРЕСКАНИРОВАНИЕ FORENSICS (--rescan-forensics) ===")
+            print("Получаем users для каналов без forensics...\n")
+            asyncio.run(rescan_forensics(db, verbose=True))
+
         # v52.0: Синхронизация на сервер
         if args.sync:
             print("\n=== СИНХРОНИЗАЦИЯ НА СЕРВЕР ===")
             # TODO: Реализовать синхронизацию через API
-            print("⚠️  --sync пока не реализован")
+            print("[WARN] --sync пока не реализован")
             print("Используй: cd mini-app/deploy && python sync_channels.py")
 
         db.close()

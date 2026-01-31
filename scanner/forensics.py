@@ -433,14 +433,42 @@ class UserForensics:
         if users_count < MIN_USERS_FOR_ANALYSIS:
             return ForensicsResult(
                 total_penalty=0,
-                id_clustering={'triggered': False, 'penalty': 0, 'fatality': False,
-                               'description': 'Недостаточно данных'},
-                geo_dc_check={'triggered': False, 'penalty': 0,
-                              'description': 'Недостаточно данных'},
-                premium_density={'triggered': False, 'penalty': 0, 'is_bonus': False,
-                                 'description': 'Недостаточно данных'},
-                hidden_flags={'triggered': False, 'penalty': 0,
-                              'description': 'Недостаточно данных'},
+                id_clustering={
+                    'triggered': False,
+                    'penalty': 0,
+                    'fatality': False,
+                    'description': 'Недостаточно данных',
+                    'neighbor_ratio': 0.0,
+                    'neighbor_count': 0,
+                    'total_users': users_count
+                },
+                geo_dc_check={
+                    'triggered': False,
+                    'penalty': 0,
+                    'description': 'Недостаточно данных',
+                    'foreign_ratio': 0.0,
+                    'foreign_count': 0,
+                    'native_count': 0,
+                    'users_with_dc': 0,
+                    'dc_distribution': {}
+                },
+                premium_density={
+                    'triggered': False,
+                    'penalty': 0,
+                    'is_bonus': False,
+                    'description': 'Недостаточно данных',
+                    'premium_ratio': 0.0,
+                    'premium_count': 0,
+                    'total_users': users_count
+                },
+                hidden_flags={
+                    'triggered': False,
+                    'penalty': 0,
+                    'description': 'Недостаточно данных',
+                    'flagged_users': [],
+                    'counts': {},
+                    'total_flagged': 0
+                },
                 users_analyzed=users_count,
                 status='insufficient_data'
             )

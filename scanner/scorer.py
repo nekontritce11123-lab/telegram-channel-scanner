@@ -654,8 +654,8 @@ def calculate_trust_factor(
 
     # 1. ID Clustering (из forensics) - КРИТИЧНО
     if forensics_result and forensics_result.status == 'complete':
-        clustering = forensics_result.id_clustering
-        neighbor_ratio = clustering.get('neighbor_ratio', 0)
+        clustering = forensics_result.id_clustering or {}
+        neighbor_ratio = clustering.get('neighbor_ratio', 0) or 0
 
         if clustering.get('fatality'):
             # FATALITY обрабатывается раньше, но на всякий случай
@@ -675,7 +675,7 @@ def calculate_trust_factor(
 
     # 2. Geo/DC Check (из forensics)
     if forensics_result and forensics_result.status == 'complete':
-        geo = forensics_result.geo_dc_check
+        geo = forensics_result.geo_dc_check or {}
         if geo.get('triggered'):
             multipliers.append(TRUST_FACTORS['geo_dc_mismatch'])
             details['geo_dc'] = {
@@ -686,9 +686,9 @@ def calculate_trust_factor(
 
     # 3. Premium Density (из forensics) - 0% премиумов подозрительно
     if forensics_result and forensics_result.status == 'complete':
-        premium = forensics_result.premium_density
-        premium_ratio = premium.get('premium_ratio', 0)
-        total_users = premium.get('total_users', 0)
+        premium = forensics_result.premium_density or {}
+        premium_ratio = premium.get('premium_ratio', 0) or 0
+        total_users = premium.get('total_users', 0) or 0
 
         if premium_ratio == 0 and total_users >= 10:
             multipliers.append(TRUST_FACTORS['premium_zero'])
@@ -1185,7 +1185,7 @@ def calculate_final_score(
         forensics_result = forensics.analyze()
 
         # v52.0: FATALITY - НЕ возвращаем сразу! Устанавливаем флаг и продолжаем расчёт
-        if forensics_result.id_clustering.get('fatality', False):
+        if (forensics_result.id_clustering or {}).get('fatality', False):
             scam_flag = True
             scam_reason_text = 'ID Clustering FATALITY - обнаружена ферма ботов'
 
@@ -1371,12 +1371,13 @@ def calculate_final_score(
     premium_ratio = 0  # v65.1: Инициализация до if-блока (fix UnboundLocalError)
     premium_count = 0  # v65.1: Инициализация до if-блока
     if forensics_result and forensics_result.status == 'complete':
-        premium_ratio = forensics_result.premium_density.get('premium_ratio', 0)
-        premium_count = forensics_result.premium_density.get('premium_count', 0)
+        premium_data = forensics_result.premium_density or {}
+        premium_ratio = premium_data.get('premium_ratio', 0) or 0
+        premium_count = premium_data.get('premium_count', 0) or 0
         premium_pts = premium_to_points(premium_ratio, premium_count)
     reputation_score += premium_pts
     breakdown['premium'] = {
-        'value': round(forensics_result.premium_density.get('premium_ratio', 0) * 100, 1) if forensics_result else 0,
+        'value': round((forensics_result.premium_density or {}).get('premium_ratio', 0) * 100, 1) if forensics_result else 0,
         'ratio': premium_ratio if forensics_result else 0,  # v65.0: для recalculator
         'count': premium_count if forensics_result else 0,  # v65.0: для recalculator
         'points': premium_pts,

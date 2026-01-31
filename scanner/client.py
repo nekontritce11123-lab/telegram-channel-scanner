@@ -868,3 +868,120 @@ async def smart_scan_safe(client: Client, channel: str, max_retries: int = 3) ->
         users=[],
         channel_health={'status': 'error', 'reason': 'Max retries exceeded'}
     )
+
+
+# ============================================================================
+# v88.0: FETCH USERS ONLY (Single API Request for Forensics)
+# ============================================================================
+
+async def fetch_users_only(client: Client, channel: str) -> list:
+    """
+    Получает только юзеров для forensics анализа (1 API запрос).
+
+    Используется когда нужны юзеры без полного сканирования канала.
+    Приоритет: linked_chat комментарии → реакции → пустой список.
+
+    Args:
+        client: Pyrogram клиент
+        channel: username или ID канала
+
+    Returns:
+        list[RawUserWrapper] — юзеры для forensics анализа
+    """
+    # Убираем @ если есть
+    channel = channel.lstrip('@')
+
+    try:
+        # Получаем информацию о канале
+        chat = await client.get_chat(channel)
+        peer = await client.resolve_peer(channel)
+
+        # ПУТЬ А: Комментарии включены → Linked Chat Dump
+        if chat.linked_chat:
+            try:
+                linked_peer = await client.resolve_peer(chat.linked_chat.id)
+
+                linked_result = await client.invoke(
+                    functions.messages.GetHistory(
+                        peer=linked_peer,
+                        offset_id=0,
+                        offset_date=0,
+                        add_offset=0,
+                        limit=100,
+                        max_id=0,
+                        min_id=0,
+                        hash=0
+                    )
+                )
+
+                users = []
+                if hasattr(linked_result, 'users') and linked_result.users:
+                    for raw_user in linked_result.users:
+                        users.append(RawUserWrapper(raw_user))
+
+                return _deduplicate_users(users)
+
+            except (ChannelPrivate, ChannelInvalid):
+                # Linked chat недоступен → fallback на реакции
+                pass
+
+        # ПУТЬ Б: Реакции последнего поста
+        # Получаем последние посты для поиска реакций
+        raw_result = await client.invoke(
+            functions.messages.GetHistory(
+                peer=peer,
+                offset_id=0,
+                offset_date=0,
+                add_offset=0,
+                limit=10,
+                max_id=0,
+                min_id=0,
+                hash=0
+            )
+        )
+
+        # Ищем пост с реакциями
+        target_msg = None
+        for raw_msg in raw_result.messages:
+            if hasattr(raw_msg, 'reactions') and raw_msg.reactions:
+                if hasattr(raw_msg.reactions, 'results') and raw_msg.reactions.results:
+                    target_msg = raw_msg
+                    break
+
+        if not target_msg:
+            return []
+
+        # Получаем юзеров из реакций
+        try:
+            result = await client.invoke(
+                functions.messages.GetMessageReactionsList(
+                    peer=peer,
+                    id=target_msg.id,
+                    limit=50
+                )
+            )
+
+            users = []
+            if hasattr(result, 'users') and result.users:
+                for raw_user in result.users:
+                    users.append(RawUserWrapper(raw_user))
+
+            return _deduplicate_users(users)
+
+        except RPCError as e:
+            # BROADCAST_FORBIDDEN и другие ошибки — пустой список
+            if "BROADCAST_FORBIDDEN" not in str(e):
+                logger.warning(f"fetch_users_only GetMessageReactionsList error: {e}")
+            return []
+
+    except (ChannelPrivate, ChannelInvalid, UsernameNotOccupied, UsernameInvalid) as e:
+        logger.debug(f"fetch_users_only access error for {channel}: {type(e).__name__}")
+        return []
+
+    except FloodWait:
+        # FloodWait всегда пробрасываем наверх
+        raise
+
+    except RPCError as e:
+        logger.warning(f"fetch_users_only RPC error for {channel}: {e}")
+        return []

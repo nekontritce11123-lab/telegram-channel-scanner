@@ -1502,6 +1502,56 @@ class CrawlerDB:
         self.conn.commit()
         return removed
 
+    # =========================================================================
+    # v95.0: Methods for Unified Analyzer rescan
+    # =========================================================================
+
+    def get_channels_with_content(self) -> list:
+        """
+        v95.0: Get channels with saved content_json for Unified Analyzer rescan.
+        Returns list of dicts with username, title, description, members, content_json.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT username, title, description, members, content_json
+            FROM channels
+            WHERE content_json IS NOT NULL
+            AND status != 'WAITING'
+        """)
+        columns = ['username', 'title', 'description', 'members', 'content_json']
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def get_channels_missing_forensics(self) -> list:
+        """
+        v95.0: Get channels without forensics_json but already scanned.
+        These need partial rescan to get users for forensics analysis.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT username FROM channels
+            WHERE forensics_json IS NULL
+            AND status != 'WAITING'
+            AND scanned_at IS NOT NULL
+        """)
+        return [row[0] for row in cursor.fetchall()]
+
+    def get_channel_for_forensics(self, username: str) -> dict:
+        """
+        v95.0: Get channel data needed for forensics recalculation.
+        """
+        username = username.lower().lstrip('@')
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT username, members, breakdown_json, online_count, participants_count, category
+            FROM channels
+            WHERE LOWER(username) = ?
+        """, (username,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        columns = ['username', 'members', 'breakdown_json', 'online_count', 'participants_count', 'category']
+        return dict(zip(columns, row))
+
     def close(self):
         """Закрывает соединение."""
         self.conn.close()

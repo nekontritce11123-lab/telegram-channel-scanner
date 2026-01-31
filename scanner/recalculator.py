@@ -164,20 +164,24 @@ def calculate_trust_factor(input: TrustInput) -> TrustResult:
     # 1. FORENSICS PENALTIES
 
     # ID Clustering
-    if input.id_clustering_fatality or input.id_clustering_ratio > 0.30:
+    id_ratio = input.id_clustering_ratio or 0
+    if input.id_clustering_fatality or id_ratio > 0.30:
         multipliers['id_clustering_fatality'] = TrustMultipliers.ID_CLUSTERING_FATALITY
         penalties.append('ID Clustering FATALITY (>30% neighbor IDs)')
-    elif input.id_clustering_ratio > 0.15:
+    elif id_ratio > 0.15:
         multipliers['id_clustering_suspicious'] = TrustMultipliers.ID_CLUSTERING_SUSPICIOUS
-        penalties.append(f'ID Clustering suspicious ({input.id_clustering_ratio:.0%})')
+        penalties.append(f'ID Clustering suspicious ({id_ratio:.0%})')
 
     # Geo/DC Mismatch
-    if input.geo_dc_foreign_ratio > 0.75:
+    geo_ratio = input.geo_dc_foreign_ratio or 0
+    if geo_ratio > 0.75:
         multipliers['geo_dc_mismatch'] = TrustMultipliers.GEO_DC_MISMATCH
-        penalties.append(f'Geo/DC mismatch ({input.geo_dc_foreign_ratio:.0%} foreign)')
+        penalties.append(f'Geo/DC mismatch ({geo_ratio:.0%} foreign)')
 
     # Premium Zero
-    if input.users_analyzed >= 10 and input.premium_count == 0:
+    users_analyzed = input.users_analyzed or 0
+    premium_count = input.premium_count or 0
+    if users_analyzed >= 10 and premium_count == 0:
         multipliers['premium_zero'] = TrustMultipliers.PREMIUM_ZERO
         penalties.append('Zero premium users')
 
@@ -195,57 +199,70 @@ def calculate_trust_factor(input: TrustInput) -> TrustResult:
 
     # 3. CONVICTION PENALTIES
 
-    if input.conviction_score >= 70:
+    conviction = input.conviction_score or 0
+    if conviction >= 70:
         multipliers['conviction_critical'] = TrustMultipliers.CONVICTION_CRITICAL
-        penalties.append(f'Critical conviction ({input.conviction_score})')
-    elif input.conviction_score >= 50:
+        penalties.append(f'Critical conviction ({conviction})')
+    elif conviction >= 50:
         multipliers['conviction_high'] = TrustMultipliers.CONVICTION_HIGH
-        penalties.append(f'High conviction ({input.conviction_score})')
+        penalties.append(f'High conviction ({conviction})')
 
     # 4. STATISTICAL PENALTIES
 
+    reach = input.reach or 0
+    forward_rate = input.forward_rate or 0
+    avg_comments = input.avg_comments or 0
+    reaction_rate = input.reaction_rate or 0
+    source_max_share = input.source_max_share or 0
+
     # Hollow Views
-    if input.reach > 300 and input.forward_rate < 3.0 and input.avg_comments < 1:
+    if reach > 300 and forward_rate < 3.0 and avg_comments < 1:
         multipliers['hollow_views'] = 0.6
-        penalties.append(f'Hollow views (reach {input.reach:.0f}% without virality)')
+        penalties.append(f'Hollow views (reach {reach:.0f}% without virality)')
 
     # Zombie Engagement
-    if input.reach > 50 and input.reaction_rate < 0.1:
+    if reach > 50 and reaction_rate < 0.1:
         multipliers['zombie_engagement'] = 0.7
         penalties.append('Zombie engagement (high reach, no reactions)')
 
     # Satellite
-    if input.source_max_share > 0.5 and input.avg_comments < 1:
+    if source_max_share > 0.5 and avg_comments < 1:
         multipliers['satellite'] = 0.8
-        penalties.append(f'Satellite channel ({input.source_max_share:.0%} from one source)')
+        penalties.append(f'Satellite channel ({source_max_share:.0%} from one source)')
 
     # 5. GHOST PROTOCOL
 
-    if input.members > 20000 and input.online_count > 0:
-        online_percent = (input.online_count / input.members) * 100
+    members = input.members or 0
+    online_count = input.online_count or 0
+    participants_count = input.participants_count or 0
+
+    if members > 20000 and online_count > 0:
+        online_percent = (online_count / members) * 100
         if online_percent < 0.1:
             multipliers['ghost_channel'] = 0.5
             penalties.append(f'Ghost channel ({online_percent:.2f}% online)')
 
-    if input.members > 5000 and input.online_count > 0:
-        online_percent = (input.online_count / input.members) * 100
+    if members > 5000 and online_count > 0:
+        online_percent = (online_count / members) * 100
         if online_percent < 0.3 and 'ghost_channel' not in multipliers:
             multipliers['zombie_audience'] = 0.7
             penalties.append(f'Zombie audience ({online_percent:.2f}% online)')
 
     # Member Discrepancy
-    if input.participants_count > 0 and input.members > 0:
-        discrepancy = abs(input.participants_count - input.members) / input.members
+    if participants_count > 0 and members > 0:
+        discrepancy = abs(participants_count - members) / members
         if discrepancy > 0.1:
             multipliers['member_discrepancy'] = 0.8
             penalties.append(f'Member discrepancy ({discrepancy:.0%})')
 
     # 6. DECAY PENALTIES
 
+    views_decay_ratio = input.views_decay_ratio if input.views_decay_ratio is not None else 1.0
+
     # Budget Cliff
-    if input.views_decay_ratio < 0.2:
+    if views_decay_ratio < 0.2:
         multipliers['budget_cliff'] = 0.7
-        penalties.append(f'Budget cliff (decay {input.views_decay_ratio:.2f})')
+        penalties.append(f'Budget cliff (decay {views_decay_ratio:.2f})')
 
     # Bot Wall (not a penalty, just detection)
     # 0.98-1.02 is suspicious but handled elsewhere
@@ -256,35 +273,37 @@ def calculate_trust_factor(input: TrustInput) -> TrustResult:
     tier = SpamPostingTiers.CATEGORY_TIERS.get(input.category, SpamPostingTiers.DEFAULT)
     active_threshold, heavy_threshold, spam_threshold = tier
 
-    if input.posts_per_day > spam_threshold:
+    posts_per_day = input.posts_per_day or 0
+    if posts_per_day > spam_threshold:
         multipliers['spam_posting_spam'] = TrustMultipliers.SPAM_POSTING_SPAM
-        penalties.append(f'Spam posting ({input.posts_per_day:.1f}/day)')
-    elif input.posts_per_day > heavy_threshold:
+        penalties.append(f'Spam posting ({posts_per_day:.1f}/day)')
+    elif posts_per_day > heavy_threshold:
         multipliers['spam_posting_heavy'] = TrustMultipliers.SPAM_POSTING_HEAVY
-        penalties.append(f'Heavy posting ({input.posts_per_day:.1f}/day)')
-    elif input.posts_per_day > active_threshold:
+        penalties.append(f'Heavy posting ({posts_per_day:.1f}/day)')
+    elif posts_per_day > active_threshold:
         multipliers['spam_posting_active'] = TrustMultipliers.SPAM_POSTING_ACTIVE
-        penalties.append(f'Active posting ({input.posts_per_day:.1f}/day)')
+        penalties.append(f'Active posting ({posts_per_day:.1f}/day)')
 
     # 8. PRIVATE LINKS PENALTIES
 
-    if input.private_ratio >= 1.0:
+    private_ratio = input.private_ratio or 0
+    if private_ratio >= 1.0:
         multipliers['private_100'] = TrustMultipliers.PRIVATE_100
         penalties.append('100% private ad links')
-    elif input.private_ratio > 0.8:
+    elif private_ratio > 0.8:
         multipliers['private_80'] = TrustMultipliers.PRIVATE_80
-        penalties.append(f'High private links ({input.private_ratio:.0%})')
-    elif input.private_ratio > 0.6:
+        penalties.append(f'High private links ({private_ratio:.0%})')
+    elif private_ratio > 0.6:
         multipliers['private_60'] = TrustMultipliers.PRIVATE_60
-        penalties.append(f'Many private links ({input.private_ratio:.0%})')
+        penalties.append(f'Many private links ({private_ratio:.0%})')
 
     # Combos
-    if input.category == 'CRYPTO' and input.private_ratio > 0.4:
+    if input.category == 'CRYPTO' and private_ratio > 0.4:
         if 'private_crypto_combo' not in multipliers:
             multipliers['private_crypto_combo'] = TrustMultipliers.PRIVATE_CRYPTO_COMBO
             penalties.append('CRYPTO + private links combo')
 
-    if not input.comments_enabled and input.private_ratio > 0.5:
+    if not input.comments_enabled and private_ratio > 0.5:
         if 'private_hidden_combo' not in multipliers:
             multipliers['private_hidden_combo'] = TrustMultipliers.PRIVATE_HIDDEN_COMBO
             penalties.append('Hidden comments + private links combo')
@@ -298,7 +317,7 @@ def calculate_trust_factor(input: TrustInput) -> TrustResult:
     # 10. DYING ENGAGEMENT
 
     if input.er_trend_status == 'dying':
-        if 0.7 <= input.views_decay_ratio <= 1.3:
+        if 0.7 <= views_decay_ratio <= 1.3:
             multipliers['dying_engagement_combo'] = 0.6
             penalties.append('Dying engagement + no organic growth')
         else:
@@ -307,10 +326,12 @@ def calculate_trust_factor(input: TrustInput) -> TrustResult:
 
     # 11. SCAM NETWORK
 
-    if input.scam_network_count > 0 or input.bad_network_count > 0:
-        network_mult = (0.9 ** input.scam_network_count) * (0.95 ** input.bad_network_count)
+    scam_network_count = input.scam_network_count or 0
+    bad_network_count = input.bad_network_count or 0
+    if scam_network_count > 0 or bad_network_count > 0:
+        network_mult = (0.9 ** scam_network_count) * (0.95 ** bad_network_count)
         multipliers['scam_network'] = round(network_mult, 2)
-        penalties.append(f'Scam network ({input.scam_network_count} scam, {input.bad_network_count} bad)')
+        penalties.append(f'Scam network ({scam_network_count} scam, {bad_network_count} bad)')
 
     # CALCULATE FINAL TRUST FACTOR
     # Special case: FATALITY returns exactly 0.0 (no floor)
@@ -1166,3 +1187,287 @@ def recalculate_channel(row: ChannelRow) -> LocalRecalcResult:
         changed=changed,
         penalties=trust_result.penalties,
     )
+
+
+# =============================================================================
+# UNIFIED ANALYZER RECALCULATION v95.0
+# =============================================================================
+
+async def recalculate_unified(db: CrawlerDB, verbose: bool = True) -> RecalculateResult:
+    """
+    Пересчитывает LLM анализ через Unified Analyzer для всех каналов с content_json.
+
+    Использует сохранённые посты и комментарии для повторного LLM анализа
+    без обращения к Telegram API.
+
+    Args:
+        db: Подключение к базе данных
+        verbose: Выводить прогресс
+
+    Returns:
+        RecalculateResult с статистикой
+    """
+    import asyncio
+    from .llm.unified_analyzer import unified_analyze
+    from .llm.backend import get_backend
+
+    result = RecalculateResult()
+
+    # Получаем каналы с content_json
+    channels = db.get_channels_with_content()
+    result.total = len(channels)
+
+    if verbose:
+        print(f"Найдено {result.total} каналов с content_json для Unified Analyzer")
+
+    if result.total == 0:
+        return result
+
+    # Инициализируем backend один раз
+    try:
+        backend = get_backend()
+        if verbose:
+            print(f"Backend: {backend.backend_name} ({backend.model_name})")
+    except Exception as e:
+        print(f"ERROR: Не удалось инициализировать LLM backend: {e}")
+        result.errors = 1
+        return result
+
+    for i, channel in enumerate(channels, 1):
+        username = channel['username']
+        title = channel.get('title') or ''
+        description = channel.get('description') or ''
+        members = channel.get('members') or 0
+        content_json_str = channel.get('content_json')
+
+        try:
+            # Парсим content_json
+            content_data = json.loads(content_json_str) if content_json_str else {}
+            posts = content_data.get('posts', [])
+            comments = content_data.get('comments', [])
+
+            if not posts:
+                result.skipped += 1
+                if verbose:
+                    print(f"  [{i}/{result.total}] @{username}: SKIP (no posts)")
+                continue
+
+            # Создаём MockChat для unified_analyze
+            class MockChat:
+                def __init__(self, title: str, description: str, username: str, members: int):
+                    self.title = title
+                    self.description = description
+                    self.username = username
+                    self.participants_count = members
+
+            mock_chat = MockChat(title, description, username, members)
+
+            # Создаём mock-сообщения (unified_analyze ожидает объекты с .message или .text)
+            class MockMessage:
+                def __init__(self, text: str):
+                    self.text = text
+                    self.message = text
+
+            mock_messages = [MockMessage(t) for t in posts if t]
+
+            # Запускаем unified_analyze
+            unified_result = await unified_analyze(
+                chat=mock_chat,
+                messages=mock_messages,
+                comments=comments,
+                images=None,
+                backend=backend
+            )
+
+            # Подготавливаем данные для обновления
+            update_data = {
+                'contact_info': unified_result.contact_info,
+                'contact_type': unified_result.contact_type,
+                'category': unified_result.category,
+                'ai_summary': unified_result.summary_ru,
+                'tier': unified_result.tier,
+                'ad_percentage': unified_result.ad_percentage,
+                'bot_percentage': unified_result.bot_percentage,
+            }
+
+            # Обновляем канал в БД
+            db.update_channel(username, **update_data)
+
+            result.updated += 1
+
+            if verbose:
+                cat_display = unified_result.category or 'N/A'
+                contact_display = unified_result.contact_info or 'none'
+                print(f"  [{i}/{result.total}] @{username}: {cat_display}, contact={contact_display}")
+
+        except Exception as e:
+            # Проверяем FloodWait (для Gemini rate limiting)
+            error_str = str(e).lower()
+            if 'flood' in error_str or 'rate' in error_str or 'quota' in error_str:
+                # Rate limit - ждём и пробуем снова
+                wait_time = 60
+                if verbose:
+                    print(f"  [{i}/{result.total}] @{username}: Rate limit, waiting {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                # Не считаем как ошибку, просто пропускаем
+                result.skipped += 1
+            else:
+                result.errors += 1
+                if verbose:
+                    print(f"  [{i}/{result.total}] @{username}: ERROR - {e}")
+
+    if verbose:
+        print(f"\nИтого: обновлено {result.updated}, пропущено {result.skipped}, ошибок {result.errors}")
+
+    return result
+
+
+# =============================================================================
+# v95.0: FORENSICS RESCAN - Fetch users for channels missing forensics
+# =============================================================================
+
+async def rescan_forensics(db: CrawlerDB, verbose: bool = True) -> RecalculateResult:
+    """
+    Пересканирует forensics для каналов без forensics_json.
+
+    Получает юзеров через Telegram API и выполняет forensics анализ.
+    Обновляет forensics_json, trust_factor, trust_penalties_json в БД.
+
+    Args:
+        db: Подключение к базе данных
+        verbose: Выводить прогресс
+
+    Returns:
+        RecalculateResult с статистикой
+    """
+    import asyncio
+    from pyrogram.errors import FloodWait
+    from .client import get_client, fetch_users_only
+    from .forensics import UserForensics
+
+    result = RecalculateResult()
+
+    # 1. Получаем каналы без forensics
+    channels = db.get_channels_missing_forensics()
+    result.total = len(channels)
+
+    if verbose:
+        print(f"Найдено {result.total} каналов без forensics")
+
+    if not channels:
+        return result
+
+    # 2. Подключаемся к Telegram
+    client = get_client()
+
+    try:
+        await client.start()
+
+        i = 0
+        while i < len(channels):
+            username = channels[i]
+            i += 1
+
+            try:
+                if verbose:
+                    print(f"  [{i}/{result.total}] @{username}...", end=" ")
+
+                # 3. Получаем юзеров
+                users = await fetch_users_only(client, username)
+
+                # 4. Проверяем минимум юзеров
+                if len(users) < 10:
+                    if verbose:
+                        print(f"SKIP (users={len(users)} < 10)")
+                    result.skipped += 1
+                    continue
+
+                # 5. Выполняем forensics анализ
+                forensics = UserForensics(users)
+                forensics_result = forensics.analyze()
+
+                # 6. Получаем данные канала для пересчёта trust_factor
+                channel_data = db.get_channel_for_forensics(username)
+                if not channel_data:
+                    if verbose:
+                        print("SKIP (channel not found)")
+                    result.skipped += 1
+                    continue
+
+                # 7. Извлекаем breakdown для trust input
+                breakdown = {}
+                if channel_data.get('breakdown_json'):
+                    try:
+                        bd_data = json.loads(channel_data['breakdown_json'])
+                        breakdown = bd_data.get('breakdown', {})
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                # 8. Строим forensics_dict с результатами анализа
+                forensics_dict = {
+                    'id_clustering': forensics_result.id_clustering,
+                    'geo_dc_analysis': forensics_result.geo_dc_check,
+                    'premium_density': forensics_result.premium_density,
+                    'hidden_flags': forensics_result.hidden_flags,
+                    'users_analyzed': forensics_result.users_analyzed,
+                    'status': forensics_result.status,
+                    'total_penalty': forensics_result.total_penalty,
+                }
+
+                # 9. Пересчитываем trust_factor
+                trust_input = extract_trust_input(
+                    breakdown=breakdown,
+                    forensics=forensics_dict,
+                    channel_data={
+                        'members': channel_data.get('members', 0),
+                        'online_count': channel_data.get('online_count', 0),
+                        'participants_count': channel_data.get('participants_count', 0),
+                        'category': channel_data.get('category'),
+                    }
+                )
+                trust_result = calculate_trust_factor(trust_input)
+
+                # 10. Обновляем в БД
+                forensics_json = json.dumps(forensics_dict, ensure_ascii=False)
+                trust_penalties_json = json.dumps(trust_result.penalties, ensure_ascii=False)
+
+                cursor = db.conn.cursor()
+                cursor.execute("""
+                    UPDATE channels
+                    SET forensics_json = ?,
+                        trust_factor = ?,
+                        trust_penalties_json = ?
+                    WHERE LOWER(username) = ?
+                """, (forensics_json, trust_result.trust_factor, trust_penalties_json, username.lower()))
+                db.conn.commit()
+
+                result.updated += 1
+
+                if verbose:
+                    id_ratio = forensics_result.id_clustering.get('neighbor_ratio', 0)
+                    print(f"OK (users={len(users)}, id_cluster={id_ratio:.1%}, trust={trust_result.trust_factor:.2f})")
+
+                # Небольшая пауза между запросами
+                await asyncio.sleep(1.0)
+
+            except FloodWait as e:
+                wait_time = e.value + 5
+                if verbose:
+                    print(f"FloodWait: жду {wait_time} сек...")
+                await asyncio.sleep(wait_time)
+                # Retry current channel - decrement i to retry
+                i -= 1
+                continue
+
+            except Exception as e:
+                result.errors += 1
+                if verbose:
+                    print(f"ERROR: {e}")
+
+    finally:
+        await client.stop()
+
+    if verbose:
+        print(f"\nИтого: обновлено {result.updated}, пропущено {result.skipped}, ошибок {result.errors}")
+
+    return result
