@@ -898,7 +898,7 @@ class TestExtractScoreInputNullHandling:
 
     def test_extract_score_input_handles_null_values(self):
         """Bug #5: breakdown with explicit null values should not crash."""
-        from recalc.domain.score_calculator import extract_score_input_from_breakdown
+        from scanner.recalculator import extract_score_input_from_breakdown
 
         breakdown_json = {
             'breakdown': {
@@ -921,7 +921,7 @@ class TestExtractScoreInputNullHandling:
 
     def test_extract_score_input_handles_all_null_breakdown(self):
         """All null values in breakdown should return defaults."""
-        from recalc.domain.score_calculator import extract_score_input_from_breakdown
+        from scanner.recalculator import extract_score_input_from_breakdown
 
         breakdown_json = {
             'breakdown': {
@@ -962,8 +962,7 @@ class TestExtractTrustInputNullHandling:
 
     def test_extract_trust_input_handles_null_forensics(self):
         """Bug #5: forensics_json with explicit null values should not crash."""
-        from recalc.infrastructure.db_repository import ChannelRow
-        from recalc.modes.local import extract_trust_input
+        from scanner.recalculator import ChannelRow, extract_trust_input_from_row
 
         row = ChannelRow(
             username='test',
@@ -987,7 +986,7 @@ class TestExtractTrustInputNullHandling:
         )
 
         # Should not crash
-        result = extract_trust_input(row)
+        result = extract_trust_input_from_row(row)
         assert result is not None
         assert result.id_clustering_ratio == 0
         assert result.id_clustering_fatality == False
@@ -996,8 +995,7 @@ class TestExtractTrustInputNullHandling:
 
     def test_extract_trust_input_handles_null_breakdown_metrics(self):
         """Null metrics in breakdown should not crash trust extraction."""
-        from recalc.infrastructure.db_repository import ChannelRow
-        from recalc.modes.local import extract_trust_input
+        from scanner.recalculator import ChannelRow, extract_trust_input_from_row
 
         row = ChannelRow(
             username='test',
@@ -1033,7 +1031,7 @@ class TestExtractTrustInputNullHandling:
         )
 
         # Should not crash
-        result = extract_trust_input(row)
+        result = extract_trust_input_from_row(row)
         assert result is not None
         assert result.reach == 0
         assert result.forward_rate == 0
@@ -1045,8 +1043,7 @@ class TestRecalculateChannelNullHandling:
 
     def test_recalculate_channel_skips_missing_breakdown(self):
         """Bug #6: Channels without breakdown should be skipped."""
-        from recalc.infrastructure.db_repository import ChannelRow
-        from recalc.modes.local import recalculate_channel
+        from scanner.recalculator import ChannelRow, recalculate_channel
 
         row = ChannelRow(
             username='test',
@@ -1077,8 +1074,7 @@ class TestRecalculateChannelNullHandling:
 
     def test_recalculate_channel_skips_none_breakdown(self):
         """Channels with None breakdown should be skipped."""
-        from recalc.infrastructure.db_repository import ChannelRow
-        from recalc.modes.local import recalculate_channel
+        from scanner.recalculator import ChannelRow, recalculate_channel
 
         row = ChannelRow(
             username='test',

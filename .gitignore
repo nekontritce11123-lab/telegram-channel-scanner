@@ -3,6 +3,18 @@
 *.session
 *.session-journal
 
+# v86.0 Directory structure
+data/
+!data/.gitkeep
+sessions/
+!sessions/.gitkeep
+
+# Claude agent state (ephemeral)
+.claude-flow/
+
+# Pytest temp directory
+.pytest_tmp/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -42,7 +54,7 @@ nul
 *.swo
 
 # Database
-crawler.db
+# crawler.db removed - now lives in data/ which is already ignored
 
 # Security scan reports
 .medusa/

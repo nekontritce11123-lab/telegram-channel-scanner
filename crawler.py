@@ -223,8 +223,8 @@ def main():
     parser.add_argument(
         '--db',
         type=str,
-        default='crawler.db',
-        help='Путь к базе данных (по умолчанию: crawler.db)'
+        default='data/crawler.db',
+        help='Путь к базе данных (по умолчанию: data/crawler.db)'
     )
     # v52.0: Флаги пересчёта метрик
     parser.add_argument(

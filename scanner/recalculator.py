@@ -874,3 +874,295 @@ def get_channels_without_texts(db: CrawlerDB) -> list[str]:
         WHERE status IN ('GOOD', 'BAD') AND posts_text_gz IS NULL
     """)
     return [row[0] for row in cursor.fetchall()]
+
+
+# =============================================================================
+# SCORE INPUT / EXTRACTION v79.0 - For test compatibility
+# =============================================================================
+
+@dataclass
+class ScoreInput:
+    """Input data for score calculation."""
+    # Quality metrics
+    cv_views: float = 0.0
+    reach: float = 0.0
+    members: int = 0
+    posts_per_day: float = 0.0
+    forward_rate: float = 0.0
+    views_decay_ratio: float = 1.0
+
+    # Engagement metrics
+    reaction_rate: float = 0.0
+    avg_comments: float = 0.0
+    er_trend_status: str = 'critical_decline'
+    stability_cv: float = 100.0
+    stability_points: int = 0
+
+    # Reputation metrics
+    channel_age_days: int = 0
+    premium_ratio: float = 0.0
+    premium_count: int = 0
+    is_verified: bool = False
+    source_max_share: float = 1.0
+    repost_ratio: float = 1.0
+
+    # Flags
+    comments_enabled: bool = True
+    reactions_enabled: bool = True
+
+
+def _extract_avg_comments(comments_data: dict) -> float:
+    """
+    Extract avg_comments from breakdown.
+    Scanner stores: {'value': 'enabled (avg 10.3)', 'points': 15}
+    or: {'avg': 10.3, 'points': 15}
+    """
+    if not comments_data:
+        return 0.0
+
+    # New format: direct 'avg' key
+    if 'avg' in comments_data:
+        return float(comments_data.get('avg', 0))
+
+    # Old format: parse from 'value' string "enabled (avg X.X)"
+    value = comments_data.get('value', '')
+    if isinstance(value, str) and 'avg' in value:
+        import re
+        match = re.search(r'avg\s*([0-9.]+)', value)
+        if match:
+            return float(match.group(1))
+
+    return 0.0
+
+
+def extract_score_input_from_breakdown(breakdown_json: dict, members: int = 0) -> ScoreInput:
+    """
+    Extract ScoreInput from saved breakdown_json.
+    Use this when recalculating from database.
+
+    Args:
+        breakdown_json: The breakdown_json from database
+        members: Channel members count (pass from DB row, not stored in breakdown)
+    """
+    breakdown = breakdown_json.get('breakdown', breakdown_json) if breakdown_json else {}
+
+    # Extract reaction stability data (use `or {}` to handle explicit null)
+    stability_data = breakdown.get('reaction_stability') or {}
+    stability_cv = stability_data.get('value', 100.0) if stability_data else 100.0
+    stability_points = stability_data.get('points', 0) if stability_data else 0
+
+    # comments_enabled/reactions_enabled are in breakdown ROOT
+    comments_enabled = breakdown.get('comments_enabled', True)
+    reactions_enabled = breakdown.get('reactions_enabled', True)
+
+    # Fallback to metadata if present (for backwards compatibility)
+    if 'metadata' in breakdown:
+        metadata = breakdown['metadata']
+        if 'comments_enabled' in metadata:
+            comments_enabled = metadata['comments_enabled']
+        if 'reactions_enabled' in metadata:
+            reactions_enabled = metadata['reactions_enabled']
+        if members == 0 and 'members' in metadata:
+            members = metadata['members']
+
+    return ScoreInput(
+        cv_views=(breakdown.get('cv_views') or {}).get('value', 0),
+        reach=(breakdown.get('reach') or {}).get('value', 0),
+        members=members,
+        posts_per_day=(breakdown.get('regularity') or {}).get('value', 0),
+        forward_rate=(breakdown.get('forward_rate') or {}).get('value', 0),
+        views_decay_ratio=(breakdown.get('views_decay') or {}).get('value', 1.0),
+        reaction_rate=(breakdown.get('reaction_rate') or {}).get('value', 0),
+        avg_comments=_extract_avg_comments(breakdown.get('comments') or {}),
+        er_trend_status=(breakdown.get('er_trend') or {}).get('status', 'critical_decline'),
+        stability_cv=stability_cv,
+        stability_points=stability_points,
+        channel_age_days=(breakdown.get('age') or {}).get('value', 0),
+        premium_ratio=(breakdown.get('premium') or {}).get('ratio', 0),
+        premium_count=(breakdown.get('premium') or {}).get('count', 0),
+        is_verified=breakdown.get('verified', False),
+        source_max_share=1 - (breakdown.get('source_diversity') or {}).get('value', 0),
+        repost_ratio=(breakdown.get('source_diversity') or {}).get('repost_ratio', 1.0),
+        comments_enabled=comments_enabled,
+        reactions_enabled=reactions_enabled,
+    )
+
+
+# =============================================================================
+# CHANNEL ROW / RECALCULATE CHANNEL v79.0 - For test compatibility
+# =============================================================================
+
+@dataclass
+class ChannelRow:
+    """Channel data from database."""
+    username: str
+    score: int
+    raw_score: int
+    trust_factor: float
+    verdict: str
+    status: str
+    breakdown_json: dict
+    forensics_json: dict
+    llm_analysis: dict
+    members: int
+    online_count: int
+    participants_count: int
+    bot_percentage: int
+    ad_percentage: int
+    category: str
+    posts_per_day: float
+    comments_enabled: bool
+    reactions_enabled: bool
+
+
+@dataclass
+class LocalRecalcResult:
+    """Result of local recalculation for one channel."""
+    username: str
+    raw_score: int
+    old_score: int
+    new_score: int
+    old_trust: float
+    new_trust: float
+    old_verdict: str
+    new_verdict: str
+    changed: bool
+    penalties: list
+
+
+def extract_trust_input_from_row(row: ChannelRow) -> TrustInput:
+    """Extract TrustInput from database row."""
+    forensics = row.forensics_json or {}
+    breakdown = row.breakdown_json or {}
+    bd = breakdown.get('breakdown', breakdown)
+
+    # ID Clustering
+    id_data = forensics.get('id_clustering') or {}
+    id_ratio = id_data.get('percentage', 0) / 100 if id_data.get('percentage') else 0
+    # Also check neighbor_ratio (alternative key)
+    if id_ratio == 0:
+        id_ratio = id_data.get('neighbor_ratio', 0) or 0
+    id_fatality = id_data.get('fatality', False)
+
+    # Geo/DC
+    geo_data = forensics.get('geo_dc_analysis') or {}
+    geo_ratio = geo_data.get('percentage', 0) / 100 if geo_data.get('percentage') else 0
+    # Also check foreign_ratio (alternative key)
+    if geo_ratio == 0:
+        geo_ratio = geo_data.get('foreign_ratio', 0) or 0
+
+    # Premium
+    premium_data = forensics.get('premium_density') or {}
+    premium_ratio = premium_data.get('premium_ratio', 0) or 0
+    premium_count = premium_data.get('premium_count', 0) or 0
+    users_analyzed = forensics.get('users_analyzed', 0) or premium_data.get('users_analyzed', 0) or 0
+
+    # Conviction
+    conviction_data = breakdown.get('conviction_details') or {}
+    conviction_score = conviction_data.get('conviction_score', 0) or 0
+
+    # Metrics from breakdown
+    reach = (bd.get('reach') or {}).get('value', 0) or 0
+    forward_rate = (bd.get('forward_rate') or {}).get('value', 0) or 0
+    reaction_rate = (bd.get('reaction_rate') or {}).get('value', 0) or 0
+    decay_ratio = (bd.get('views_decay') or {}).get('value', 1.0) or 1.0
+    avg_comments = (bd.get('comments') or {}).get('avg', 0) or 0
+    source_data = bd.get('source_diversity') or {}
+    source_max_share = 1 - (source_data.get('value', 1) or 1)
+
+    # ER Trend
+    er_status = (bd.get('er_trend') or {}).get('status', 'insufficient_data')
+
+    # Private links
+    private_data = bd.get('private_links') or {}
+    private_ratio = private_data.get('private_ratio', 0) or 0
+
+    return TrustInput(
+        id_clustering_ratio=id_ratio,
+        id_clustering_fatality=id_fatality,
+        geo_dc_foreign_ratio=geo_ratio,
+        premium_ratio=premium_ratio,
+        premium_count=premium_count,
+        users_analyzed=users_analyzed,
+        bot_percentage=row.bot_percentage or 0,
+        ad_percentage=row.ad_percentage or 0,
+        conviction_score=conviction_score,
+        reach=reach,
+        forward_rate=forward_rate,
+        reaction_rate=reaction_rate,
+        views_decay_ratio=decay_ratio,
+        avg_comments=avg_comments,
+        source_max_share=source_max_share,
+        members=row.members or 0,
+        online_count=row.online_count or 0,
+        participants_count=row.participants_count or 0,
+        posts_per_day=row.posts_per_day or 0,
+        category=row.category,
+        private_ratio=private_ratio,
+        comments_enabled=row.comments_enabled,
+        er_trend_status=er_status,
+    )
+
+
+def recalculate_channel(row: ChannelRow) -> LocalRecalcResult:
+    """Recalculate single channel from breakdown."""
+    from .scorer_constants import VerdictThresholds
+
+    # Validate data exists
+    if not row.breakdown_json or 'breakdown' not in row.breakdown_json:
+        return LocalRecalcResult(
+            username=row.username,
+            raw_score=0,
+            old_score=row.score,
+            new_score=row.score,  # Keep old score
+            old_trust=row.trust_factor,
+            new_trust=row.trust_factor,  # Keep old trust
+            old_verdict=row.verdict,
+            new_verdict=row.verdict,  # Keep old verdict
+            changed=False,
+            penalties=[],
+        )
+
+    # Extract inputs and recalculate
+    trust_input = extract_trust_input_from_row(row)
+    trust_result = calculate_trust_factor(trust_input)
+
+    # Recalculate raw score
+    breakdown = row.breakdown_json.get('breakdown', row.breakdown_json)
+    new_raw, _, _ = recalculate_score_from_breakdown(breakdown, row.members)
+
+    # Final score
+    new_trust = trust_result.trust_factor
+    new_final = round(new_raw * new_trust)
+
+    # Determine verdict
+    if new_final >= VerdictThresholds.EXCELLENT:
+        new_verdict = 'EXCELLENT'
+    elif new_final >= VerdictThresholds.GOOD:
+        new_verdict = 'GOOD'
+    elif new_final >= VerdictThresholds.MEDIUM:
+        new_verdict = 'MEDIUM'
+    elif new_final >= VerdictThresholds.HIGH_RISK:
+        new_verdict = 'HIGH_RISK'
+    else:
+        new_verdict = 'SCAM'
+
+    # Check if changed
+    changed = (
+        row.score != new_final or
+        abs(row.trust_factor - new_trust) > 0.01 or
+        row.verdict != new_verdict
+    )
+
+    return LocalRecalcResult(
+        username=row.username,
+        raw_score=new_raw,
+        old_score=row.score,
+        new_score=new_final,
+        old_trust=row.trust_factor,
+        new_trust=new_trust,
+        old_verdict=row.verdict,
+        new_verdict=new_verdict,
+        changed=changed,
+        penalties=trust_result.penalties,
+    )

@@ -47,8 +47,8 @@ def get_client() -> Client:
             "Получите их на https://my.telegram.org/apps"
         )
 
-    # Сессия сохраняется в корне проекта
-    session_path = PROJECT_ROOT / "scanner_session"
+    # Сессия сохраняется в папке sessions/
+    session_path = PROJECT_ROOT / "sessions" / "scanner_session"
 
     return Client(
         name=str(session_path),
@@ -99,7 +99,7 @@ class SessionPool:
                     logger.warning(f"Session {i+1} skipped: no credentials")
                     continue
 
-            session_path = PROJECT_ROOT / f"scanner_session{suffix}"
+            session_path = PROJECT_ROOT / "sessions" / f"scanner_session{suffix}"
 
             client = Client(
                 name=str(session_path),

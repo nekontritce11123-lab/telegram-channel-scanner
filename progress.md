@@ -22,7 +22,7 @@
   - Deploy только через скрипты (`deploy_frontend.py`, `deploy_backend.py`)
 
 ## 🛠️ Skills & Tools (Reusable)
-- `python run.py @channel` — сканировать один канал
+- `python crawler.py scan @channel` — сканировать один канал
 - `python crawler.py` — запустить краулер
 - `python crawler.py --stats` — статистика краулера
 - `cd mini-app && python -m deploy deploy all` — деплой всего (v81.0)

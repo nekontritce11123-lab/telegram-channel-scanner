@@ -6,7 +6,7 @@ Telegram Channel Quality Scanner для оценки рекламного пот
 
 ```bash
 # Scanner
-python run.py @channel_name
+python crawler.py scan @channel_name
 
 # Crawler
 python crawler.py @seed1 @seed2    # Первый запуск

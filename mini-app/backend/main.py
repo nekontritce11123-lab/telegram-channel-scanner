@@ -266,7 +266,7 @@ async def lifespan(app: FastAPI):
     from scanner.database import CrawlerDB
 
     # Инициализация БД
-    db_path = os.getenv("DATABASE_PATH", "crawler.db")
+    db_path = os.getenv("DATABASE_PATH", "data/crawler.db")
     db = CrawlerDB(db_path)
     print(f"База данных подключена: {db_path}")
 

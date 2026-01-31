@@ -208,7 +208,7 @@ class SmartCrawler:
     v18.0: AI классификация с 17 категориями и multi-label поддержкой.
     """
 
-    def __init__(self, db_path: str = "crawler.db"):
+    def __init__(self, db_path: str = "data/crawler.db"):
         self.db = CrawlerDB(db_path)
         self.client: Optional[Client] = None
         self.processed_count = 0

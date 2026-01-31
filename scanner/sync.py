@@ -135,7 +135,7 @@ def push_database(db_path: str = "crawler.db") -> bool:
     if not local_db.exists():
         # Попробуем найти в корне проекта
         project_root = Path(__file__).parent.parent
-        local_db = project_root / "crawler.db"
+        local_db = project_root / "data" / "crawler.db"
 
     if not local_db.exists():
         logger.error(f"Локальная БД не найдена: {local_db}")

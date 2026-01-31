@@ -29,7 +29,7 @@ def sync():
     sftp = ssh.open_sftp()
 
     # Путь к локальной БД
-    local_db = Path(__file__).parent.parent.parent / "crawler.db"
+    local_db = Path(__file__).parent.parent.parent / "data" / "crawler.db"
 
     if not local_db.exists():
         print(f"Ошибка: локальная БД не найдена: {local_db}")

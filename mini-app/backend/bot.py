@@ -165,7 +165,7 @@ async def cmd_stats(message: Message):
     """Статистика базы."""
     from scanner.database import CrawlerDB
 
-    db_path = os.getenv("DATABASE_PATH", "crawler.db")
+    db_path = os.getenv("DATABASE_PATH", "data/crawler.db")
     db = CrawlerDB(db_path)
     stats = db.get_stats()
     cat_stats = db.get_category_stats()

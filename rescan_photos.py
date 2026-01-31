@@ -14,6 +14,7 @@ import sys
 import asyncio
 import argparse
 import sqlite3
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -53,7 +54,7 @@ async def download_one(client, username: str, semaphore: asyncio.Semaphore) -> t
                 return (username, None, f"{type(e).__name__}")
 
 
-async def rescan_photos(db_path: str = "crawler.db", limit: int = None, check_only: bool = False):
+async def rescan_photos(db_path: str = "data/crawler.db", limit: int = None, check_only: bool = False):
     """Загружает аватарки для каналов без photo_blob."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -116,7 +117,8 @@ async def rescan_photos(db_path: str = "crawler.db", limit: int = None, check_on
 
     print("Connecting...")
 
-    async with Client("photo_session", api_id=api_id, api_hash=api_hash) as client:
+    session_path = str(Path(__file__).parent / "sessions" / "photo_session")
+    async with Client(session_path, api_id=api_id, api_hash=api_hash) as client:
         print("Connected! Starting parallel download...\n")
 
         # Semaphore для 3 параллельных запросов (avoid FloodWait)
@@ -158,7 +160,7 @@ async def rescan_photos(db_path: str = "crawler.db", limit: int = None, check_on
 
 def main():
     parser = argparse.ArgumentParser(description="Download avatars for existing channels")
-    parser.add_argument("--db", default="crawler.db", help="DB path")
+    parser.add_argument("--db", default="data/crawler.db", help="DB path")
     parser.add_argument("--limit", type=int, help="Max channels")
     parser.add_argument("--check", action="store_true", help="Only check stats")
     args = parser.parse_args()

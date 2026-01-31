@@ -135,7 +135,7 @@ GROQ_API_KEY=your_groq_key  # Optional
 ### Scan a Single Channel
 
 ```bash
-python run.py @channel_name
+python crawler.py scan @channel_name
 # or
 python -m scanner.cli @channel_name
 ```

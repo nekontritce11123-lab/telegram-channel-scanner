@@ -250,7 +250,7 @@ class CrawlerDB:
         db.mark_done(channel, "GOOD", score=72, ...)
     """
 
-    def __init__(self, db_path: str = "crawler.db"):
+    def __init__(self, db_path: str = "data/crawler.db"):
         self.db_path = Path(db_path)
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
